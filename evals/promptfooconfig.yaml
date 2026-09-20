@@ -1,0 +1,123 @@
+description: smart-router routing regression suite
+prompts:
+  - "{{prompt}}"
+providers:
+  - file://route-provider.mjs
+defaultTest:
+  assert:
+    - type: javascript
+      value: >-
+        output.needsBrowser >= 0 && output.needsBrowser <= 1 && typeof output.needsBrowser === 'number' && (output.statesStoppingPoint === null || (typeof output.statesStoppingPoint === 'number' && output.statesStoppingPoint >= 0 && output.statesStoppingPoint <= 1)) && (output.fellBack === false || context.vars.allowFallback === true)
+tests:
+  - vars:
+      prompt: Migrate the config loader to async. Done when bun test passes and no sync fs calls remain in src/config.ts; stop there.
+    assert:
+      - type: javascript
+        value: >-
+          output.statesStoppingPoint > 0.5
+  - vars:
+      prompt: Improve the config loader
+    assert:
+      - type: javascript
+        value: >-
+          output.statesStoppingPoint < 0.5
+  - vars:
+      prompt: Rename the variable fooCount to itemCount across the three files in src/ and update the tests
+    assert:
+      - type: javascript
+        value: >-
+          ['codex:gpt-5.6-terra', 'codex:gpt-5.6-luna'].includes(output.pick.split('@')[0])
+  - vars:
+      prompt: Classify these 500 support tickets into billing, technical, or other and output a CSV
+    assert:
+      - type: javascript
+        value: >-
+          ['codex:gpt-5.6-luna', 'codex:gpt-5.6-terra'].includes(output.pick.split('@')[0])
+  - vars:
+      prompt: Implement the pagination endpoint described in docs/pagination-spec.md with the listed acceptance tests passing
+    assert:
+      - type: javascript
+        value: >-
+          output.pick.split('@')[0] === 'codex:gpt-5.6-terra'
+  - vars:
+      prompt: Run an unsupervised multi-hour migration of the whole codebase from Express to Fastify, keeping all tests green
+      allowFallback: true
+    assert:
+      - type: javascript
+        value: >-
+          ['codex:gpt-5.6-sol', 'codex:gpt-6-astra', 'codex:gpt-5.6-terra'].includes(output.pick.split('@')[0])
+      - type: javascript
+        value: >-
+          Object.entries(output.probabilities).sort((a, b) => b[1] - a[1]).slice(0, 2).some(([id]) => ['codex:gpt-5.6-sol', 'codex:gpt-6-astra'].includes(id))
+  - vars:
+      prompt: Open the checkout flow in the browser, take screenshots at each step, and report any layout bugs
+    assert:
+      - type: javascript
+        value: >-
+          output.pick.split('@')[0] === 'codex:gpt-6-astra' && output.needsBrowser > 0.5
+  - vars:
+      prompt: Rewrite the onboarding screen copy and propose the visual hierarchy for the settings page
+    assert:
+      - type: javascript
+        value: >-
+          ['claude:claude-fable-5-1', 'claude:claude-opus-5'].includes(output.pick.split('@')[0])
+  - vars:
+      prompt: Decide whether we should split the monolith into services given the current team size and roadmap; the tradeoffs are ambiguous
+      allowFallback: true
+    assert:
+      - type: javascript
+        value: >-
+          ['claude:claude-fable-5-1', 'claude:claude-opus-5'].includes(output.pick.split('@')[0])
+  - vars:
+      prompt: Give a fast first-pass code review of this diff for obvious bugs
+    assert:
+      - type: javascript
+        value: >-
+          ['codex:gpt-5.6-terra', 'codex:gpt-5.6-luna'].includes(output.pick.split('@')[0])
+  - vars:
+      prompt: Do a deep adversarial review of the auth refactor branch for security holes
+      allowFallback: true
+    assert:
+      - type: javascript
+        value: >-
+          ['codex:gpt-5.6-sol', 'codex:gpt-6-astra', 'claude:claude-opus-5', 'claude:claude-fable-5-1', 'codex:gpt-5.6-terra'].includes(output.pick.split('@')[0])
+      - type: javascript
+        value: >-
+          Object.entries(output.probabilities).sort((a, b) => b[1] - a[1]).slice(0, 2).some(([id]) => ['codex:gpt-5.6-sol', 'codex:gpt-6-astra', 'claude:claude-opus-5', 'claude:claude-fable-5-1'].includes(id))
+  - vars:
+      prompt: Give me a second opinion from a different model family on this Codex-written plan
+    assert:
+      - type: javascript
+        value: >-
+          output.pick.split('@')[0].startsWith('claude:')
+  - vars:
+      prompt: Extract every function name from this 20k-line log dump and summarise which appear more than ten times
+    assert:
+      - type: javascript
+        value: >-
+          output.pick.split('@')[0] === 'codex:gpt-5.6-luna'
+  - vars:
+      prompt: Prove this concurrency bug is real by reproducing it, then fix the root cause across all callers
+      hint: hard debugging
+    assert:
+      - type: javascript
+        value: >-
+          ['high', 'xhigh', 'max'].includes(output.pick.split('@')[1])
+  - vars:
+      prompt: Add a one-line null check to parseUser in src/user.ts
+    assert:
+      - type: javascript
+        value: >-
+          ['low', 'medium'].includes(output.pick.split('@')[1]) && ['codex:gpt-5.6-luna', 'codex:gpt-5.6-terra'].includes(output.pick.split('@')[0])
+  - vars:
+      prompt: Summarise this PR description into a one-line branch name
+    assert:
+      - type: javascript
+        value: >-
+          output.pick.split('@')[0] === 'codex:gpt-5.6-luna'
+  - vars:
+      prompt: Design the public SDK surface for our new payments API
+    assert:
+      - type: javascript
+        value: >-
+          ['claude:claude-fable-5-1', 'claude:claude-opus-5'].includes(output.pick.split('@')[0])

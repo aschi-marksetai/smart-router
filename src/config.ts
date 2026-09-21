@@ -56,6 +56,7 @@ export type Config = {
   };
   jev: { model: string; apiKeyEnv: string };
   quota: { enabled: boolean; providers: Partial<Record<HarnessName, string>> };
+  updates?: { check: boolean };
 };
 
 export const DEFAULT_CONFIG: Config = {
@@ -76,6 +77,7 @@ export const DEFAULT_CONFIG: Config = {
   },
   jev: { model: DEFAULT_JEV_MODEL, apiKeyEnv: DEFAULT_JEV_API_KEY_ENV },
   quota: { enabled: true, providers: { claude: "claude", codex: "codex" } },
+  updates: { check: true },
 };
 
 export function configPath(): string {
@@ -89,6 +91,7 @@ export async function loadConfig(): Promise<Config> {
       ...DEFAULT_CONFIG,
       ...saved,
       rules: { ...DEFAULT_CONFIG.rules, ...saved.rules },
+      updates: { ...DEFAULT_CONFIG.updates, ...saved.updates },
       spawn: { ...DEFAULT_CONFIG.spawn, ...saved.spawn },
       quota: {
         ...DEFAULT_CONFIG.quota,

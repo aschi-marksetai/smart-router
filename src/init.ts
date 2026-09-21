@@ -326,6 +326,14 @@ async function runRules(
   next.rules.confidenceFloor = confidenceFloor
     ? Number(confidenceFloor)
     : DEFAULT_CONFIDENCE_FLOOR;
+  next.updates = {
+    check: await prompt(
+      confirm({
+        message: "Check for updates once a day?",
+        initialValue: next.updates?.check ?? true,
+      }),
+    ),
+  };
   next.spawn.autoSandbox = await prompt(
     confirm({
       message: "Choose the Codex sandbox automatically from the task?",

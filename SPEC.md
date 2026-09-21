@@ -87,6 +87,10 @@ Env vars are read from the process environment; the CLI also loads `.env` from t
 
 ## Commands
 
+### Updates
+
+The CLI caches the latest-release check for 24 hours. `route` and `spawn` print a newer-version notice on stderr unless `updates.check` is false or `SMART_ROUTER_NO_UPDATE_CHECK` is set. `update` downloads and verifies the matching release asset; `update --check` reports without changing files. Homebrew installations must use `brew upgrade smart-router`.
+
 All commands print JSON on stdout and a one-line human summary on stderr. Exit code 0 on success, 1 on any error with `{ "error": "..." }` on stdout.
 
 ### `smart-router doctor`

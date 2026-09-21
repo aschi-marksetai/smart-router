@@ -20,3 +20,23 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/smart-router-${{ matrix.target }}*
+  update-tap:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: aschi-marksetai/homebrew-tap
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
+          path: tap
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run formula "${GITHUB_REF_NAME}" > tap/Formula/smart-router.rb
+      - run: |
+          cd tap
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add Formula/smart-router.rb
+          git diff --cached --quiet || git commit -m "Update smart-router ${GITHUB_REF_NAME}"
+          git push

@@ -11,6 +11,7 @@ import type { HarnessOptions } from "./harness/types.ts";
 import { runInit } from "./init.ts";
 import { getQuota } from "./quota.ts";
 import { configDir } from "./paths.ts";
+import { readUpdateNotice, updateExecutable, updateRefusal } from "./update.ts";
 import { guardrailsFor, loadGuardrails } from "./guardrails.ts";
 import {
   CODEX_NETWORK_ACCESS_OVERRIDE,
@@ -147,10 +148,10 @@ async function routeCommand(
 ): Promise<never> {
   const config = await loadConfig();
   const result = await route(prompt, options, defaultRouteDeps(config));
-  return printResult(
-    result,
-    options.dryRun ? "Route dry run completed" : "Route selected",
-  );
+  console.log(JSON.stringify(result));
+  await printUpdateNotice(config);
+  console.error(options.dryRun ? "Route dry run completed" : "Route selected");
+  process.exit(SUCCESS_EXIT_CODE);
 }
 
 async function spawnCommand(
@@ -259,16 +260,18 @@ async function spawnCommand(
       usage: null,
       route: routeResult,
     });
-    return printResult(
-      {
+    console.log(
+      JSON.stringify({
         handle,
         ...selected,
         sandbox,
         route: routeResult,
         logPath,
-      },
-      "Spawn detached",
+      }),
     );
+    await printUpdateNotice(config);
+    console.error("Spawn detached");
+    process.exit(SUCCESS_EXIT_CODE);
   }
   const parsed = adapter.parseSpawnOutput(
     await runForeground(command.argv, cwd),
@@ -287,8 +290,8 @@ async function spawnCommand(
     usage: parsed.usage,
     route: routeResult,
   });
-  return printResult(
-    {
+  console.log(
+    JSON.stringify({
       handle: session.handle,
       ...selected,
       sandbox,
@@ -298,8 +301,48 @@ async function spawnCommand(
         .argv.join(" "),
       ...resultOutput(parsed.result, resultLimit(options)),
       usage: parsed.usage,
-    },
-    "Spawn completed",
+    }),
+  );
+  await printUpdateNotice(config);
+  console.error("Spawn completed");
+  process.exit(SUCCESS_EXIT_CODE);
+}
+
+async function printUpdateNotice(
+  config: Awaited<ReturnType<typeof loadConfig>>,
+): Promise<void> {
+  if (
+    config.updates?.check === false ||
+    process.env.SMART_ROUTER_NO_UPDATE_CHECK !== undefined
+  )
+    return;
+  const update = await readUpdateNotice(version);
+  if (update?.isNewer)
+    console.error(
+      `smart-router ${update.latestVersion} is available; run smart-router update`,
+    );
+}
+
+async function updateCommand(options: { check?: boolean }): Promise<never> {
+  const result = await readUpdateNotice(version);
+  if (!result)
+    return printResult(
+      { error: "Could not check for updates" },
+      "Update check failed",
+      ERROR_EXIT_CODE,
+    );
+  if (options.check || !result.isNewer)
+    return printResult(
+      { current: version, latest: result.latestVersion, updated: false },
+      "Update check completed",
+    );
+  const refusal = updateRefusal(process.execPath);
+  if (refusal)
+    return printResult({ error: refusal }, "Update refused", ERROR_EXIT_CODE);
+  await updateExecutable(result, process.execPath);
+  return printResult(
+    { current: version, latest: result.latestVersion, updated: true },
+    "Updated",
   );
 }
 
@@ -604,6 +647,7 @@ async function main(): Promise<void> {
       "error" in result ? ERROR_EXIT_CODE : SUCCESS_EXIT_CODE,
     );
   });
+  program.command("update").option("--check").action(updateCommand);
   await program.parseAsync();
 }
 

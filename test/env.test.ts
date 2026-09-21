@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadDotEnv } from "../src/env.ts";
+import { loadDotEnv, writeDotEnvValue } from "../src/env.ts";
 
 const ENVIRONMENT_KEY = "SMART_ROUTER_DOTENV_TEST";
 const QUOTED_ENVIRONMENT_KEY = "SMART_ROUTER_DOTENV_QUOTED_TEST";
@@ -62,4 +62,16 @@ test("loads the config dotenv before the current working directory dotenv", asyn
   expect(process.env[CONFIG_ENVIRONMENT_KEY]).toBe("from-config");
   expect(process.env[ENVIRONMENT_KEY]).toBe("from-config");
   await rm(configDirectory, { recursive: true });
+});
+
+test("writes and updates dotenv values without changing other lines", async () => {
+  directory = await mkdtemp(join(tmpdir(), "smart-router-env-write-"));
+  const filePath = join(directory, "nested", ".env");
+  await writeDotEnvValue(filePath, "KEY", "first");
+  expect(await Bun.file(filePath).text()).toBe("KEY=first");
+  await writeFile(filePath, "OTHER=value\n");
+  await writeDotEnvValue(filePath, "KEY", "old");
+  expect(await Bun.file(filePath).text()).toBe("OTHER=value\nKEY=old");
+  await writeDotEnvValue(filePath, "KEY", "new");
+  expect(await Bun.file(filePath).text()).toBe("OTHER=value\nKEY=new");
 });

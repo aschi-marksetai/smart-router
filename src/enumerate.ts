@@ -7,14 +7,19 @@ import {
   getBuiltinModels,
   getBuiltinProviders,
 } from "@earendil-works/pi-ai/providers/all";
-import type { Config, HarnessName } from "./config.ts";
+import { harnessBinary, type Config, type HarnessName } from "./config.ts";
 import { record } from "./files.ts";
 
 const CLAUDE_CATALOG_GLOB = join(
-  homedir(),
-  ".claude/cache/model-catalog/*.json",
+  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
+  "cache",
+  "model-catalog",
+  "*.json",
 );
-const CODEX_MODELS_CACHE = join(homedir(), ".codex", "models_cache.json");
+const CODEX_MODELS_CACHE = join(
+  process.env.CODEX_HOME ?? join(homedir(), ".codex"),
+  "models_cache.json",
+);
 const ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models";
 const OPENAI_MODELS_URL = "https://api.openai.com/v1/models";
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
@@ -161,10 +166,11 @@ async function enumerateClaude(config: Config): Promise<EnumeratedModel[]> {
   );
 }
 
-async function enumerateCodex(): Promise<EnumeratedModel[]> {
+async function enumerateCodex(config: Config): Promise<EnumeratedModel[]> {
+  const binary = harnessBinary(config, "codex");
   try {
     return parseCodexModels(
-      JSON.parse((await $`codex debug models`.quiet()).text()),
+      JSON.parse((await $`${binary} debug models`.quiet()).text()),
     );
   } catch {
     return parseCodexModels(
@@ -224,6 +230,6 @@ export async function enumerate(
   config: Config,
 ): Promise<EnumeratedModel[]> {
   if (harness === "claude") return enumerateClaude(config);
-  if (harness === "codex") return enumerateCodex();
+  if (harness === "codex") return enumerateCodex(config);
   return enumeratePi(config);
 }

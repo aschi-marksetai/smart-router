@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk";
-import type { Config, HarnessName } from "./config.ts";
+import {
+  DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
+  type Config,
+  type HarnessName,
+} from "./config.ts";
 import { doctor, type DoctorResult } from "./doctor.ts";
 import { isMissingFile } from "./files.ts";
 import { configDir } from "./paths.ts";
@@ -13,9 +17,18 @@ const PICK_INSTRUCTIONS =
   "Pick the model that should run this task according to the user's preferences";
 const EFFORT_INSTRUCTIONS = "Pick the reasoning effort this task needs";
 const BROWSER_INSTRUCTIONS = "Does this task need a browser or screenshots?";
+const NETWORK_INSTRUCTIONS =
+  "Does this task need network access, such as installing packages, calling APIs, fetching documentation, or pushing to a remote?";
+const FULL_ACCESS_INSTRUCTIONS =
+  "Does this task need to write outside the working directory or run privileged operations such as docker, system services, or global installs?";
 const STOPPING_POINT_INSTRUCTIONS =
   "Does this task state what finished looks like or where to stop?";
 const STOPPING_POINT_THRESHOLD = 0.5;
+export const SANDBOX_THRESHOLD = 0.5;
+export const CODEX_WORKSPACE_WRITE_SANDBOX = "workspace-write";
+export const CODEX_DANGER_FULL_ACCESS_SANDBOX = "danger-full-access";
+export const CODEX_NETWORK_ACCESS_OVERRIDE =
+  "sandbox_workspace_write.network_access=true";
 const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 
 export type RouteOptions = {
@@ -49,6 +62,8 @@ type JevResponse = {
     effort: { choice: string; probabilities: Record<string, number> };
     needsBrowser: { noul: number };
     statesStoppingPoint: { noul: number };
+    needsNetwork: { noul: number };
+    needsFullAccess: { noul: number };
   };
 };
 export type JevClient = {
@@ -65,6 +80,39 @@ export type RouteDeps = {
   getQuota: () => Promise<QuotaResult>;
   preferences: string | (() => Promise<string>);
 };
+export type CodexSandboxChoice = {
+  sandbox: string;
+  usesNetworkAccess: boolean;
+};
+
+export function chooseCodexSandbox(options: {
+  configuredSandbox: string;
+  callerSandbox?: string;
+  autoSandbox: boolean;
+  allowFullAccess: boolean;
+  routingRan: boolean;
+  needsNetwork: number | null;
+  needsFullAccess: number | null;
+}): CodexSandboxChoice {
+  if (options.callerSandbox)
+    return { sandbox: options.callerSandbox, usesNetworkAccess: false };
+  const canUseRouteScores = options.autoSandbox && options.routingRan;
+  const needsFullAccess =
+    canUseRouteScores &&
+    options.allowFullAccess &&
+    (options.needsFullAccess ?? 0) > SANDBOX_THRESHOLD;
+  if (needsFullAccess)
+    return {
+      sandbox: CODEX_DANGER_FULL_ACCESS_SANDBOX,
+      usesNetworkAccess: false,
+    };
+  const needsNetwork =
+    canUseRouteScores && (options.needsNetwork ?? 0) > SANDBOX_THRESHOLD;
+  if (needsNetwork)
+    return { sandbox: options.configuredSandbox, usesNetworkAccess: true };
+  return { sandbox: options.configuredSandbox, usesNetworkAccess: false };
+}
+
 function expandCandidates(
   config: Config,
   candidateIds: Set<string>,
@@ -100,33 +148,41 @@ function routeQuestions(candidates: RouteCandidate[]) {
     effort: choice(EFFORT_INSTRUCTIONS, effortCriteria),
     needsBrowser: noul(BROWSER_INSTRUCTIONS),
     statesStoppingPoint: noul(STOPPING_POINT_INSTRUCTIONS),
+    needsNetwork: noul(NETWORK_INSTRUCTIONS),
+    needsFullAccess: noul(FULL_ACCESS_INSTRUCTIONS),
   };
 }
 
 function clampEffort(efforts: string[], selectedEffort: string): string {
+  if (efforts.includes(selectedEffort)) return selectedEffort;
   const selectedIndex = EFFORT_LEVELS.indexOf(selectedEffort);
-  const supportedEfforts = efforts.filter(
-    (effort) => EFFORT_LEVELS.indexOf(effort) <= selectedIndex,
-  );
-  return (
-    supportedEfforts
-      .toSorted(
-        (left, right) =>
-          EFFORT_LEVELS.indexOf(left) - EFFORT_LEVELS.indexOf(right),
-      )
-      .at(-1) ?? efforts[0]
-  );
+  if (selectedIndex >= 0) {
+    const supported = efforts.filter((effort) => {
+      const index = EFFORT_LEVELS.indexOf(effort);
+      return index >= 0 && index <= selectedIndex;
+    });
+    if (supported.length)
+      return supported.reduce((best, effort) =>
+        EFFORT_LEVELS.indexOf(effort) > EFFORT_LEVELS.indexOf(best)
+          ? effort
+          : best,
+      );
+  }
+  return efforts[Math.floor(efforts.length / 2)] ?? efforts[0];
 }
 
 export function defaultRouteDeps(config: Config): RouteDeps {
-  const client = new TypeSafeClient({
-    apiKey: process.env[config.jev.apiKeyEnv],
-  });
+  const lazyClient: JevClient = {
+    systemOne: (request) =>
+      new TypeSafeClient({
+        apiKey: process.env[config.jev.apiKeyEnv],
+      }).systemOne(request),
+  };
   return {
     config,
-    client,
+    client: lazyClient,
     doctor,
-    getQuota,
+    getQuota: () => getQuota(config),
     preferences: async () => {
       try {
         return await readFile(join(configDir(), PREFERENCES_FILE_NAME), "utf8");
@@ -164,7 +220,9 @@ export async function route(
   const cwd = options.cwd ?? process.cwd();
   const [detection, quotaResult, preferenceSource] = await Promise.all([
     deps.doctor(config),
-    deps.getQuota(),
+    config.quota.enabled
+      ? deps.getQuota()
+      : Promise.resolve({ error: "quota disabled" as const }),
     Promise.resolve(deps.preferences),
   ]);
   const preferences =
@@ -183,8 +241,14 @@ export async function route(
     config,
     new Set(detection.candidates),
   ).filter((candidate) => {
-    if (confidential && candidate.model.startsWith("openrouter/")) return false;
-    if (candidate.harness === "pi") return true;
+    if (
+      confidential &&
+      (
+        config.rules.confidentialExcludedProviders ??
+        DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS
+      ).some((provider) => candidate.model.startsWith(`${provider}/`))
+    )
+      return false;
     const cutoff = config.rules.quotaCutoffPercent?.[candidate.harness];
     const usage = quota?.[candidate.harness] ?? null;
     return (
@@ -201,6 +265,20 @@ export async function route(
   };
   if (options.dryRun) return state;
   if (candidates.length === 0) throw new Error("No route candidates available");
+  const eligibleDefault = candidates.some(
+    ({ id }) => id === config.defaultModelId,
+  );
+  const fallbackCandidate = eligibleDefault
+    ? candidates.find(({ id }) => id === config.defaultModelId)!
+    : candidates[0];
+  const fallbackEffort = fallbackCandidate.efforts.includes(
+    config.defaultEffort,
+  )
+    ? config.defaultEffort
+    : fallbackCandidate.efforts[0];
+  const fallbackReason = eligibleDefault
+    ? ""
+    : `default model unavailable; using ${fallbackCandidate.id}`;
   let response: JevResponse;
   try {
     response = await deps.client.systemOne({
@@ -210,28 +288,39 @@ export async function route(
     });
   } catch (error) {
     return {
-      pick: `${config.defaultModelId}@${config.defaultEffort}`,
+      pick: `${fallbackCandidate.id}@${fallbackEffort}`,
       confidence: null,
       probabilities: {},
       effortProbabilities: {},
-      reason: error instanceof Error ? error.message : String(error),
+      reason: [
+        config.quota.enabled ? "" : "quota disabled",
+        fallbackReason,
+        error instanceof Error ? error.message : String(error),
+      ]
+        .filter(Boolean)
+        .join("; "),
       fellBack: true,
       candidates: candidates.map(({ id }) => id),
       needsBrowser: null,
       statesStoppingPoint: null,
+      needsNetwork: null,
+      needsFullAccess: null,
     };
   }
   const selectedModel = response.answers.model;
   const fallback =
     config.rules.confidenceFloor !== undefined &&
     selectedModel.confidence < config.rules.confidenceFloor;
-  const reason =
-    quotaUnavailable && config.rules.quotaCutoffPercent !== undefined
-      ? "codexbar not installed; quota cutoff skipped"
-      : "selected by Jev";
+  const fallbackRequired = !eligibleDefault || fallback;
+  const reasons = [];
+  if (!config.quota.enabled) reasons.push("quota disabled");
+  if (quotaUnavailable && config.rules.quotaCutoffPercent !== undefined)
+    reasons.push("codexbar not installed; quota cutoff skipped");
+  if (fallbackReason) reasons.push(fallbackReason);
+  const reason = reasons.length ? reasons.join("; ") : "selected by Jev";
   return {
-    pick: fallback
-      ? `${config.defaultModelId}@${config.defaultEffort}`
+    pick: fallbackRequired
+      ? `${fallbackCandidate.id}@${fallbackEffort}`
       : `${selectedModel.choice}@${clampEffort(
           candidates.find(({ id }) => id === selectedModel.choice)?.efforts ??
             [],
@@ -241,9 +330,11 @@ export async function route(
     probabilities: selectedModel.probabilities,
     effortProbabilities: response.answers.effort.probabilities,
     reason,
-    fellBack: fallback,
+    fellBack: fallbackRequired,
     candidates: candidates.map(({ id }) => id),
     needsBrowser: response.answers.needsBrowser.noul,
     statesStoppingPoint: response.answers.statesStoppingPoint.noul,
+    needsNetwork: response.answers.needsNetwork.noul,
+    needsFullAccess: response.answers.needsFullAccess.noul,
   };
 }

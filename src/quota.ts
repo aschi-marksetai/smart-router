@@ -1,17 +1,15 @@
 import { $ } from "bun";
+import type { Config, HarnessName } from "./config.ts";
 
 const CODEXBAR_BINARY = "codexbar";
-const PROVIDERS = ["claude", "codex"] as const;
-
-type QuotaProviderName = (typeof PROVIDERS)[number];
 export type QuotaProvider = {
   weeklyUsedPercent: number;
   weeklyResetsAt: string;
   fiveHourUsedPercent: number | null;
   pace: string;
 };
-export type QuotaSnapshot = Record<QuotaProviderName, QuotaProvider | null>;
-export type QuotaError = { error: "codexbar not installed" };
+export type QuotaSnapshot = Partial<Record<HarnessName, QuotaProvider | null>>;
+export type QuotaError = { error: "codexbar not installed" | "quota disabled" };
 export type QuotaResult = QuotaSnapshot | QuotaError;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -58,7 +56,7 @@ export function normalizeCodexbar(payload: unknown): QuotaProvider | null {
 }
 
 export async function runCodexbar(
-  provider: QuotaProviderName,
+  provider: string,
 ): Promise<QuotaProvider | null> {
   try {
     const output =
@@ -69,8 +67,16 @@ export async function runCodexbar(
   }
 }
 
-export async function getQuota(): Promise<QuotaResult> {
+export async function getQuota(config?: Config): Promise<QuotaResult> {
+  if (config && !config.quota.enabled) return { error: "quota disabled" };
   if (!Bun.which(CODEXBAR_BINARY)) return { error: "codexbar not installed" };
-  const [claude, codex] = await Promise.all(PROVIDERS.map(runCodexbar));
-  return { claude, codex };
+  const entries = await Promise.all(
+    Object.entries(
+      config?.quota.providers ?? { claude: "claude", codex: "codex" },
+    ).map(
+      async ([harness, provider]) =>
+        [harness, await runCodexbar(provider)] as const,
+    ),
+  );
+  return Object.fromEntries(entries);
 }

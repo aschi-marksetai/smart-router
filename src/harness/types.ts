@@ -1,8 +1,3 @@
-export type ProcessRunner = (
-  argv: string[],
-  options: { cwd: string },
-) => Promise<string>;
-
 export type HarnessOptions = {
   cwd: string;
   model: string;
@@ -10,28 +5,50 @@ export type HarnessOptions = {
   worktree?: boolean;
   claudePermissionMode?: string;
   codexSandbox?: string;
-  runner?: ProcessRunner;
+  codexConfigOverrides?: string[];
+  allowedTools?: string;
+  schema?: { path: string; content: string };
+  binary?: string;
+};
+
+export type Usage = {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number | null;
+};
+
+export type SpawnCommand = { argv: string[]; sessionId?: string };
+export type ParsedOutput = {
+  sessionId: string;
+  result: string;
+  usage: Usage | null;
 };
 
 export function parseJsonLines(output: string): unknown[] {
-  return output
-    .split("\n")
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line));
+  const values: unknown[] = [];
+  for (const line of output.split("\n")) {
+    try {
+      values.push(JSON.parse(line));
+    } catch {}
+  }
+  return values;
 }
 
-export async function run(
-  argv: string[],
-  options: HarnessOptions,
-): Promise<string> {
-  if (options.runner) return options.runner(argv, { cwd: options.cwd });
-  const process = Bun.spawn(argv, {
-    cwd: options.cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-  });
-  const output = await new Response(process.stdout).text();
-  if ((await process.exited) !== 0)
-    throw new Error(`Command failed: ${argv[0]}`);
-  return output;
+export function record(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return undefined;
+  return value as Record<string, unknown>;
+}
+
+export function usageFrom(
+  value: unknown,
+  costUsd: number | null = null,
+): Usage | null {
+  const usage = record(value);
+  if (!usage) return null;
+  const inputTokens = usage.input_tokens;
+  const outputTokens = usage.output_tokens;
+  if (typeof inputTokens !== "number" || typeof outputTokens !== "number")
+    return null;
+  return { inputTokens, outputTokens, costUsd };
 }

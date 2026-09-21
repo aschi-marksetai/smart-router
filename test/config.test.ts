@@ -25,3 +25,14 @@ test("loads the empty default and round-trips config", async () => {
   await saveConfig(config);
   expect(await loadConfig()).toEqual(config);
 });
+
+test("does not restore removed default quota providers", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-config-"));
+  temporaryDirectories.push(directory);
+  process.env[CONFIG_DIRECTORY_ENV] = directory;
+  await saveConfig({
+    ...DEFAULT_CONFIG,
+    quota: { enabled: true, providers: { codex: "codex" } },
+  });
+  expect((await loadConfig()).quota.providers).toEqual({ codex: "codex" });
+});

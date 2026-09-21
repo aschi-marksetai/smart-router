@@ -7,8 +7,21 @@ defaultTest:
   assert:
     - type: javascript
       value: >-
-        output.needsBrowser >= 0 && output.needsBrowser <= 1 && typeof output.needsBrowser === 'number' && (output.statesStoppingPoint === null || (typeof output.statesStoppingPoint === 'number' && output.statesStoppingPoint >= 0 && output.statesStoppingPoint <= 1)) && (output.fellBack === false || context.vars.allowFallback === true)
+        output.needsBrowser >= 0 && output.needsBrowser <= 1 && typeof output.needsBrowser === 'number' && (output.statesStoppingPoint === null || (typeof output.statesStoppingPoint === 'number' && output.statesStoppingPoint >= 0 && output.statesStoppingPoint <= 1)) && (output.needsNetwork === null || (typeof output.needsNetwork === 'number' && output.needsNetwork >= 0 && output.needsNetwork <= 1)) && (output.needsFullAccess === null || (typeof output.needsFullAccess === 'number' && output.needsFullAccess >= 0 && output.needsFullAccess <= 1)) && (output.fellBack === false || context.vars.allowFallback === true)
 tests:
+  - vars:
+      prompt: Add the zod package with bun add and use it to validate the config loader
+    assert:
+      - type: javascript
+        value: >-
+          output.needsNetwork > 0.5
+  - vars:
+      prompt: Rename a local variable in src/config.ts
+      allowFallback: true
+    assert:
+      - type: javascript
+        value: >-
+          output.needsNetwork < 0.5 && output.needsFullAccess < 0.5
   - vars:
       prompt: Migrate the config loader to async. Done when bun test passes and no sync fs calls remain in src/config.ts; stop there.
     assert:
@@ -121,3 +134,16 @@ tests:
       - type: javascript
         value: >-
           ['claude:claude-fable-5-1', 'claude:claude-opus-5'].includes(output.pick.split('@')[0])
+  - vars:
+      prompt: Read-only discovery for migrating the MarkSet worker VM (ssh alias markset-worker-1, currently on Proxmox) to Google Cloud. SSH to the VM, inventory the services, cron jobs, mounted volumes and open ports, and write the findings to docs/migration-inventory.md. Done when the inventory file exists; do not change anything on the VM.
+      allowFallback: true
+    assert:
+      - type: javascript
+        value: >-
+          output.needsNetwork > 0.5
+  - vars:
+      prompt: Build a local skill that lets an agent work with a self-hosted Bigcapital accounting instance through its REST API instead of the browser. Write the skill into ~/.agents/skills/bigcapital/ and register it in the global skills index. Done when the skill directory exists and a dry-run invocation lists its commands; stop there.
+    assert:
+      - type: javascript
+        value: >-
+          output.needsFullAccess > 0.5

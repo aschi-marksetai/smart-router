@@ -2,6 +2,9 @@ import { expect, test } from "bun:test";
 import { DEFAULT_CONFIG, type Config } from "../src/config.ts";
 import type { DoctorResult } from "../src/doctor.ts";
 import {
+  CODEX_DANGER_FULL_ACCESS_SANDBOX,
+  CODEX_WORKSPACE_WRITE_SANDBOX,
+  chooseCodexSandbox,
   needsStoppingPoint,
   route,
   type JevClient,
@@ -61,6 +64,8 @@ function deps(overrides: Partial<RouteDeps> = {}): RouteDeps {
         effort: { choice: "high", probabilities: {} },
         needsBrowser: { noul: 0.2 },
         statesStoppingPoint: { noul: 0.8 },
+        needsNetwork: { noul: 0.1 },
+        needsFullAccess: { noul: 0.1 },
       },
     }),
   };
@@ -98,6 +103,22 @@ test("applies quota and confidential rules", async () => {
   expect("candidates" in result && result.candidates).toEqual(["codex:terra"]);
 });
 
+test("uses configured confidential provider exclusions", async () => {
+  const result = await route(
+    "task",
+    { confidential: true },
+    deps({
+      config: {
+        ...config,
+        rules: { confidentialExcludedProviders: ["different-provider"] },
+      },
+    }),
+  );
+  expect("candidates" in result && result.candidates).toContain(
+    "pi:openrouter/model",
+  );
+});
+
 test("falls back below the confidence floor", async () => {
   const result = await route(
     "task",
@@ -115,6 +136,8 @@ test("falls back below the confidence floor", async () => {
             effort: { choice: "high", probabilities: {} },
             needsBrowser: { noul: 0 },
             statesStoppingPoint: { noul: 0.8 },
+            needsNetwork: { noul: 0 },
+            needsFullAccess: { noul: 0 },
           },
         }),
       },
@@ -140,12 +163,115 @@ test("clamps the selected effort to the model's supported efforts", async () => 
             effort: { choice: "xhigh", probabilities: { xhigh: 1 } },
             needsBrowser: { noul: 0.1 },
             statesStoppingPoint: { noul: 0.8 },
+            needsNetwork: { noul: 0 },
+            needsFullAccess: { noul: 0 },
           },
         }),
       },
     }),
   );
   expect("pick" in result && result.pick).toBe("codex:terra@high");
+});
+
+test("clamps by known effort rank regardless of declaration order", async () => {
+  const result = await route(
+    "task",
+    {},
+    deps({
+      config: {
+        ...config,
+        models: [
+          {
+            id: "codex:terra",
+            harness: "codex",
+            model: "terra",
+            efforts: ["high", "low"],
+          },
+        ],
+      },
+      doctor: async () => ({
+        ...detection,
+        candidates: ["codex:terra@high", "codex:terra@low"],
+      }),
+      client: {
+        systemOne: async () => ({
+          answers: {
+            model: {
+              choice: "codex:terra",
+              confidence: 0.9,
+              probabilities: {},
+            },
+            effort: { choice: "xhigh", probabilities: {} },
+            needsBrowser: { noul: 0 },
+            statesStoppingPoint: { noul: 1 },
+            needsNetwork: { noul: 0 },
+            needsFullAccess: { noul: 0 },
+          },
+        }),
+      },
+    }),
+  );
+  expect("pick" in result && result.pick).toBe("codex:terra@high");
+});
+
+test("clamps using the model's configured effort order", async () => {
+  const result = await route(
+    "task",
+    {},
+    deps({
+      config: {
+        ...config,
+        models: [
+          {
+            id: "codex:terra",
+            harness: "codex",
+            model: "terra",
+            efforts: ["minimal", "standard", "deep"],
+          },
+        ],
+      },
+      doctor: async () => ({
+        ...detection,
+        candidates: [
+          "codex:terra@minimal",
+          "codex:terra@standard",
+          "codex:terra@deep",
+        ],
+      }),
+      client: {
+        systemOne: async () => ({
+          answers: {
+            model: {
+              choice: "codex:terra",
+              confidence: 0.9,
+              probabilities: {},
+            },
+            effort: { choice: "custom", probabilities: {} },
+            needsBrowser: { noul: 0 },
+            statesStoppingPoint: { noul: 1 },
+            needsNetwork: { noul: 0 },
+            needsFullAccess: { noul: 0 },
+          },
+        }),
+      },
+    }),
+  );
+  expect("pick" in result && result.pick).toBe("codex:terra@standard");
+});
+
+test("uses the first eligible candidate when the default is unavailable", async () => {
+  const result = await route(
+    "task",
+    {},
+    deps({
+      config: { ...config, defaultModelId: "", rules: { confidenceFloor: 1 } },
+    }),
+  );
+  expect(result).toMatchObject({
+    pick: "claude:opus@high",
+    fellBack: true,
+    reason: "default model unavailable; using claude:opus",
+  });
 });
 
 test("returns state without calling Jev when dry-running", async () => {
@@ -180,6 +306,8 @@ test("falls back when Jev throws", async () => {
     reason: "offline",
     needsBrowser: null,
     statesStoppingPoint: null,
+    needsNetwork: null,
+    needsFullAccess: null,
   });
 });
 
@@ -188,6 +316,33 @@ test("passes through Jev's stopping-point score", async () => {
   expect("statesStoppingPoint" in result && result.statesStoppingPoint).toBe(
     0.8,
   );
+});
+
+test("chooses Codex sandboxes from route scores", () => {
+  const defaults = {
+    configuredSandbox: CODEX_WORKSPACE_WRITE_SANDBOX,
+    autoSandbox: true,
+    allowFullAccess: true,
+    routingRan: true,
+    needsNetwork: 0,
+    needsFullAccess: 0,
+  };
+  const cases = [
+    [{ needsFullAccess: 0.6 }, CODEX_DANGER_FULL_ACCESS_SANDBOX, false],
+    [{ needsNetwork: 0.6 }, CODEX_WORKSPACE_WRITE_SANDBOX, true],
+    [{ autoSandbox: false }, CODEX_WORKSPACE_WRITE_SANDBOX, false],
+    [
+      { needsNetwork: null, needsFullAccess: null },
+      CODEX_WORKSPACE_WRITE_SANDBOX,
+      false,
+    ],
+    [{ callerSandbox: "read-only", needsFullAccess: 0.6 }, "read-only", false],
+  ] as const;
+  for (const [options, sandbox, usesNetworkAccess] of cases)
+    expect(chooseCodexSandbox({ ...defaults, ...options })).toEqual({
+      sandbox,
+      usesNetworkAccess,
+    });
 });
 
 test("requires a stopping point only for configured Jev picks", () => {
@@ -204,4 +359,45 @@ test("requires a stopping point only for configured Jev picks", () => {
   ).toBe(true);
   expect(needsStoppingPoint(config, result)).toBe(false);
   expect(needsStoppingPoint(config, { ...result, fellBack: true })).toBe(false);
+});
+
+test("a missing TypeSafe key falls back instead of throwing at startup", async () => {
+  const { defaultRouteDeps } = await import("../src/route.ts");
+  const savedKey = process.env.TYPESAFE_API_KEY;
+  delete process.env.TYPESAFE_API_KEY;
+  try {
+    const config = {
+      ...(await import("../src/config.ts")).DEFAULT_CONFIG,
+      harnesses: { codex: { enabled: true, auth: "subscription" as const } },
+      models: [
+        {
+          id: "codex:m",
+          harness: "codex" as const,
+          model: "m",
+          efforts: ["medium"],
+        },
+      ],
+      defaultModelId: "codex:m",
+    };
+    const deps = {
+      ...defaultRouteDeps(config),
+      doctor: async () => ({
+        harnesses: {
+          claude: { installed: false, version: null, authed: false },
+          codex: { installed: true, version: "1", authed: true },
+          pi: { installed: false, version: null, authed: false },
+        },
+        providers: {},
+        codexbar: { installed: false },
+        candidates: ["codex:m@medium"],
+      }),
+      getQuota: async () => ({ error: "codexbar not installed" as const }),
+      preferences: "",
+    };
+    const result = await route("task", {}, deps);
+    expect("pick" in result && result.fellBack).toBe(true);
+    expect("pick" in result && result.reason).toMatch(/key|API/i);
+  } finally {
+    if (savedKey !== undefined) process.env.TYPESAFE_API_KEY = savedKey;
+  }
 });

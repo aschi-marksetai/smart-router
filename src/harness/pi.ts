@@ -1,9 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { DEFAULT_EFFORT } from "../config.ts";
-import { record } from "../files.ts";
 import { stateDir } from "../paths.ts";
-import { parseJsonLines, run, type HarnessOptions } from "./types.ts";
+import {
+  parseJsonLines,
+  record,
+  usageFrom,
+  type HarnessOptions,
+  type ParsedOutput,
+  type SpawnCommand,
+} from "./types.ts";
 
 const PI_BINARY = "pi";
 const PRINT_FLAG = "-p";
@@ -15,11 +21,16 @@ const SESSION_FLAG = "--session";
 const PI_SESSION_PREFIX = "pi-";
 const PI_SESSION_SUFFIX = ".json";
 
-// Assumes Pi emits message events with assistant text in message.content text parts.
-function finalAssistantText(output: string): string {
+function parseOutput(output: string, sessionId: string): ParsedOutput {
+  let outputSessionId = sessionId;
   let result = "";
+  let usage = null;
   for (const event of parseJsonLines(output)) {
-    const message = record(record(event)?.message);
+    const eventRecord = record(event);
+    const message = record(eventRecord?.message);
+    if (typeof eventRecord?.session_id === "string")
+      outputSessionId = eventRecord.session_id;
+    if (eventRecord?.usage) usage = usageFrom(eventRecord.usage);
     if (
       !message ||
       message.role !== "assistant" ||
@@ -28,57 +39,61 @@ function finalAssistantText(output: string): string {
       continue;
     const text = message.content
       .map(record)
-      .filter((part): part is Record<string, unknown> => part !== null)
+      .filter((part): part is Record<string, unknown> => part !== undefined)
       .filter((part) => part.type === "text" && typeof part.text === "string")
       .map((part) => part.text)
       .join("");
     if (text) result = text;
   }
-  return result;
+  return { sessionId: outputSessionId, result, usage };
 }
 
 function command(
   prompt: string,
   sessionId: string,
   options: HarnessOptions,
-): string[] {
-  return [
-    PI_BINARY,
-    PRINT_FLAG,
-    prompt,
-    MODE_FLAG,
-    JSON_MODE,
-    MODEL_FLAG,
-    options.model,
-    THINKING_FLAG,
-    options.effort ?? DEFAULT_EFFORT,
-    SESSION_FLAG,
+): SpawnCommand {
+  return {
+    argv: [
+      options.binary ?? PI_BINARY,
+      PRINT_FLAG,
+      prompt,
+      MODE_FLAG,
+      JSON_MODE,
+      MODEL_FLAG,
+      options.model,
+      THINKING_FLAG,
+      options.effort ?? DEFAULT_EFFORT,
+      SESSION_FLAG,
+      sessionId,
+    ],
     sessionId,
-  ];
+  };
 }
 
-export async function spawn(prompt: string, options: HarnessOptions) {
+export function buildSpawn(
+  prompt: string,
+  options: HarnessOptions,
+): SpawnCommand {
   const sessionId = join(
     stateDir(),
     `${PI_SESSION_PREFIX}${randomUUID()}${PI_SESSION_SUFFIX}`,
   );
-  return {
-    sessionId,
-    result: finalAssistantText(
-      await run(command(prompt, sessionId, options), options),
-    ),
-    resumeCommand: `${PI_BINARY} ${PRINT_FLAG} \"<msg>\" ${MODE_FLAG} ${JSON_MODE} ${MODEL_FLAG} ${options.model} ${THINKING_FLAG} ${options.effort ?? DEFAULT_EFFORT} ${SESSION_FLAG} ${sessionId}`,
-  };
+  return command(prompt, sessionId, options);
 }
 
-export async function resume(
+export function parseSpawnOutput(stdout: string): ParsedOutput {
+  return parseOutput(stdout, "");
+}
+
+export function buildResume(
   sessionId: string,
   message: string,
   options: HarnessOptions,
-) {
-  return {
-    result: finalAssistantText(
-      await run(command(message, sessionId, options), options),
-    ),
-  };
+): SpawnCommand {
+  return command(message, sessionId, options);
+}
+
+export function parseResumeOutput(stdout: string): ParsedOutput {
+  return parseOutput(stdout, "");
 }

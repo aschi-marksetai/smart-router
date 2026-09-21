@@ -3,18 +3,26 @@ import { globSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import type { Config, HarnessName } from "./config.ts";
+import { harnessBinary, type Config, type HarnessName } from "./config.ts";
 
 const CODEX_API_KEY_ENV = "CODEX_API_KEY";
-const CODEX_MODELS_CACHE = join(homedir(), ".codex", "models_cache.json");
+const CODEX_MODELS_CACHE = join(
+  process.env.CODEX_HOME ?? join(homedir(), ".codex"),
+  "models_cache.json",
+);
 const CLAUDE_CATALOG_GLOB = join(
-  homedir(),
-  ".claude",
+  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
   "cache",
   "model-catalog",
   "*.json",
 );
 const CODEXBAR_BINARY = "codexbar";
+const CLAUDE_PROVIDER = "anthropic";
+const CODEX_PROVIDER = "openai";
+const PROVIDERS_BY_HARNESS: Partial<Record<HarnessName, string>> = {
+  claude: CLAUDE_PROVIDER,
+  codex: CODEX_PROVIDER,
+};
 
 export type HarnessDetection = {
   installed: boolean;
@@ -48,26 +56,34 @@ async function detectHarness(
   name: HarnessName,
   config: Config,
 ): Promise<HarnessDetection> {
-  const installed = await isInstalled(name);
-  const version = installed ? await commandOutput(name, "--version") : null;
-  const providerKeySet = Object.values(config.providers).some(({ apiKeyEnv }) =>
-    Boolean(process.env[apiKeyEnv]),
+  const binary = harnessBinary(config, name);
+  const installed = await isInstalled(binary);
+  const version = installed ? await commandOutput(binary, "--version") : null;
+  const provider = PROVIDERS_BY_HARNESS[name];
+  const providerKeyEnv = provider && config.providers[provider]?.apiKeyEnv;
+  const providerKeySet = Boolean(providerKeyEnv && process.env[providerKeyEnv]);
+  const piProviderKeySet = Object.values(config.providers).some(
+    ({ apiKeyEnv }) => Boolean(process.env[apiKeyEnv]),
   );
   if (name === "claude")
     return {
       installed,
       version,
-      authed: globSync(CLAUDE_CATALOG_GLOB).length > 0,
+      authed:
+        config.harnesses.claude?.auth === "api-key"
+          ? providerKeySet
+          : globSync(CLAUDE_CATALOG_GLOB).length > 0,
     };
   if (name === "codex")
     return {
       installed,
       version,
       authed:
-        existsSync(CODEX_MODELS_CACHE) ||
-        Boolean(process.env[CODEX_API_KEY_ENV]),
+        config.harnesses.codex?.auth === "api-key"
+          ? providerKeySet || Boolean(process.env[CODEX_API_KEY_ENV])
+          : existsSync(CODEX_MODELS_CACHE),
     };
-  const authed = providerKeySet;
+  const authed = piProviderKeySet;
   return { installed, version, authed };
 }
 
@@ -77,7 +93,9 @@ export function buildCandidates(
 ): string[] {
   return config.models.flatMap(({ id, harness, efforts }) => {
     const detectedHarness = detection.harnesses[harness];
-    return detectedHarness.installed && detectedHarness.authed
+    return config.harnesses[harness]?.enabled === true &&
+      detectedHarness.installed &&
+      detectedHarness.authed
       ? efforts.map((effort) => `${id}@${effort}`)
       : [];
   });

@@ -1,11 +1,42 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { isMissingFile } from "./files.ts";
 
 const DOT_ENV_FILE_NAME = ".env";
 const COMMENT_PREFIX = "#";
 const ASSIGNMENT_SEPARATOR = "=";
 const EXPORT_PREFIX = "export ";
+const DOT_ENV_FILE_MODE = 0o600;
+
+export async function writeDotEnvValue(
+  filePath: string,
+  key: string,
+  value: string,
+): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  let contents = "";
+  try {
+    contents = await readFile(filePath, "utf8");
+  } catch (error) {
+    if (!isMissingFile(error)) throw error;
+  }
+  const lines = contents.split(/(\r?\n)/);
+  let replaced = false;
+  for (let index = 0; index < lines.length; index += 2) {
+    const line = lines[index];
+    if (line.trimStart().startsWith(`${key}=`)) {
+      lines[index] = `${key}=${value}`;
+      replaced = true;
+      break;
+    }
+  }
+  if (!replaced) {
+    if (contents && !contents.endsWith("\n")) lines.push("\n");
+    lines.push(`${key}=${value}`);
+  }
+  await writeFile(filePath, lines.join(""), { mode: DOT_ENV_FILE_MODE });
+  await chmod(filePath, DOT_ENV_FILE_MODE);
+}
 
 function unquote(value: string): string {
   const quote = value.at(0);

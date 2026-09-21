@@ -1,5 +1,6 @@
 {
   "name": "smart-router",
+  "version": "0.1.0",
   "type": "module",
   "bin": {
     "smart-router": "src/cli.ts"
@@ -9,6 +10,8 @@
     "eval:view": "promptfoo view",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "build": "bun scripts/build.ts",
+    "formula": "bun run scripts/formula.ts",
     "prettier-format": "prettier . --write"
   },
   "dependencies": {

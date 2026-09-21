@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { DEFAULT_CLAUDE_PERMISSION_MODE } from "../config.ts";
-import { run, type HarnessOptions } from "./types.ts";
+import {
+  record,
+  usageFrom,
+  type HarnessOptions,
+  type ParsedOutput,
+  type SpawnCommand,
+} from "./types.ts";
 
 const CLAUDE_BINARY = "claude";
 const PRINT_FLAG = "-p";
@@ -10,18 +16,18 @@ const MODEL_FLAG = "--model";
 const SESSION_ID_FLAG = "--session-id";
 const PERMISSION_MODE_FLAG = "--permission-mode";
 const WORKTREE_FLAG = "--worktree";
-const APPEND_SYSTEM_PROMPT_FLAG = "--append-system-prompt";
 const RESUME_FLAG = "--resume";
-const EFFORT_PROMPT_PREFIX = "Reasoning effort: ";
+const EFFORT_FLAG = "--effort";
+const ALLOWED_TOOLS_FLAG = "--allowedTools";
+const JSON_SCHEMA_FLAG = "--json-schema";
 
-function resultFrom(output: string): string {
-  return JSON.parse(output).result;
-}
-
-export async function spawn(prompt: string, options: HarnessOptions) {
+export function buildSpawn(
+  prompt: string,
+  options: HarnessOptions,
+): SpawnCommand {
   const sessionId = randomUUID();
   const argv = [
-    CLAUDE_BINARY,
+    options.binary ?? CLAUDE_BINARY,
     PRINT_FLAG,
     prompt,
     JSON_OUTPUT_FLAG,
@@ -34,31 +40,48 @@ export async function spawn(prompt: string, options: HarnessOptions) {
     options.claudePermissionMode ?? DEFAULT_CLAUDE_PERMISSION_MODE,
   ];
   if (options.worktree) argv.push(WORKTREE_FLAG);
-  if (options.effort)
-    argv.push(
-      APPEND_SYSTEM_PROMPT_FLAG,
-      `${EFFORT_PROMPT_PREFIX}${options.effort}`,
-    );
+  if (options.effort) argv.push(EFFORT_FLAG, options.effort);
+  if (options.allowedTools) argv.push(ALLOWED_TOOLS_FLAG, options.allowedTools);
+  if (options.schema) argv.push(JSON_SCHEMA_FLAG, options.schema.content);
+  return { argv, sessionId };
+}
+
+export function parseSpawnOutput(stdout: string): ParsedOutput {
+  const output = record(JSON.parse(stdout));
+  const result = output?.result;
+  const sessionId = output?.session_id;
+  const costUsd = output?.total_cost_usd;
   return {
-    sessionId,
-    result: resultFrom(await run(argv, options)),
-    resumeCommand: `${CLAUDE_BINARY} ${PRINT_FLAG} ${RESUME_FLAG} ${sessionId} \"<msg>\" ${JSON_OUTPUT_FLAG} ${JSON_OUTPUT_FORMAT}`,
+    sessionId: typeof sessionId === "string" ? sessionId : "",
+    result: typeof result === "string" ? result : "",
+    usage: usageFrom(
+      output?.usage,
+      typeof costUsd === "number" ? costUsd : null,
+    ),
   };
 }
 
-export async function resume(
+export function buildResume(
   sessionId: string,
   message: string,
   options: HarnessOptions,
-) {
+): SpawnCommand {
   const argv = [
-    CLAUDE_BINARY,
+    options.binary ?? CLAUDE_BINARY,
     PRINT_FLAG,
     RESUME_FLAG,
     sessionId,
     message,
     JSON_OUTPUT_FLAG,
     JSON_OUTPUT_FORMAT,
+    PERMISSION_MODE_FLAG,
+    options.claudePermissionMode ?? DEFAULT_CLAUDE_PERMISSION_MODE,
   ];
-  return { result: resultFrom(await run(argv, options)) };
+  if (options.allowedTools) argv.push(ALLOWED_TOOLS_FLAG, options.allowedTools);
+  if (options.schema) argv.push(JSON_SCHEMA_FLAG, options.schema.content);
+  return { argv, sessionId };
+}
+
+export function parseResumeOutput(stdout: string): ParsedOutput {
+  return parseSpawnOutput(stdout);
 }

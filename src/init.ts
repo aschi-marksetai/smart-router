@@ -1,6 +1,12 @@
-import { copyFile, mkdir, readFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
+import {
+  guardrailsTemplate,
+  preferencesInterviewTemplate,
+  preferencesTemplate,
+} from "./assets.ts";
 import {
   cancel,
   confirm,
@@ -9,6 +15,7 @@ import {
   multiselect,
   note,
   outro,
+  password,
   select,
   text,
 } from "@clack/prompts";
@@ -16,6 +23,8 @@ import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import {
   configPath,
   DEFAULT_CONFIG,
+  DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
+  harnessBinary,
   loadConfig,
   type Config,
   type HarnessName,
@@ -24,39 +33,19 @@ import {
 import { enumerate, type EnumeratedModel } from "./enumerate.ts";
 import { doctor } from "./doctor.ts";
 import { configDir } from "./paths.ts";
+import { writeDotEnvValue } from "./env.ts";
 
 const HARNESS_NAMES: HarnessName[] = ["claude", "codex", "pi"];
-const SUBSCRIPTION_HARNESSES: ("claude" | "codex")[] = ["claude", "codex"];
 const ENABLE_ALL = "enable-all";
 const KEEP = "keep";
 const EDITOR_ENVIRONMENT_VARIABLE = "EDITOR";
 const PREFERENCES_FILE_NAME = "preferences.md";
 const GUARDRAILS_FILE_NAME = "guardrails.md";
-const CLAUDE_BINARY = "claude";
 const CLAUDE_ADD_DIR_FLAG = "--add-dir";
-const CODEX_BINARY = "codex";
 const CODEX_DIRECTORY_FLAG = "-C";
 const CODEX_SANDBOX_FLAG = "-s";
 const CODEX_WORKSPACE_WRITE_SANDBOX = "workspace-write";
 const DEFAULT_CONFIDENCE_FLOOR = 0.35;
-const TEMPLATE_PATH = join(
-  import.meta.dir,
-  "..",
-  "templates",
-  PREFERENCES_FILE_NAME,
-);
-const GUARDRAILS_TEMPLATE_PATH = join(
-  import.meta.dir,
-  "..",
-  "templates",
-  GUARDRAILS_FILE_NAME,
-);
-const INTERVIEW_TEMPLATE_PATH = join(
-  import.meta.dir,
-  "..",
-  "templates",
-  "preferences-interview.md",
-);
 const INTERVIEW_MODE_SEEDED =
   "just seeded from the default template, so treat it as a starting point to replace with my own preferences";
 const INTERVIEW_MODE_EXISTING =
@@ -76,6 +65,7 @@ const PROVIDER_ENVIRONMENT_VARIABLES: Record<string, string> = {
   openrouter: "OPENROUTER_API_KEY",
   google: "GOOGLE_API_KEY",
 };
+const TYPESAFE_KEYS_URL = "https://console.typesafe.ai/keys";
 
 type InitSection = "auth" | "models" | "rules" | "preferences";
 type PreferencesEditMethod = "editor" | "claude" | "codex" | "skip";
@@ -133,19 +123,28 @@ async function runAuth(
       }),
     );
     const current = next.harnesses[harness] ?? { enabled };
-    next.harnesses[harness] = { ...current, enabled };
-    if (!enabled || harness === "pi") continue;
+    if (harness === "pi") next.harnesses.pi = { ...next.harnesses.pi, enabled };
+    else next.harnesses[harness] = { ...current, enabled };
+    if (!enabled) continue;
     const auth = await prompt(
       select<"subscription" | "api-key">({
         message: `${harness} authentication`,
-        options: [
-          { value: "subscription", label: "Subscription" },
-          { value: "api-key", label: "API key" },
-        ],
-        initialValue: current.auth ?? "subscription",
+        options:
+          harness === "pi"
+            ? [{ value: "api-key", label: "API key" }]
+            : [
+                { value: "subscription", label: "Subscription" },
+                { value: "api-key", label: "API key" },
+              ],
+        initialValue:
+          current.auth ?? (harness === "pi" ? "api-key" : "subscription"),
       }),
     );
-    next.harnesses[harness] = { enabled, auth };
+    if (harness === "pi") {
+      next.harnesses.pi = { ...next.harnesses.pi, enabled, auth: "api-key" };
+    } else {
+      next.harnesses[harness] = { ...current, enabled, auth };
+    }
   }
   for (const provider of PROVIDER_NAMES) {
     const current = next.providers[provider]?.apiKeyEnv;
@@ -160,6 +159,29 @@ async function runAuth(
       )) ?? "";
     if (apiKeyEnv) next.providers[provider] = { apiKeyEnv };
     if (!apiKeyEnv) delete next.providers[provider];
+  }
+  if (Bun.which("codexbar")) {
+    const enabled = await prompt(
+      confirm({
+        message: "Use codexbar for quota?",
+        initialValue: next.quota.enabled,
+      }),
+    );
+    next.quota.enabled = enabled;
+    if (enabled) {
+      for (const harness of HARNESS_NAMES) {
+        if (!next.harnesses[harness]?.enabled) continue;
+        const provider =
+          (await prompt(
+            text({
+              message: `${harness} codexbar provider (blank = none)`,
+              initialValue: next.quota.providers[harness] ?? "",
+            }),
+          )) ?? "";
+        if (provider) next.quota.providers[harness] = provider;
+        if (!provider) delete next.quota.providers[harness];
+      }
+    }
   }
   return next;
 }
@@ -237,7 +259,7 @@ async function runRules(
   if (start === "skip") return config;
   const next = structuredClone(config);
   const cutoffPercent = { ...next.rules.quotaCutoffPercent };
-  for (const harness of SUBSCRIPTION_HARNESSES) {
+  for (const harness of HARNESS_NAMES) {
     if (
       !next.harnesses[harness]?.enabled ||
       next.harnesses[harness]?.auth !== "subscription"
@@ -272,6 +294,21 @@ async function runRules(
     .map((glob) => glob.trim())
     .filter(Boolean);
   next.rules.confidentialPathGlobs = globs.length ? globs : undefined;
+  const excludedProviders =
+    (await prompt(
+      text({
+        message: "Confidential excluded providers, comma-separated",
+        initialValue: (
+          next.rules.confidentialExcludedProviders ??
+          DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS
+        ).join(", "),
+      }),
+    )) ?? "";
+  const providers = excludedProviders
+    .split(",")
+    .map((provider) => provider.trim())
+    .filter(Boolean);
+  next.rules.confidentialExcludedProviders = providers;
   const confidenceFloor =
     (await prompt(
       text({
@@ -289,6 +326,18 @@ async function runRules(
   next.rules.confidenceFloor = confidenceFloor
     ? Number(confidenceFloor)
     : DEFAULT_CONFIDENCE_FLOOR;
+  next.spawn.autoSandbox = await prompt(
+    confirm({
+      message: "Choose the Codex sandbox automatically from the task?",
+      initialValue: next.spawn.autoSandbox,
+    }),
+  );
+  next.spawn.allowFullAccess = await prompt(
+    confirm({
+      message: "Allow automatic Codex full-access sandbox?",
+      initialValue: next.spawn.allowFullAccess,
+    }),
+  );
   const enabledCandidates = candidates(next);
   if (!enabledCandidates.length) return next;
   const enabledModelIds = [...new Set(enabledCandidates.map(({ id }) => id))];
@@ -346,10 +395,10 @@ async function runPreferences(
     await mkdir(configDirectory, { recursive: true });
   }
   if (wasJustSeeded) {
-    await copyFile(TEMPLATE_PATH, preferencesPath);
+    await writeFile(preferencesPath, preferencesTemplate);
   }
   if (!existsSync(guardrailsPath))
-    await copyFile(GUARDRAILS_TEMPLATE_PATH, guardrailsPath);
+    await writeFile(guardrailsPath, guardrailsTemplate);
   const detection = await doctor(config);
   const editOptions: { value: PreferencesEditMethod; label: string }[] = [
     { value: "editor", label: "Open in $EDITOR" },
@@ -383,7 +432,7 @@ async function runPreferences(
           `${harness}:${model} (efforts: ${efforts.join(", ")})`,
       )
       .join("\n");
-    const interviewPrompt = (await readFile(INTERVIEW_TEMPLATE_PATH, "utf8"))
+    const interviewPrompt = preferencesInterviewTemplate
       .replaceAll("{{PREFERENCES_PATH}}", preferencesPath)
       .replaceAll("{{CANDIDATES}}", candidateLines)
       .replaceAll(
@@ -392,9 +441,14 @@ async function runPreferences(
       );
     const argv =
       editMethod === "claude"
-        ? [CLAUDE_BINARY, CLAUDE_ADD_DIR_FLAG, configDirectory, interviewPrompt]
+        ? [
+            harnessBinary(config, "claude"),
+            CLAUDE_ADD_DIR_FLAG,
+            configDirectory,
+            interviewPrompt,
+          ]
         : [
-            CODEX_BINARY,
+            harnessBinary(config, "codex"),
             CODEX_DIRECTORY_FLAG,
             configDirectory,
             CODEX_SANDBOX_FLAG,
@@ -414,13 +468,31 @@ export async function runInit(options: {
   section?: string;
   reset?: boolean;
 }): Promise<void> {
+  let config = options.reset
+    ? structuredClone(DEFAULT_CONFIG)
+    : await loadConfig();
+  const keyEnvironmentVariable = config.jev.apiKeyEnv;
+  if (!process.env[keyEnvironmentVariable]) {
+    const apiKey = await prompt(
+      password({
+        message: `Paste your TypeSafe API key (for Jev routing) — get one at ${TYPESAFE_KEYS_URL}`,
+      }),
+    );
+    if (apiKey.trim()) {
+      await writeDotEnvValue(
+        join(configDir(), ".env"),
+        keyEnvironmentVariable,
+        apiKey.trim(),
+      );
+      process.env[keyEnvironmentVariable] = apiKey.trim();
+    } else {
+      note("Routing will fall back to the default model until the key exists.");
+    }
+  }
   const section = options.section;
   if (section !== undefined && !isSection(section))
     throw new Error("Section must be auth, models, rules, or preferences");
   const hasExistingConfig = !options.reset && existsSync(configPath());
-  let config = options.reset
-    ? structuredClone(DEFAULT_CONFIG)
-    : await loadConfig();
   const sections: Record<
     InitSection,
     (config: Config, existing: boolean) => Promise<Config>
@@ -444,4 +516,15 @@ export async function runInit(options: {
     throw error;
   }
   outro("Configuration saved");
+  const skillPath = join(
+    process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
+    "skills",
+    "smart-router",
+    "SKILL.md",
+  );
+  if (!existsSync(skillPath))
+    note(
+      "Install the Claude Code skill with: smart-router install-skill",
+      "Next step",
+    );
 }

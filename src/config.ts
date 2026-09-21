@@ -9,12 +9,19 @@ export const DEFAULT_CLAUDE_PERMISSION_MODE = "bypassPermissions";
 export const DEFAULT_CODEX_SANDBOX = "workspace-write";
 export const DEFAULT_JEV_MODEL = "jev-latest";
 export const DEFAULT_JEV_API_KEY_ENV = "TYPESAFE_API_KEY";
+export const DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS = ["openrouter"];
 const CONFIG_FILE_NAME = "config.json";
 
 export type HarnessName = "claude" | "codex" | "pi";
 export type HarnessConfig = {
   enabled: boolean;
   auth?: "subscription" | "api-key";
+  binary?: string;
+};
+export type PiHarnessConfig = {
+  enabled: boolean;
+  auth?: "api-key";
+  binary?: string;
 };
 export type ProviderConfig = { apiKeyEnv: string };
 export type ModelConfig = {
@@ -25,19 +32,30 @@ export type ModelConfig = {
 };
 export type Config = {
   version: number;
-  harnesses: Partial<Record<HarnessName, HarnessConfig>>;
+  harnesses: {
+    claude?: HarnessConfig;
+    codex?: HarnessConfig;
+    pi?: PiHarnessConfig;
+  };
   providers: Record<string, ProviderConfig>;
   models: ModelConfig[];
   rules: {
-    quotaCutoffPercent?: Partial<Record<"claude" | "codex", number>>;
+    quotaCutoffPercent?: Partial<Record<HarnessName, number>>;
+    confidentialExcludedProviders?: string[];
     confidentialPathGlobs?: string[];
     stoppingPointRequiredFor?: string[];
     confidenceFloor?: number;
   };
   defaultModelId: string;
   defaultEffort: string;
-  spawn: { claudePermissionMode: string; codexSandbox: string };
+  spawn: {
+    claudePermissionMode: string;
+    codexSandbox: string;
+    autoSandbox: boolean;
+    allowFullAccess: boolean;
+  };
   jev: { model: string; apiKeyEnv: string };
+  quota: { enabled: boolean; providers: Partial<Record<HarnessName, string>> };
 };
 
 export const DEFAULT_CONFIG: Config = {
@@ -45,14 +63,19 @@ export const DEFAULT_CONFIG: Config = {
   harnesses: {},
   providers: {},
   models: [],
-  rules: {},
+  rules: {
+    confidentialExcludedProviders: DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
+  },
   defaultModelId: "",
   defaultEffort: DEFAULT_EFFORT,
   spawn: {
     claudePermissionMode: DEFAULT_CLAUDE_PERMISSION_MODE,
     codexSandbox: DEFAULT_CODEX_SANDBOX,
+    autoSandbox: true,
+    allowFullAccess: true,
   },
   jev: { model: DEFAULT_JEV_MODEL, apiKeyEnv: DEFAULT_JEV_API_KEY_ENV },
+  quota: { enabled: true, providers: { claude: "claude", codex: "codex" } },
 };
 
 export function configPath(): string {
@@ -61,11 +84,28 @@ export function configPath(): string {
 
 export async function loadConfig(): Promise<Config> {
   try {
-    return JSON.parse(await readFile(configPath(), "utf8"));
+    const saved = JSON.parse(await readFile(configPath(), "utf8"));
+    return {
+      ...DEFAULT_CONFIG,
+      ...saved,
+      rules: { ...DEFAULT_CONFIG.rules, ...saved.rules },
+      spawn: { ...DEFAULT_CONFIG.spawn, ...saved.spawn },
+      quota: {
+        ...DEFAULT_CONFIG.quota,
+        ...saved.quota,
+        ...(saved.quota && "providers" in saved.quota
+          ? { providers: saved.quota.providers }
+          : {}),
+      },
+    };
   } catch (error) {
     if (isMissingFile(error)) return structuredClone(DEFAULT_CONFIG);
     throw error;
   }
+}
+
+export function harnessBinary(config: Config, harness: HarnessName): string {
+  return config.harnesses[harness]?.binary ?? harness;
 }
 
 export async function saveConfig(config: Config): Promise<void> {

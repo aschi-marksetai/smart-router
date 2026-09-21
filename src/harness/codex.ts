@@ -1,8 +1,14 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_CODEX_SANDBOX } from "../config.ts";
-import { record } from "../files.ts";
-import { parseJsonLines, run, type HarnessOptions } from "./types.ts";
+import {
+  parseJsonLines,
+  record,
+  usageFrom,
+  type HarnessOptions,
+  type ParsedOutput,
+  type SpawnCommand,
+} from "./types.ts";
 
 const CODEX_BINARY = "codex";
 const EXEC_COMMAND = "exec";
@@ -14,8 +20,11 @@ const CONFIG_FLAG = "-c";
 const SANDBOX_FLAG = "-s";
 const WORKTREE_FLAG = "--worktree";
 const SKIP_GIT_REPOSITORY_CHECK_FLAG = "--skip-git-repo-check";
+const OUTPUT_SCHEMA_FLAG = "--output-schema";
 const THREAD_STARTED_EVENT_TYPE = "thread.started";
 const ITEM_COMPLETED_EVENT_TYPE = "item.completed";
+const TURN_COMPLETED_EVENT_TYPE = "turn.completed";
+const ERROR_EVENT_TYPE = "error";
 const AGENT_MESSAGE_ITEM_TYPE = "agent_message";
 
 function isInsideGitRepository(cwd: string): boolean {
@@ -28,17 +37,25 @@ function isInsideGitRepository(cwd: string): boolean {
   }
 }
 
-function completedMessageText(output: string, requireSessionId = true) {
+function parseOutput(output: string, requireSessionId: boolean): ParsedOutput {
   let sessionId = "";
   let result = "";
+  let usage = null;
+  let errorMessage = "";
   for (const event of parseJsonLines(output)) {
     const eventRecord = record(event);
     if (!eventRecord) continue;
     const type = eventRecord.type;
-    const threadId = eventRecord.thread_id;
     const item = record(eventRecord.item);
-    if (type === THREAD_STARTED_EVENT_TYPE && typeof threadId === "string")
-      sessionId = threadId;
+    if (
+      type === THREAD_STARTED_EVENT_TYPE &&
+      typeof eventRecord.thread_id === "string"
+    )
+      sessionId = eventRecord.thread_id;
+    if (type === TURN_COMPLETED_EVENT_TYPE)
+      usage = usageFrom(eventRecord.usage);
+    if (type === ERROR_EVENT_TYPE && typeof eventRecord.message === "string")
+      errorMessage = eventRecord.message;
     if (
       type === ITEM_COMPLETED_EVENT_TYPE &&
       item?.type === AGENT_MESSAGE_ITEM_TYPE &&
@@ -46,14 +63,18 @@ function completedMessageText(output: string, requireSessionId = true) {
     )
       result = item.text;
   }
+  if (errorMessage) throw new Error(errorMessage);
   if (requireSessionId && !sessionId)
     throw new Error("Codex output did not contain a thread id");
-  return { sessionId, result };
+  return { sessionId, result, usage };
 }
 
-export async function spawn(prompt: string, options: HarnessOptions) {
+export function buildSpawn(
+  prompt: string,
+  options: HarnessOptions,
+): SpawnCommand {
   const argv = [
-    CODEX_BINARY,
+    options.binary ?? CODEX_BINARY,
     EXEC_COMMAND,
     JSON_FLAG,
     CHANGE_DIRECTORY_FLAG,
@@ -63,32 +84,40 @@ export async function spawn(prompt: string, options: HarnessOptions) {
   ];
   if (options.effort)
     argv.push(CONFIG_FLAG, `model_reasoning_effort=\"${options.effort}\"`);
+  for (const override of options.codexConfigOverrides ?? [])
+    argv.push(CONFIG_FLAG, override);
   argv.push(SANDBOX_FLAG, options.codexSandbox ?? DEFAULT_CODEX_SANDBOX);
   if (options.worktree) argv.push(WORKTREE_FLAG);
   if (!isInsideGitRepository(options.cwd))
     argv.push(SKIP_GIT_REPOSITORY_CHECK_FLAG);
+  if (options.schema) argv.push(OUTPUT_SCHEMA_FLAG, options.schema.path);
   argv.push(prompt);
-  const parsed = completedMessageText(await run(argv, options));
-  return {
-    ...parsed,
-    resumeCommand: `${CODEX_BINARY} ${EXEC_COMMAND} ${RESUME_COMMAND} ${parsed.sessionId} ${JSON_FLAG} \"<msg>\"`,
-  };
+  return { argv };
 }
 
-export async function resume(
+export function parseSpawnOutput(stdout: string): ParsedOutput {
+  return parseOutput(stdout, true);
+}
+
+export function buildResume(
   sessionId: string,
   message: string,
   options: HarnessOptions,
-) {
+): SpawnCommand {
   const argv = [
-    CODEX_BINARY,
+    options.binary ?? CODEX_BINARY,
     EXEC_COMMAND,
     RESUME_COMMAND,
     sessionId,
     JSON_FLAG,
-    message,
+    SANDBOX_FLAG,
+    options.codexSandbox ?? DEFAULT_CODEX_SANDBOX,
   ];
-  return {
-    result: completedMessageText(await run(argv, options), false).result,
-  };
+  if (options.schema) argv.push(OUTPUT_SCHEMA_FLAG, options.schema.path);
+  argv.push(message);
+  return { argv, sessionId };
+}
+
+export function parseResumeOutput(stdout: string): ParsedOutput {
+  return parseOutput(stdout, false);
 }

@@ -462,13 +462,14 @@ async function runPreferences(
         "{{MODE}}",
         wasJustSeeded ? INTERVIEW_MODE_SEEDED : INTERVIEW_MODE_EXISTING,
       );
+    // --add-dir is variadic in claude, so the prompt must come before it
     const argv =
       editMethod === "claude"
         ? [
             harnessBinary(config, "claude"),
+            interviewPrompt,
             CLAUDE_ADD_DIR_FLAG,
             configDirectory,
-            interviewPrompt,
           ]
         : [
             harnessBinary(config, "codex"),

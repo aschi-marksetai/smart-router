@@ -58,8 +58,11 @@ export function parseClaudeCatalog(payload: unknown): EnumeratedModel[] {
   return models(record(config)?.models).flatMap((model) => {
     const id = model.id;
     if (typeof id !== "string") return [];
+    const fullName = model.name;
     const shortName = model.short_name;
-    const name = typeof shortName === "string" ? shortName : id;
+    let name = id;
+    if (typeof shortName === "string") name = shortName;
+    if (typeof fullName === "string") name = fullName;
     const thinking = record(model.thinking);
     const efforts = models(thinking?.effort_options)
       .map((option) => option.id)
@@ -98,11 +101,13 @@ export function parseCodexModels(payload: unknown): EnumeratedModel[] {
       return [];
     const slug = model.slug;
     if (typeof slug !== "string") return [];
+    const displayName = model.display_name;
+    const name = typeof displayName === "string" ? displayName : slug;
     const efforts = models(model.supported_reasoning_levels)
       .map((level) => level.effort)
       .filter((effort): effort is string => typeof effort === "string");
     return [
-      entry("codex", slug, slug, efforts.length ? efforts : STANDARD_EFFORT),
+      entry("codex", slug, name, efforts.length ? efforts : STANDARD_EFFORT),
     ];
   });
 }

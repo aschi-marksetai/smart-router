@@ -20,10 +20,30 @@ test("detects configured API-key authentication", async () => {
       codex: { enabled: true, auth: "api-key", binary: "/usr/bin/true" },
     },
     providers: { anthropic: { apiKeyEnv: TEST_ANTHROPIC_KEY } },
+    ignoredModels: ["claude:retired"],
   };
-  const result = await doctor(config);
+  const result = await doctor(config, {
+    enumerate: async (harness) =>
+      harness === "claude"
+        ? [
+            {
+              id: "claude:new",
+              model: "new",
+              name: "New",
+              efforts: ["high"],
+            },
+            {
+              id: "claude:retired",
+              model: "retired",
+              name: "Retired",
+              efforts: ["high"],
+            },
+          ]
+        : [],
+  });
   expect(result.harnesses.claude.authed).toBe(true);
   expect(result.harnesses.codex.authed).toBe(true);
+  expect(result.availableModels).toEqual(["claude:new"]);
 });
 
 test("builds candidates only for installed and authed harnesses", () => {

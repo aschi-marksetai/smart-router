@@ -224,12 +224,27 @@ async function runModels(
         message: `Enable ${harness} models`,
         options: [
           { value: ENABLE_ALL, label: "Enable all" },
-          ...models.map(({ id, name }) => ({ value: id, label: name })),
+          ...[...models]
+            .sort((left, right) =>
+              left.name.localeCompare(right.name, undefined, { numeric: true }),
+            )
+            .map(({ id, name }) => ({ value: id, label: `${name}  ${id}` })),
         ],
         initialValues: currentIds,
       }),
     );
     const enabledModels = selectedModels(models, selectedIds);
+    const enabledModelIds = new Set(enabledModels.map(({ id }) => id));
+    const enumeratedModelIds = new Set(models.map(({ id }) => id));
+    const retainedIgnoredModels = next.ignoredModels.filter(
+      (id) => !enumeratedModelIds.has(id),
+    );
+    const ignoredModels = models
+      .filter(({ id }) => !enabledModelIds.has(id))
+      .map(({ id }) => id);
+    next.ignoredModels = [
+      ...new Set([...retainedIgnoredModels, ...ignoredModels]),
+    ];
     next.models = next.models.filter((model) => model.harness !== harness);
     next.models.push(
       ...enabledModels.map(({ id, model, efforts }) => ({

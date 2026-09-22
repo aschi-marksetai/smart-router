@@ -39,6 +39,7 @@ export type Config = {
   };
   providers: Record<string, ProviderConfig>;
   models: ModelConfig[];
+  ignoredModels: string[];
   rules: {
     quotaCutoffPercent?: Partial<Record<HarnessName, number>>;
     confidentialExcludedProviders?: string[];
@@ -64,6 +65,7 @@ export const DEFAULT_CONFIG: Config = {
   harnesses: {},
   providers: {},
   models: [],
+  ignoredModels: [],
   rules: {
     confidentialExcludedProviders: DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
   },

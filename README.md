@@ -12,7 +12,7 @@ Homebrew: `brew install aschi-marksetai/tap/smart-router`. Binaries are also on 
 
 ## Updating
 
-Homebrew users run `brew upgrade smart-router`. Other installs can run `smart-router update` (or `smart-router update --check` to only check). Route and spawn check once daily and print a stderr notice; disable it with `updates.check: false` or `SMART_ROUTER_NO_UPDATE_CHECK`. Release automation pushes the regenerated formula to the tap over a deploy key stored as the `TAP_DEPLOY_KEY` repository secret.
+Homebrew users run `brew upgrade smart-router`. Other installs can run `smart-router update` (or `smart-router update --check` to only check). Route and spawn check once daily and print stderr notices for updates and newly available models; disable them with `updates.check: false` or `SMART_ROUTER_NO_UPDATE_CHECK`. Release automation pushes the regenerated formula to the tap over a deploy key stored as the `TAP_DEPLOY_KEY` repository secret.
 
 ## Quickstart
 

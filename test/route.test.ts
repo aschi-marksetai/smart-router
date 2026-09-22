@@ -24,6 +24,7 @@ const detection: DoctorResult = {
     "codex:terra@high",
     "pi:openrouter/model@medium",
   ],
+  availableModels: [],
 };
 
 const config: Config = {
@@ -390,6 +391,7 @@ test("a missing TypeSafe key falls back instead of throwing at startup", async (
         providers: {},
         codexbar: { installed: false },
         candidates: ["codex:m@medium"],
+        availableModels: [],
       }),
       getQuota: async () => ({ error: "codexbar not installed" as const }),
       preferences: "",

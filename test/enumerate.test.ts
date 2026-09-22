@@ -13,6 +13,7 @@ test("parses the Claude catalog cache fixture", () => {
         models: [
           {
             id: "claude-x",
+            name: "Opus 5.5",
             short_name: "x",
             thinking: { effort_options: [{ id: "low" }, { id: "high" }] },
           },
@@ -24,7 +25,7 @@ test("parses the Claude catalog cache fixture", () => {
     {
       id: "claude:claude-x",
       model: "claude-x",
-      name: "x",
+      name: "Opus 5.5",
       efforts: ["low", "high"],
     },
   ]);
@@ -34,13 +35,14 @@ test("parses public Codex debug models fixtures", () => {
   const fixture = [
     {
       slug: "gpt-x",
+      display_name: "GPT X",
       visibility: "list",
       supported_reasoning_levels: [{ effort: "medium" }],
     },
     { slug: "hidden", visibility: "hide" },
   ];
   expect(parseCodexModels(fixture)).toEqual([
-    { id: "codex:gpt-x", model: "gpt-x", name: "gpt-x", efforts: ["medium"] },
+    { id: "codex:gpt-x", model: "gpt-x", name: "GPT X", efforts: ["medium"] },
   ]);
 });
 

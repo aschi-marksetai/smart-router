@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
 import { harnessBinary, type Config, type HarnessName } from "./config.ts";
+import { enumerate } from "./enumerate.ts";
 
 const CODEX_API_KEY_ENV = "CODEX_API_KEY";
 const CODEX_MODELS_CACHE = join(
@@ -17,6 +18,7 @@ const CLAUDE_CATALOG_GLOB = join(
   "*.json",
 );
 const CODEXBAR_BINARY = "codexbar";
+const HARNESS_NAMES: HarnessName[] = ["claude", "codex", "pi"];
 const CLAUDE_PROVIDER = "anthropic";
 const CODEX_PROVIDER = "openai";
 const PROVIDERS_BY_HARNESS: Partial<Record<HarnessName, string>> = {
@@ -34,7 +36,12 @@ export type Detection = {
   providers: Record<string, { apiKeySet: boolean }>;
   codexbar: { installed: boolean };
 };
-export type DoctorResult = Detection & { candidates: string[] };
+export type DoctorResult = Detection & {
+  candidates: string[];
+  availableModels: string[];
+};
+export type DetectionDeps = { enumerate: typeof enumerate };
+const DEFAULT_DETECTION_DEPS: DetectionDeps = { enumerate };
 
 async function commandOutput(
   command: string,
@@ -101,7 +108,10 @@ export function buildCandidates(
   });
 }
 
-export async function doctor(config: Config): Promise<DoctorResult> {
+export async function doctor(
+  config: Config,
+  deps: DetectionDeps = DEFAULT_DETECTION_DEPS,
+): Promise<DoctorResult> {
   const [claude, codex, pi] = await Promise.all([
     detectHarness("claude", config),
     detectHarness("codex", config),
@@ -116,5 +126,23 @@ export async function doctor(config: Config): Promise<DoctorResult> {
   );
   const codexbar = { installed: await isInstalled(CODEXBAR_BINARY) };
   const detection = { harnesses, providers, codexbar };
-  return { ...detection, candidates: buildCandidates(config, detection) };
+  const configuredModelIds = new Set(config.models.map(({ id }) => id));
+  const ignoredModelIds = new Set(config.ignoredModels);
+  const availableModels = (
+    await Promise.all(
+      HARNESS_NAMES.flatMap((harness) =>
+        config.harnesses[harness]?.enabled && harnesses[harness].authed
+          ? deps.enumerate(harness, config).catch(() => [])
+          : [],
+      ),
+    )
+  )
+    .flat()
+    .map(({ id }) => id)
+    .filter((id) => !configuredModelIds.has(id) && !ignoredModelIds.has(id));
+  return {
+    ...detection,
+    candidates: buildCandidates(config, detection),
+    availableModels: [...new Set(availableModels)],
+  };
 }

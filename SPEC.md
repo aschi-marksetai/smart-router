@@ -57,6 +57,7 @@ A CLI that picks which coding-agent harness and model should run a task, spawns 
       "efforts": ["medium"],
     },
   ],
+  "ignoredModels": [], // models deliberately left disabled in init
   "rules": {
     // all optional; anything absent is left to Jev
     "quotaCutoffPercent": { "claude": 85, "codex": 90 }, // per subscription provider; codexbar weekly window usedPercent >= cutoff removes that harness
@@ -89,7 +90,7 @@ Env vars are read from the process environment; the CLI also loads `.env` from t
 
 ### Updates
 
-The CLI caches the latest-release check for 24 hours. `route` and `spawn` print a newer-version notice on stderr unless `updates.check` is false or `SMART_ROUTER_NO_UPDATE_CHECK` is set. `update` downloads and verifies the matching release asset; `update --check` reports without changing files. Homebrew installations must use `brew upgrade smart-router`.
+The CLI caches the latest-release check for 24 hours. `route` and `spawn` print a newer-version notice and newly available models on stderr unless `updates.check` is false or `SMART_ROUTER_NO_UPDATE_CHECK` is set. `update` downloads and verifies the matching release asset; `update --check` reports without changing files. Homebrew installations must use `brew upgrade smart-router`.
 
 All commands print JSON on stdout and a one-line human summary on stderr. Exit code 0 on success, 1 on any error with `{ "error": "..." }` on stdout.
 
@@ -102,9 +103,12 @@ Read-only. Detects and prints:
   "harnesses": { "claude": { "installed": true, "version": "2.1.278", "authed": true }, "codex": {...}, "pi": {...} },
   "providers": { "openai": { "apiKeySet": false }, ... },
   "codexbar": { "installed": true },
-  "candidates": ["claude:opus@high", "codex:gpt-5.6-terra@medium", ...]   // from config.models × efforts, filtered to installed+authed harnesses
+  "candidates": ["claude:opus@high", "codex:gpt-5.6-terra@medium", ...],   // from config.models × efforts, filtered to installed+authed harnesses
+  "availableModels": ["claude:new-model", ...] // enumerated enabled+authed models not in config.models; best effort
 }
 ```
+
+`availableModels` lists best-effort enumerated models from enabled, authenticated harnesses that are neither configured nor in `ignoredModels`.
 
 Detection: `command -v` for binaries, `--version` for versions. Authed: claude → `~/.claude/cache/model-catalog/*.json` exists; codex → `~/.codex/models_cache.json` exists or `CODEX_API_KEY` set; pi → any provider key set. Never read auth/credential files.
 
@@ -115,7 +119,7 @@ The wizard. Sections in order: auth, models, rules, preferences. On an existing 
 At the start of every init run, prompt for a missing TypeSafe API key and store a non-blank answer in the config directory's `.env` file.
 
 - **auth**: for claude, codex, pi: enabled? auth by subscription or API key? For API-key providers (openai, anthropic, openrouter, google, plus any provider pi's registry knows): which env var holds the key (default to the conventional name; show whether it is currently set).
-- **models**: for each enabled harness, call `enumerate(harness)` (below), show a multi-select with a first row "Enable all" that selects everything. Then per selected model, effort levels come from the enumeration data (do not prompt).
+- **models**: for each enabled harness, call `enumerate(harness)` (below), show a multi-select with a first row "Enable all" that selects everything. Rows are labeled `<name>  <model id>` and sorted by name with natural numeric ordering. Then per selected model, effort levels come from the enumeration data (do not prompt).
 - **rules**: per subscription harness "cutoff at what percent used? (blank = none)". Confidential path globs and excluded provider prefixes (comma-separated, blank = none). Confidence floor (default 0.35). Default model + effort chosen from enabled candidates.
 - **preferences**: if `preferences.md` is missing, seed it from `templates/preferences.md`, then offer to open it in `$EDITOR`, edit it through an interactive Claude Code or Codex interview when that binary is installed, or skip editing.
 

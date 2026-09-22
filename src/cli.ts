@@ -74,6 +74,7 @@ const RESULT_LIMIT_OPTION = `${RESULT_LIMIT_FLAG} <chars>`;
 const ALL_OPTION = "--all";
 const OLDER_THAN_FLAG = "--older-than";
 const OLDER_THAN_OPTION = `${OLDER_THAN_FLAG} <days>`;
+const NEW_MODELS_NOTICE = "New models available:";
 
 function resultOutput(result: string, resultLimit: number | undefined) {
   if (resultLimit === undefined || result.length <= resultLimit)
@@ -149,7 +150,10 @@ async function routeCommand(
   const config = await loadConfig();
   const result = await route(prompt, options, defaultRouteDeps(config));
   console.log(JSON.stringify(result));
-  await printUpdateNotice(config);
+  await printUpdateNotice(
+    config,
+    "availableModels" in result ? result.availableModels : [],
+  );
   console.error(options.dryRun ? "Route dry run completed" : "Route selected");
   process.exit(SUCCESS_EXIT_CODE);
 }
@@ -269,7 +273,7 @@ async function spawnCommand(
         logPath,
       }),
     );
-    await printUpdateNotice(config);
+    await printUpdateNotice(config, routeResult?.availableModels ?? []);
     console.error("Spawn detached");
     process.exit(SUCCESS_EXIT_CODE);
   }
@@ -303,13 +307,14 @@ async function spawnCommand(
       usage: parsed.usage,
     }),
   );
-  await printUpdateNotice(config);
+  await printUpdateNotice(config, routeResult?.availableModels ?? []);
   console.error("Spawn completed");
   process.exit(SUCCESS_EXIT_CODE);
 }
 
 async function printUpdateNotice(
   config: Awaited<ReturnType<typeof loadConfig>>,
+  availableModels: string[] = [],
 ): Promise<void> {
   if (
     config.updates?.check === false ||
@@ -320,6 +325,10 @@ async function printUpdateNotice(
   if (update?.isNewer)
     console.error(
       `smart-router ${update.latestVersion} is available; run smart-router update`,
+    );
+  if (availableModels.length)
+    console.error(
+      `${NEW_MODELS_NOTICE} ${availableModels.join(";")}; run smart-router init --section models`,
     );
 }
 

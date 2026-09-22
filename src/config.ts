@@ -10,6 +10,11 @@ export const DEFAULT_CODEX_SANDBOX = "workspace-write";
 export const DEFAULT_JEV_MODEL = "jev-latest";
 export const DEFAULT_JEV_API_KEY_ENV = "TYPESAFE_API_KEY";
 export const DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS = ["openrouter"];
+export const DEFAULT_HARNESS_CAPABILITIES: Record<HarnessName, string> = {
+  claude: "",
+  codex: "",
+  pi: "",
+};
 const CONFIG_FILE_NAME = "config.json";
 
 export type HarnessName = "claude" | "codex" | "pi";
@@ -17,11 +22,10 @@ export type HarnessConfig = {
   enabled: boolean;
   auth?: "subscription" | "api-key";
   binary?: string;
+  capabilities?: string;
 };
-export type PiHarnessConfig = {
-  enabled: boolean;
+export type PiHarnessConfig = Omit<HarnessConfig, "auth"> & {
   auth?: "api-key";
-  binary?: string;
 };
 export type ProviderConfig = { apiKeyEnv: string };
 export type ModelConfig = {

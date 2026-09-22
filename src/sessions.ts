@@ -35,6 +35,9 @@ export type Session = {
   harness: HarnessName;
   model: string;
   effort: string;
+  browser?: boolean;
+  sandbox?: string;
+  usesNetworkAccess?: boolean;
   cwd: string;
   owner: string;
   sessionId?: string;
@@ -90,6 +93,9 @@ export async function createSession(
     harness: options.harness,
     model: options.model,
     effort: options.effort,
+    browser: options.browser,
+    sandbox: options.sandbox,
+    usesNetworkAccess: options.usesNetworkAccess,
     cwd: options.cwd,
     owner: sessionOwner(),
     sessionId: options.sessionId,

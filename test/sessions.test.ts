@@ -174,6 +174,34 @@ test("limits CLI result output while retaining the full session result", async (
   expect((await loadSession(output.handle)).lastResult).toBe("abcdef");
 });
 
+test("resume command restores the persisted Codex sandbox and network override", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-session-"));
+  temporaryDirectories.push(directory);
+  process.env[STATE_DIRECTORY_ENV] = directory;
+  process.env[CONFIG_DIRECTORY_ENV] = directory;
+  const session = await createSession({
+    harness: "codex",
+    model: "terra",
+    effort: "high",
+    cwd: directory,
+    sessionId: "thread-123",
+    prompt: "Task",
+    status: SESSION_STATUS.done,
+    sandbox: "workspace-write",
+    usesNetworkAccess: true,
+  });
+  const child = Bun.spawnSync(["bun", "src/cli.ts", "wait", session.handle], {
+    cwd: process.cwd(),
+    env: process.env,
+  });
+  expect(child.exitCode).toBe(0);
+  const output = JSON.parse(child.stdout.toString());
+  expect(output.resumeCommand).toContain(
+    "-c sandbox_workspace_write.network_access=true",
+  );
+  expect(output.resumeCommand).toContain("-s workspace-write");
+});
+
 test("marks a completed detached session done from its fixture log", async () => {
   const directory = await mkdtemp(join(tmpdir(), "smart-router-state-"));
   temporaryDirectories.push(directory);

@@ -110,9 +110,10 @@ export function buildResume(
     RESUME_COMMAND,
     sessionId,
     JSON_FLAG,
-    SANDBOX_FLAG,
-    options.codexSandbox ?? DEFAULT_CODEX_SANDBOX,
   ];
+  for (const override of options.codexConfigOverrides ?? [])
+    argv.push(CONFIG_FLAG, override);
+  argv.push(SANDBOX_FLAG, options.codexSandbox ?? DEFAULT_CODEX_SANDBOX);
   if (options.schema) argv.push(OUTPUT_SCHEMA_FLAG, options.schema.path);
   argv.push(message);
   return { argv, sessionId };

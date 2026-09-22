@@ -4,6 +4,7 @@ export type HarnessOptions = {
   effort?: string;
   worktree?: boolean;
   claudePermissionMode?: string;
+  browser?: boolean;
   codexSandbox?: string;
   codexConfigOverrides?: string[];
   allowedTools?: string;

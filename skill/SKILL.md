@@ -22,6 +22,7 @@ Every prompt states what done looks like and where to stop, for example "Done wh
 Optional flags:
 
 - `--hint "<text>"` adds context for the routing decision, such as "needs a browser" or "bulk mechanical work".
+- `--browser` enables Claude in Chrome for browser work and persists on `send`.
 - `--confidential` keeps the task off OpenRouter.
 - `--model harness:model --effort <level>` skips routing and picks directly, for example `--model harness:model --effort level`.
 - `--no-guardrails` skips the appended operating rules when the prompt already carries its own.

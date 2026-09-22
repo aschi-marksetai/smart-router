@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as claude from "../src/harness/claude.ts";
@@ -38,6 +38,8 @@ test("builds Claude commands and parses result usage", () => {
     sessionId,
     "--permission-mode",
     "bypassPermissions",
+    "--append-system-prompt",
+    expect.any(String),
     "--worktree",
     "--effort",
     "high",
@@ -46,6 +48,9 @@ test("builds Claude commands and parses result usage", () => {
     "--json-schema",
     '{"type":"object"}',
   ]);
+  expect(spawned.argv).toContain(
+    "You are a delegate spawned by smart-router. Do the assigned task yourself with your own tools, including browser tools when the task needs them. Do not delegate through smart-router. Report the result when the stopping point is reached.",
+  );
   expect(
     claude.parseSpawnOutput(
       '{"result":"Claude reply","usage":{"input_tokens":2,"output_tokens":3},"total_cost_usd":0.1}',
@@ -64,11 +69,52 @@ test("builds Claude commands and parses result usage", () => {
     "json",
     "--permission-mode",
     "bypassPermissions",
+    "--append-system-prompt",
+    expect.any(String),
     "--allowedTools",
     "Read,Write",
     "--json-schema",
     '{"type":"object"}',
   ]);
+});
+
+test("uses an isolated Chrome DevTools MCP config for browser commands", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-state-"));
+  const environmentVariable = "SMART_ROUTER_STATE_DIR";
+  const originalDirectory = process.env[environmentVariable];
+  process.env[environmentVariable] = directory;
+  const configPath = join(directory, "chrome-devtools-isolated.mcp.json");
+  const options: HarnessOptions = {
+    cwd: "/project",
+    model: "opus",
+    browser: true,
+  };
+
+  try {
+    const spawned = claude.buildSpawn("write code", options);
+    const resumed = claude.buildResume("session", "continue", options);
+    expect(spawned.argv).toContain(configPath);
+    expect(resumed.argv).toContain(configPath);
+    expect(spawned.argv).toContain(
+      "You are a delegate spawned by smart-router. Do the assigned task yourself with your own tools, including browser tools when the task needs them. Do not delegate through smart-router. Report the result when the stopping point is reached. For browser work use the chrome-devtools-isolated MCP server, which has its own Chrome profile; the plugin's chrome-devtools server may be locked by another session.",
+    );
+    expect(
+      claude.buildSpawn("write code", { cwd: "/project", model: "opus" }).argv,
+    ).not.toContain("--mcp-config");
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
+      mcpServers: {
+        "chrome-devtools-isolated": {
+          type: "stdio",
+          command: "npx",
+          args: ["chrome-devtools-mcp@1.9.0", "--isolated"],
+        },
+      },
+    });
+  } finally {
+    if (originalDirectory === undefined)
+      delete process.env[environmentVariable];
+    else process.env[environmentVariable] = originalDirectory;
+  }
 });
 
 test("builds Codex commands and parses result usage", async () => {
@@ -79,6 +125,7 @@ test("builds Codex commands and parses result usage", async () => {
     effort: "xhigh",
     worktree: true,
     codexSandbox: "workspace-write",
+    codexConfigOverrides: ["sandbox_workspace_write.network_access=true"],
     schema: { path: "/tmp/schema.json", content: "unused" },
   };
   expect(codex.buildSpawn("write code", options).argv).toEqual([
@@ -91,6 +138,8 @@ test("builds Codex commands and parses result usage", async () => {
     "gpt-5.6-terra",
     "-c",
     'model_reasoning_effort="xhigh"',
+    "-c",
+    "sandbox_workspace_write.network_access=true",
     "-s",
     "workspace-write",
     "--worktree",
@@ -115,6 +164,8 @@ test("builds Codex commands and parses result usage", async () => {
     "resume",
     "thread-123",
     "--json",
+    "-c",
+    "sandbox_workspace_write.network_access=true",
     "-s",
     "workspace-write",
     "--output-schema",

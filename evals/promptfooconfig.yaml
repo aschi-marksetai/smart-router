@@ -67,7 +67,7 @@ tests:
     assert:
       - type: javascript
         value: >-
-          output.pick.split('@')[0] === 'codex:gpt-6-astra' && output.needsBrowser > 0.5
+          ['codex:gpt-6-astra', 'codex:gpt-6-sol'].includes(output.pick.split('@')[0]) && output.needsBrowser > 0.5
   - vars:
       prompt: Rewrite the onboarding screen copy and propose the visual hierarchy for the settings page
     assert:

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk";
 import {
   DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
+  DEFAULT_HARNESS_CAPABILITIES,
   type Config,
   type HarnessName,
 } from "./config.ts";
@@ -43,6 +44,7 @@ export type RouteCandidate = {
   model: string;
   efforts: string[];
   auth: "subscription" | "api-key" | null;
+  capabilities: string;
 };
 export type RouteState = {
   preferences: string;
@@ -85,6 +87,17 @@ export type CodexSandboxChoice = {
   usesNetworkAccess: boolean;
 };
 
+export function shouldUseClaudeBrowser(
+  harness: HarnessName,
+  requested: boolean | undefined,
+  needsBrowser: number | null,
+): boolean {
+  return (
+    harness === "claude" &&
+    (requested === true || (needsBrowser ?? 0) > SANDBOX_THRESHOLD)
+  );
+}
+
 export function chooseCodexSandbox(options: {
   configuredSandbox: string;
   callerSandbox?: string;
@@ -92,6 +105,7 @@ export function chooseCodexSandbox(options: {
   allowFullAccess: boolean;
   routingRan: boolean;
   needsNetwork: number | null;
+  needsBrowser: number | null;
   needsFullAccess: number | null;
 }): CodexSandboxChoice {
   if (options.callerSandbox)
@@ -100,7 +114,8 @@ export function chooseCodexSandbox(options: {
   const needsFullAccess =
     canUseRouteScores &&
     options.allowFullAccess &&
-    (options.needsFullAccess ?? 0) > SANDBOX_THRESHOLD;
+    ((options.needsFullAccess ?? 0) > SANDBOX_THRESHOLD ||
+      (options.needsBrowser ?? 0) > SANDBOX_THRESHOLD);
   if (needsFullAccess)
     return {
       sandbox: CODEX_DANGER_FULL_ACCESS_SANDBOX,
@@ -127,14 +142,21 @@ function expandCandidates(
       model,
       efforts,
       auth: config.harnesses[harness]?.auth ?? null,
+      capabilities:
+        config.harnesses[harness]?.capabilities ??
+        DEFAULT_HARNESS_CAPABILITIES[harness],
     }));
+}
+
+function capabilitiesNote(capabilities: string): string {
+  return capabilities ? `; capabilities: ${capabilities}` : "";
 }
 
 function routeQuestions(candidates: RouteCandidate[]) {
   const modelCriteria = Object.fromEntries(
     candidates.map((candidate) => [
       candidate.id,
-      `${candidate.harness} ${candidate.model}, ${candidate.auth ?? "default auth"}, supports ${candidate.efforts.join(", ")}`,
+      `${candidate.harness} ${candidate.model}, ${candidate.auth ?? "default auth"}, supports ${candidate.efforts.join(", ")}${capabilitiesNote(candidate.capabilities)}`,
     ]),
   );
   const efforts = [

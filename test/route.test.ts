@@ -7,6 +7,7 @@ import {
   chooseCodexSandbox,
   needsStoppingPoint,
   route,
+  shouldUseClaudeBrowser,
   type JevClient,
   type RouteDeps,
 } from "../src/route.ts";
@@ -319,6 +320,34 @@ test("passes through Jev's stopping-point score", async () => {
   );
 });
 
+test("includes capabilities in Jev candidate descriptions", async () => {
+  const client = deps().client;
+  await route(
+    "task",
+    {},
+    deps({
+      client: {
+        systemOne: async (request) => {
+          expect(request.questions.model.criteria["claude:opus"]).toContain(
+            "logged-in Chrome",
+          );
+          expect(request.questions.model.criteria["codex:terra"]).toContain(
+            "no browser or screenshots",
+          );
+          return client.systemOne(request);
+        },
+      },
+    }),
+  );
+});
+
+test("enables Chrome for requested or routed Claude browser work", () => {
+  expect(shouldUseClaudeBrowser("claude", undefined, 0.6)).toBe(true);
+  expect(shouldUseClaudeBrowser("claude", true, null)).toBe(true);
+  expect(shouldUseClaudeBrowser("claude", undefined, 0.5)).toBe(false);
+  expect(shouldUseClaudeBrowser("codex", true, 0.9)).toBe(false);
+});
+
 test("chooses Codex sandboxes from route scores", () => {
   const defaults = {
     configuredSandbox: CODEX_WORKSPACE_WRITE_SANDBOX,
@@ -326,10 +355,12 @@ test("chooses Codex sandboxes from route scores", () => {
     allowFullAccess: true,
     routingRan: true,
     needsNetwork: 0,
+    needsBrowser: 0,
     needsFullAccess: 0,
   };
   const cases = [
     [{ needsFullAccess: 0.6 }, CODEX_DANGER_FULL_ACCESS_SANDBOX, false],
+    [{ needsBrowser: 0.6 }, CODEX_DANGER_FULL_ACCESS_SANDBOX, false],
     [{ needsNetwork: 0.6 }, CODEX_WORKSPACE_WRITE_SANDBOX, true],
     [{ autoSandbox: false }, CODEX_WORKSPACE_WRITE_SANDBOX, false],
     [

@@ -26,7 +26,12 @@ A CLI that picks which coding-agent harness and model should run a task, spawns 
 {
   "version": 1,
   "harnesses": {
-    "claude": { "enabled": true, "auth": "subscription", "binary": "claude" }, // auth is also "api-key"; binary is optional
+    "claude": {
+      "enabled": true,
+      "auth": "subscription",
+      "binary": "claude",
+      "capabilities": "browser via Chrome DevTools MCP and the user's logged-in Chrome when the extension is authorized; full local tool use",
+    }, // auth is also "api-key"; binary and capabilities are optional
     "codex": { "enabled": true, "auth": "subscription" }, // auth is also "api-key"
     "pi": { "enabled": false, "auth": "api-key" }, // auth may also be "subscription"
   },
@@ -83,6 +88,7 @@ A CLI that picks which coding-agent harness and model should run a task, spawns 
 ```
 
 Model `id` is always `harness:model`. A candidate is `harness:model@effort`.
+Absent capability notes default to Claude's browser and local tools, Codex CLI web fetch and search without browser or screenshots, and pi without browser.
 
 Env vars are read from the process environment; the CLI also loads `.env` from the config directory and then from the current directory if present (dotenv-style parse, stdlib; existing variables are never overridden). `init` writes the TypeSafe key to the config directory's `.env` when it is missing.
 
@@ -118,7 +124,7 @@ The wizard. Sections in order: auth, models, rules, preferences. On an existing 
 
 At the start of every init run, prompt for a missing TypeSafe API key and store a non-blank answer in the config directory's `.env` file.
 
-- **auth**: for claude, codex, pi: enabled? auth by subscription or API key? For API-key providers (openai, anthropic, openrouter, google, plus any provider pi's registry knows): which env var holds the key (default to the conventional name; show whether it is currently set).
+- **auth**: for claude, codex, pi: enabled? auth by subscription or API key? Each enabled harness gets a "Capabilities note for routing" text prompt prefilled with its current or default value. For API-key providers (openai, anthropic, openrouter, google, plus any provider pi's registry knows): which env var holds the key (default to the conventional name; show whether it is currently set).
 - **models**: for each enabled harness, call `enumerate(harness)` (below), show a multi-select with a first row "Enable all" that selects everything. Rows are labeled `<name>  <model id>` and sorted by name with natural numeric ordering. Then per selected model, effort levels come from the enumeration data (do not prompt).
 - **rules**: per subscription harness "cutoff at what percent used? (blank = none)". Confidential path globs and excluded provider prefixes (comma-separated, blank = none). Confidence floor (default 0.35). Default model + effort chosen from enabled candidates.
 - **preferences**: if `preferences.md` is missing, seed it from `templates/preferences.md`, then offer to open it in `$EDITOR`, edit it through an interactive Claude Code or Codex interview when that binary is installed, or skip editing.
@@ -147,8 +153,8 @@ Pipeline:
 
 1. Candidates = `config.models` (each with its supported efforts), keep only those whose harness is installed and authed (doctor logic).
 2. Apply enabled rules only: `quotaCutoffPercent` (needs codexbar; if codexbar is missing, skip this rule and note it in `reason`), `confidentialPathGlobs` or `--confidential` (drop `openrouter/*` models).
-3. Build Jev `state`: `{ preferences: <preferences.md>, task: <prompt, truncated to 8k chars>, hint, cwd, quota: <normalized codexbar snapshot or null>, candidates: [{ id, harness, model, efforts, auth }] }`.
-4. One Jev call with five questions. `model`: a Choice over the eligible model ids (`harness:model`, no effort), instructions "Pick the model that should run this task according to the user's preferences", criteria map = model id → one-line description (harness, auth, supported efforts). `effort`: a Choice over the union of effort levels the eligible models support, instructions "Pick the reasoning effort this task needs". `needsBrowser`, `needsNetwork`, `needsFullAccess`, and `statesStoppingPoint` are Noul scores. All are returned as numbers and do not affect the pick. The pick is `model@effort`; if the chosen model does not support the chosen effort, use the highest effort it supports below it. Effort is asked separately so probability mass is not split across tiers of the same model.
+3. Build Jev `state`: `{ preferences: <preferences.md>, task: <prompt, truncated to 8k chars>, hint, cwd, quota: <normalized codexbar snapshot or null>, candidates: [{ id, harness, model, efforts, auth, capabilities }] }`.
+4. One Jev call with five questions. `model`: a Choice over the eligible model ids (`harness:model`, no effort), instructions "Pick the model that should run this task according to the user's preferences", criteria map = model id → one-line description (harness, auth, supported efforts, capabilities). `effort`: a Choice over the union of effort levels the eligible models support, instructions "Pick the reasoning effort this task needs". `needsBrowser`, `needsNetwork`, `needsFullAccess`, and `statesStoppingPoint` are Noul scores. All are returned as numbers and do not affect the pick. The pick is `model@effort`; if the chosen model does not support the chosen effort, use the highest effort it supports below it. Effort is asked separately so probability mass is not split across tiers of the same model.
 5. If the `model` answer's `confidence < rules.confidenceFloor`, pick `defaultModelId@defaultEffort` and set `fellBack: true`.
 6. If the Jev call itself fails (network, auth, rate limit), do not error: pick `defaultModelId@defaultEffort`, set `fellBack: true`, put the error message in `reason`, and set the Noul scores to null.
 7. `--dry-run` prints the state that would be sent instead of calling Jev.
@@ -157,7 +163,9 @@ Pipeline:
 
 `route` (skipped when `--model` is given), then the harness adapter's `spawn`. Blocks until the turn finishes. As soon as the pick is known, before the delegate starts, spawn prints one stderr line `Routed to <harness:model@effort> (confidence <n>)` (or `(caller override)` with `--model`) so a caller tailing stderr sees the choice immediately.
 
-Automatic sandbox: for Codex, `spawn.autoSandbox` uses the route's `needsFullAccess` and `needsNetwork` scores (threshold 0.5) to select `danger-full-access` for full-access tasks or to keep the configured sandbox with `sandbox_workspace_write.network_access=true` for network tasks. The scores survive a confidence fallback; only a Jev outage leaves them null, which means the configured sandbox. `--sandbox` always overrides it. `spawn.allowFullAccess` disables automatic full access when false.
+Automatic sandbox: for Codex, `spawn.autoSandbox` uses the route's `needsFullAccess`, `needsBrowser`, and `needsNetwork` scores (threshold 0.5) to select `danger-full-access` for full-access or browser tasks or to keep the configured sandbox with `sandbox_workspace_write.network_access=true` for network tasks. The scores survive a confidence fallback; only a Jev outage leaves them null, which means the configured sandbox. `--sandbox` always overrides it. `spawn.allowFullAccess` disables automatic full access when false. The chosen sandbox and network override persist in the session and apply to `send` unless `--sandbox` overrides them.
+
+For Claude, `--browser` passes `--chrome` and persists for `send`; a routed Claude pick also enables it when `needsBrowser` exceeds 0.5. Other harnesses ignore `--browser` with a stderr note.
 
 Before spawning: if the picked model id is listed in `rules.stoppingPointRequiredFor` and the route's `statesStoppingPoint` is below 0.5, exit 1 with `{ "error": "codex:gpt-5.6-sol needs a stated stopping point: add success criteria and where to stop to the prompt, then call spawn again" }`. The check runs only when routing ran (not with `--model`) and not when the route fell back.
 
@@ -204,7 +212,7 @@ Sessions record `owner` as `SMART_ROUTER_OWNER`, else `CLAUDE_CODE_SESSION_ID` (
 
 ### Per-spawn passthrough flags
 
-`spawn` and `send` accept `--permission-mode <mode>` (claude only, overrides `config.spawn.claudePermissionMode`), `--sandbox <policy>` (codex only, overrides `config.spawn.codexSandbox`), `--allowed-tools <list>` (claude `--allowedTools`; ignored for other harnesses with a note in the stderr summary), and `--schema <file>` (claude `--json-schema` with the file contents, codex `--output-schema <file>`; ignored for pi with a note). Ignored flags never fail the command.
+`spawn` and `send` accept `--permission-mode <mode>` (claude only, overrides `config.spawn.claudePermissionMode`), `--sandbox <policy>` (codex only), `--browser` (claude `--chrome`), `--allowed-tools <list>` (claude `--allowedTools`; ignored for other harnesses with a note in the stderr summary), and `--schema <file>` (claude `--json-schema` with the file contents, codex `--output-schema <file>`; ignored for pi with a note). Ignored flags never fail the command.
 
 ### `smart-router send <handle> "<message>"`
 
@@ -218,11 +226,11 @@ Prints the normalized codexbar snapshot: `{ claude: { weeklyUsedPercent, weeklyR
 
 One module per harness, all exposing `spawn(prompt, opts) → { sessionId, result, resumeCommand }` and `resume(sessionId, message, opts) → { result }`. `opts` carries `cwd`, `model`, `effort`, `worktree`.
 
-- **claude**: spawn `claude -p <prompt> --output-format json --model <model> --session-id <uuid generated by us> --permission-mode <config.spawn.claudePermissionMode> [--worktree]`, cwd set. Effort passes through as `--effort <effort>`. Result = `.result` of the JSON object. Resume: `claude -p --resume <id> <message> --output-format json`.
+- **claude**: spawn `claude -p <prompt> --output-format json --model <model> --session-id <uuid generated by us> --permission-mode <config.spawn.claudePermissionMode> [--worktree]`, cwd set. Spawn and resume always pass `--append-system-prompt` with the delegate preamble directing the delegate to use its own tools and never delegate through smart-router. Browser mode adds `--chrome` and an isolated Chrome DevTools MCP config to avoid the shared-profile lock. Effort passes through as `--effort <effort>`. Result = `.result` of the JSON object. Resume: `claude -p --resume <id> <message> --output-format json`.
 - **codex**: spawn `codex exec --json -C <cwd> -m <model> -c model_reasoning_effort="<effort>" -s <config.spawn.codexSandbox> [--worktree] <prompt>` (`codex exec` is already non-interactive; it has no `-a` flag); `thread_id` from the first `thread.started` event; result = text of the last `item.completed` agent message. Resume: `codex exec resume <id> --json <message>`. Add `--skip-git-repo-check` when cwd is not inside a git repo.
 - **pi**: spawn `pi -p <prompt> --mode json --model <provider/model> --thinking <effort> --session <path under state dir>`; result = final assistant text from the JSON events. Resume: same command with the same `--session` path. Model ids for pi are `provider/model`.
 
-Session file: `{ handle, owner, harness, model, effort, cwd, sessionId, createdAt, promptPreview, status, pid?, logPath?, result?, lastResult?, error?, usage? }`. The optional `error` stores the failure message for failed sessions. `status` is `running`, `done`, `failed` or `stopped`; foreground spawns write `done` directly. Handle = 6 lowercase alphanumerics.
+Session file: `{ handle, owner, harness, model, effort, cwd, sessionId, createdAt, promptPreview, status, browser?, sandbox?, usesNetworkAccess?, pid?, logPath?, result?, lastResult?, error?, usage? }`. The optional `error` stores the failure message for failed sessions. `status` is `running`, `done`, `failed` or `stopped`; foreground spawns write `done` directly. Handle = 6 lowercase alphanumerics.
 
 ## Model enumeration (`src/enumerate.ts`)
 

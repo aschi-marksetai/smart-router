@@ -24,6 +24,7 @@ import {
   configPath,
   DEFAULT_CONFIG,
   DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
+  DEFAULT_HARNESS_CAPABILITIES,
   harnessBinary,
   loadConfig,
   type Config,
@@ -140,10 +141,22 @@ async function runAuth(
           current.auth ?? (harness === "pi" ? "api-key" : "subscription"),
       }),
     );
+    const capabilities = await prompt(
+      text({
+        message: `Capabilities note for routing (${harness})`,
+        initialValue:
+          current.capabilities ?? DEFAULT_HARNESS_CAPABILITIES[harness],
+      }),
+    );
     if (harness === "pi") {
-      next.harnesses.pi = { ...next.harnesses.pi, enabled, auth: "api-key" };
+      next.harnesses.pi = {
+        ...next.harnesses.pi,
+        enabled,
+        auth: "api-key",
+        capabilities,
+      };
     } else {
-      next.harnesses[harness] = { ...current, enabled, auth };
+      next.harnesses[harness] = { ...current, enabled, auth, capabilities };
     }
   }
   for (const provider of PROVIDER_NAMES) {

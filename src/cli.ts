@@ -19,6 +19,7 @@ import {
   defaultRouteDeps,
   needsStoppingPoint,
   route,
+  shouldUseClaudeBrowser,
   type RouteOptions,
 } from "./route.ts";
 import { runDetached, runForeground } from "./runner.ts";
@@ -51,6 +52,7 @@ type SpawnOptions = RouteOptions & {
   guardrails?: boolean;
   detach?: boolean;
   permissionMode?: string;
+  browser?: boolean;
   sandbox?: string;
   allowedTools?: string;
   schema?: string;
@@ -58,6 +60,7 @@ type SpawnOptions = RouteOptions & {
 };
 type PassthroughOptions = {
   permissionMode?: string;
+  browser?: boolean;
   sandbox?: string;
   allowedTools?: string;
   schema?: string;
@@ -208,6 +211,7 @@ async function spawnCommand(
           allowFullAccess: config.spawn.allowFullAccess,
           routingRan: routeScores !== null,
           needsNetwork: routeScores?.needsNetwork ?? null,
+          needsBrowser: routeScores?.needsBrowser ?? null,
           needsFullAccess: routeScores?.needsFullAccess ?? null,
         })
       : null;
@@ -215,6 +219,16 @@ async function spawnCommand(
     ? `${sandboxChoice.sandbox}+network`
     : sandboxChoice?.sandbox;
   const sandboxNote = sandbox ? ` sandbox ${sandbox}` : "";
+  const browser = shouldUseClaudeBrowser(
+    selected.harness,
+    options.browser,
+    routeScores?.needsBrowser ?? null,
+  );
+  const sessionSettings = {
+    browser,
+    sandbox: sandboxChoice?.sandbox,
+    usesNetworkAccess: sandboxChoice?.usesNetworkAccess,
+  };
   console.error(
     `Routed to ${selected.harness}:${selected.model}@${selected.effort}${confidenceNote}${sandboxNote}`,
   );
@@ -222,6 +236,7 @@ async function spawnCommand(
   const adapter = getAdapter(selected.harness);
   const harnessOptions = await harnessOptionsFor(selected, cwd, config, {
     ...options,
+    browser,
     codexSandbox: sandboxChoice?.sandbox,
     codexConfigOverrides: sandboxChoice?.usesNetworkAccess
       ? [CODEX_NETWORK_ACCESS_OVERRIDE]
@@ -239,6 +254,7 @@ async function spawnCommand(
       const message = error instanceof Error ? error.message : String(error);
       await createSession({
         ...selected,
+        ...sessionSettings,
         cwd,
         sessionId: command.sessionId,
         prompt: spawnPrompt,
@@ -253,6 +269,7 @@ async function spawnCommand(
     }
     await createSession({
       ...selected,
+      ...sessionSettings,
       cwd,
       sessionId: command.sessionId,
       prompt: spawnPrompt,
@@ -285,6 +302,7 @@ async function spawnCommand(
     throw new Error("Harness output did not contain a session id");
   const session = await createSession({
     ...selected,
+    ...sessionSettings,
     cwd,
     sessionId,
     prompt: spawnPrompt,
@@ -387,6 +405,7 @@ async function sendCommand(
   session.result = parsed.result;
   session.lastResult = parsed.result;
   session.usage = addUsage(session.usage, parsed.usage);
+  if (options.browser && session.harness === "claude") session.browser = true;
   await saveSession(session);
   return printResult(
     {
@@ -418,9 +437,19 @@ async function harnessOptionsFor(
     worktree: options.worktree,
     claudePermissionMode:
       options.permissionMode ?? config.spawn.claudePermissionMode,
+    browser: options.browser || ("browser" in selected && selected.browser),
     codexSandbox:
-      options.codexSandbox ?? options.sandbox ?? config.spawn.codexSandbox,
-    codexConfigOverrides: options.codexConfigOverrides,
+      options.codexSandbox ??
+      options.sandbox ??
+      ("sandbox" in selected ? selected.sandbox : undefined) ??
+      config.spawn.codexSandbox,
+    codexConfigOverrides:
+      options.codexConfigOverrides ??
+      (!options.sandbox &&
+      "usesNetworkAccess" in selected &&
+      selected.usesNetworkAccess
+        ? [CODEX_NETWORK_ACCESS_OVERRIDE]
+        : undefined),
     allowedTools: options.allowedTools,
     schema,
     binary: harnessBinary(config, selected.harness),
@@ -435,6 +464,7 @@ function printPassthroughNotes(
   if (options.permissionMode && harness !== "claude")
     ignored.push("--permission-mode");
   if (options.sandbox && harness !== "codex") ignored.push("--sandbox");
+  if (options.browser && harness !== "claude") ignored.push("--browser");
   if (options.allowedTools && harness !== "claude")
     ignored.push("--allowed-tools");
   if (options.schema && harness === "pi") ignored.push("--schema");
@@ -620,6 +650,7 @@ async function main(): Promise<void> {
     .option("--worktree")
     .option("--detach")
     .option("--permission-mode <mode>")
+    .option("--browser")
     .option("--sandbox <policy>")
     .option("--allowed-tools <list>")
     .option("--schema <file>")
@@ -629,6 +660,7 @@ async function main(): Promise<void> {
   program
     .command("send <handle> <message>")
     .option("--permission-mode <mode>")
+    .option("--browser")
     .option("--sandbox <policy>")
     .option("--allowed-tools <list>")
     .option("--schema <file>")

@@ -56,7 +56,7 @@ async function commandOutput(
 }
 
 async function isInstalled(binary: string): Promise<boolean> {
-  return (await commandOutput("command", "-v", binary)) !== null;
+  return Bun.which(binary) !== null;
 }
 
 async function detectHarness(

@@ -110,10 +110,17 @@ export function buildResume(
     RESUME_COMMAND,
     sessionId,
     JSON_FLAG,
+    MODEL_FLAG,
+    options.model,
   ];
   for (const override of options.codexConfigOverrides ?? [])
     argv.push(CONFIG_FLAG, override);
-  argv.push(SANDBOX_FLAG, options.codexSandbox ?? DEFAULT_CODEX_SANDBOX);
+  argv.push(
+    CONFIG_FLAG,
+    `sandbox_mode="${options.codexSandbox ?? DEFAULT_CODEX_SANDBOX}"`,
+  );
+  if (!isInsideGitRepository(options.cwd))
+    argv.push(SKIP_GIT_REPOSITORY_CHECK_FLAG);
   if (options.schema) argv.push(OUTPUT_SCHEMA_FLAG, options.schema.path);
   argv.push(message);
   return { argv, sessionId };

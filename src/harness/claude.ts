@@ -123,8 +123,6 @@ export function buildResume(
     JSON_OUTPUT_FORMAT,
     PERMISSION_MODE_FLAG,
     options.claudePermissionMode ?? DEFAULT_CLAUDE_PERMISSION_MODE,
-    APPEND_SYSTEM_PROMPT_FLAG,
-    delegatePreamble(options.browser),
   ];
   if (options.browser)
     argv.push(

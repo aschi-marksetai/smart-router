@@ -199,7 +199,7 @@ test("resume command restores the persisted Codex sandbox and network override",
   expect(output.resumeCommand).toContain(
     "-c sandbox_workspace_write.network_access=true",
   );
-  expect(output.resumeCommand).toContain("-s workspace-write");
+  expect(output.resumeCommand).toContain('-c sandbox_mode="workspace-write"');
 });
 
 test("marks a completed detached session done from its fixture log", async () => {

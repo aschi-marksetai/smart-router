@@ -8,6 +8,21 @@ import * as pi from "../src/harness/pi.ts";
 import type { HarnessOptions } from "../src/harness/types.ts";
 import { parseJsonLines } from "../src/harness/types.ts";
 
+const ACCEPTED_CODEX_EXEC_RESUME_FLAGS = new Set(
+  "-c --last --all --enable --disable -i --strict-config -m --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust --worktree --thread-source --skip-git-repo-check --ephemeral --ignore-user-config --ignore-rules --output-schema --json -o".split(
+    " ",
+  ),
+);
+const ACCEPTED_CLAUDE_RESUME_FLAGS = new Set(
+  "-p --resume --output-format --model --effort --permission-mode --append-system-prompt --allowedTools --json-schema --chrome --mcp-config --add-dir --worktree".split(
+    " ",
+  ),
+);
+
+function flagsIn(argv: string[]): string[] {
+  return argv.filter((argument) => argument.startsWith("-"));
+}
+
 test("skips non-JSON lines", () => {
   expect(parseJsonLines('banner\n{"type":"event"}')).toEqual([
     { type: "event" },
@@ -69,8 +84,6 @@ test("builds Claude commands and parses result usage", () => {
     "json",
     "--permission-mode",
     "bypassPermissions",
-    "--append-system-prompt",
-    expect.any(String),
     "--allowedTools",
     "Read,Write",
     "--json-schema",
@@ -164,10 +177,13 @@ test("builds Codex commands and parses result usage", async () => {
     "resume",
     "thread-123",
     "--json",
+    "-m",
+    "gpt-5.6-terra",
     "-c",
     "sandbox_workspace_write.network_access=true",
-    "-s",
-    "workspace-write",
+    "-c",
+    'sandbox_mode="workspace-write"',
+    "--skip-git-repo-check",
     "--output-schema",
     "/tmp/schema.json",
     "continue",
@@ -177,6 +193,24 @@ test("builds Codex commands and parses result usage", async () => {
       '{"type":"thread.started","thread_id":"thread-123"}\n{"type":"error","message":"Codex failed"}',
     ),
   ).toThrow("Codex failed");
+});
+
+test("uses only accepted resume flags", () => {
+  const options: HarnessOptions = {
+    cwd: "/project",
+    model: "model",
+    codexSandbox: "workspace-write",
+  };
+  expect(
+    flagsIn(codex.buildResume("session", "continue", options).argv),
+  ).toSatisfy((flags) =>
+    flags.every((flag) => ACCEPTED_CODEX_EXEC_RESUME_FLAGS.has(flag)),
+  );
+  expect(
+    flagsIn(claude.buildResume("session", "continue", options).argv),
+  ).toSatisfy((flags) =>
+    flags.every((flag) => ACCEPTED_CLAUDE_RESUME_FLAGS.has(flag)),
+  );
 });
 
 test("omits Codex's git-repository override inside a Git repository", () => {

@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -67,4 +68,27 @@ test("refuses a checksum mismatch", async () => {
       fetch,
     ),
   ).rejects.toThrow("checksum");
+});
+
+test("refuses source executables and installs a verified update", async () => {
+  expect(updateRefusal("/usr/local/bin/bun")).toMatch(/source/);
+  const executablePath = join(state, "binary");
+  await mkdir(state, { recursive: true });
+  const bytes = new Uint8Array([1, 2, 3]);
+  const checksum = createHash("sha256").update(bytes).digest("hex");
+  const fetchAsset = async (url: string) =>
+    url.endsWith("sha256") ? new Response(checksum) : new Response(bytes);
+  await updateExecutable(
+    {
+      latestVersion: "1.2.4",
+      isNewer: true,
+      assetUrl: "asset",
+      checksumUrl: "asset.sha256",
+    },
+    executablePath,
+    fetchAsset,
+  );
+  expect(new Uint8Array(await Bun.file(executablePath).arrayBuffer())).toEqual(
+    bytes,
+  );
 });

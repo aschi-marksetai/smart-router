@@ -45,6 +45,8 @@ bun run eval
 bun run build
 ```
 
+Run `bun run coverage` for the coverage report; tests require 97% line and 95% function coverage.
+
 After a release, run `bun run formula v0.1.0 > ../homebrew-tap/Formula/smart-router.rb`.
 
 The eval suite uses the maintainer's model ids and may need adapting for your setup.

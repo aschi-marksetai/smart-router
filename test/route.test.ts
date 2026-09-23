@@ -1,10 +1,14 @@
 import { expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DEFAULT_CONFIG, type Config } from "../src/config.ts";
 import type { DoctorResult } from "../src/doctor.ts";
 import {
   CODEX_DANGER_FULL_ACCESS_SANDBOX,
   CODEX_WORKSPACE_WRITE_SANDBOX,
   chooseCodexSandbox,
+  defaultRouteDeps,
   needsStoppingPoint,
   route,
   shouldUseClaudeBrowser,
@@ -93,6 +97,40 @@ function deps(overrides: Partial<RouteDeps> = {}): RouteDeps {
     ...overrides,
   };
 }
+
+test("reads route preferences and treats a missing file as empty", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-route-"));
+  const previous = process.env.SMART_ROUTER_CONFIG_DIR;
+  process.env.SMART_ROUTER_CONFIG_DIR = directory;
+  try {
+    const preferences = defaultRouteDeps(config).preferences;
+    if (typeof preferences !== "function")
+      throw new Error("missing preferences loader");
+    expect(await preferences()).toBe("");
+    await writeFile(join(directory, "preferences.md"), "prefer Codex");
+    expect(await preferences()).toBe("prefer Codex");
+    await rm(join(directory, "preferences.md"));
+    await mkdir(join(directory, "preferences.md"));
+    await expect(preferences()).rejects.toThrow();
+  } finally {
+    if (previous === undefined) delete process.env.SMART_ROUTER_CONFIG_DIR;
+    else process.env.SMART_ROUTER_CONFIG_DIR = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("matches confidential path globs", async () => {
+  const result = await route(
+    "task",
+    { cwd: "/work/secret/task", dryRun: true },
+    deps({
+      config: { ...config, rules: { confidentialPathGlobs: ["**/secret/**"] } },
+    }),
+  );
+  expect(
+    "preferences" in result && result.candidates.map(({ id }) => id),
+  ).toEqual(["claude:opus", "codex:terra"]);
+});
 
 test("applies quota and confidential rules", async () => {
   const result = await route(

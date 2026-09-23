@@ -79,6 +79,36 @@ const OLDER_THAN_FLAG = "--older-than";
 const OLDER_THAN_OPTION = `${OLDER_THAN_FLAG} <days>`;
 const NEW_MODELS_NOTICE = "New models available:";
 
+export type CliDeps = {
+  stdout: (text: string) => void;
+  stderr: (text: string) => void;
+  exit: (code: number) => void;
+  runForeground: typeof runForeground;
+  runDetached: typeof runDetached;
+  fetch: (url: string) => Promise<Response>;
+  now: () => number;
+  execPath: string;
+  routeDeps: typeof defaultRouteDeps;
+  doctor: typeof doctor;
+  getQuota: typeof getQuota;
+  runInit: (options: Parameters<typeof runInit>[0]) => Promise<void>;
+};
+
+const DEFAULT_DEPS: CliDeps = {
+  stdout: (text) => process.stdout.write(text),
+  stderr: (text) => process.stderr.write(text),
+  exit: (code) => process.exit(code),
+  runForeground,
+  runDetached,
+  fetch: (url) => globalThis.fetch(url),
+  now: Date.now,
+  execPath: process.execPath,
+  routeDeps: defaultRouteDeps,
+  doctor,
+  getQuota,
+  runInit,
+};
+
 function resultOutput(result: string, resultLimit: number | undefined) {
   if (resultLimit === undefined || result.length <= resultLimit)
     return { result };
@@ -102,19 +132,20 @@ function resultLimit(options: { resultLimit?: string }): number | undefined {
 }
 
 function printResult(
+  deps: CliDeps,
   result: unknown,
   summary: string,
   exitCode = SUCCESS_EXIT_CODE,
-): never {
-  console.log(JSON.stringify(result));
-  console.error(summary);
-  process.exit(exitCode);
+): void {
+  deps.stdout(`${JSON.stringify(result)}\n`);
+  deps.stderr(`${summary}\n`);
+  deps.exit(exitCode);
 }
 
-function printLog(output: string): never {
-  process.stdout.write(output);
-  console.error("Session log retrieved");
-  process.exit(SUCCESS_EXIT_CODE);
+function printLog(deps: CliDeps, output: string): void {
+  deps.stdout(output);
+  deps.stderr("Session log retrieved\n");
+  deps.exit(SUCCESS_EXIT_CODE);
 }
 
 function isHarness(value: string): value is HarnessName {
@@ -149,27 +180,32 @@ function directPick(modelId: string, effort: string): Pick {
 async function routeCommand(
   prompt: string,
   options: RouteOptions,
-): Promise<never> {
+  deps: CliDeps,
+): Promise<void> {
   const config = await loadConfig();
-  const result = await route(prompt, options, defaultRouteDeps(config));
-  console.log(JSON.stringify(result));
+  const result = await route(prompt, options, deps.routeDeps(config));
+  deps.stdout(`${JSON.stringify(result)}\n`);
   await printUpdateNotice(
     config,
     "availableModels" in result ? result.availableModels : [],
+    deps,
   );
-  console.error(options.dryRun ? "Route dry run completed" : "Route selected");
-  process.exit(SUCCESS_EXIT_CODE);
+  deps.stderr(
+    `${options.dryRun ? "Route dry run completed" : "Route selected"}\n`,
+  );
+  deps.exit(SUCCESS_EXIT_CODE);
 }
 
 async function spawnCommand(
   prompt: string,
   options: SpawnOptions,
-): Promise<never> {
+  deps: CliDeps,
+): Promise<void> {
   const config = await loadConfig();
   const cwd = options.cwd ?? process.cwd();
   const routeResult = options.model
     ? null
-    : await route(prompt, options, defaultRouteDeps(config));
+    : await route(prompt, options, deps.routeDeps(config));
   if (routeResult && !("pick" in routeResult))
     throw new Error("Cannot spawn from a dry-run route");
   let selected: Pick;
@@ -229,10 +265,10 @@ async function spawnCommand(
     sandbox: sandboxChoice?.sandbox,
     usesNetworkAccess: sandboxChoice?.usesNetworkAccess,
   };
-  console.error(
-    `Routed to ${selected.harness}:${selected.model}@${selected.effort}${confidenceNote}${sandboxNote}`,
+  deps.stderr(
+    `Routed to ${selected.harness}:${selected.model}@${selected.effort}${confidenceNote}${sandboxNote}\n`,
   );
-  printPassthroughNotes(selected.harness, options);
+  printPassthroughNotes(selected.harness, options, deps);
   const adapter = getAdapter(selected.harness);
   const harnessOptions = await harnessOptionsFor(selected, cwd, config, {
     ...options,
@@ -249,7 +285,7 @@ async function spawnCommand(
     let pid: number;
     let errPath: string;
     try {
-      ({ pid, errPath } = await runDetached(command.argv, cwd, logPath));
+      ({ pid, errPath } = await deps.runDetached(command.argv, cwd, logPath));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await createSession({
@@ -281,21 +317,22 @@ async function spawnCommand(
       usage: null,
       route: routeResult,
     });
-    console.log(
-      JSON.stringify({
+    deps.stdout(
+      `${JSON.stringify({
         handle,
         ...selected,
         sandbox,
         route: routeResult,
         logPath,
-      }),
+      })}\n`,
     );
-    await printUpdateNotice(config, routeResult?.availableModels ?? []);
-    console.error("Spawn detached");
-    process.exit(SUCCESS_EXIT_CODE);
+    await printUpdateNotice(config, routeResult?.availableModels ?? [], deps);
+    deps.stderr("Spawn detached\n");
+    deps.exit(SUCCESS_EXIT_CODE);
+    return;
   }
   const parsed = adapter.parseSpawnOutput(
-    await runForeground(command.argv, cwd),
+    await deps.runForeground(command.argv, cwd),
   );
   const sessionId = parsed.sessionId || command.sessionId;
   if (!sessionId)
@@ -312,8 +349,8 @@ async function spawnCommand(
     usage: parsed.usage,
     route: routeResult,
   });
-  console.log(
-    JSON.stringify({
+  deps.stdout(
+    `${JSON.stringify({
       handle: session.handle,
       ...selected,
       sandbox,
@@ -323,51 +360,63 @@ async function spawnCommand(
         .argv.join(" "),
       ...resultOutput(parsed.result, resultLimit(options)),
       usage: parsed.usage,
-    }),
+    })}\n`,
   );
-  await printUpdateNotice(config, routeResult?.availableModels ?? []);
-  console.error("Spawn completed");
-  process.exit(SUCCESS_EXIT_CODE);
+  await printUpdateNotice(config, routeResult?.availableModels ?? [], deps);
+  deps.stderr("Spawn completed\n");
+  deps.exit(SUCCESS_EXIT_CODE);
 }
 
 async function printUpdateNotice(
   config: Awaited<ReturnType<typeof loadConfig>>,
   availableModels: string[] = [],
+  deps: CliDeps,
 ): Promise<void> {
   if (
     config.updates?.check === false ||
     process.env.SMART_ROUTER_NO_UPDATE_CHECK !== undefined
   )
     return;
-  const update = await readUpdateNotice(version);
+  const update = await readUpdateNotice(version, deps.fetch, deps.now);
   if (update?.isNewer)
-    console.error(
-      `smart-router ${update.latestVersion} is available; run smart-router update`,
+    deps.stderr(
+      `smart-router ${update.latestVersion} is available; run smart-router update\n`,
     );
   if (availableModels.length)
-    console.error(
-      `${NEW_MODELS_NOTICE} ${availableModels.join(";")}; run smart-router init --section models`,
+    deps.stderr(
+      `${NEW_MODELS_NOTICE} ${availableModels.join(";")}; run smart-router init --section models\n`,
     );
 }
 
-async function updateCommand(options: { check?: boolean }): Promise<never> {
-  const result = await readUpdateNotice(version);
+async function updateCommand(
+  options: { check?: boolean },
+  deps: CliDeps,
+): Promise<void> {
+  const result = await readUpdateNotice(version, deps.fetch, deps.now);
   if (!result)
     return printResult(
+      deps,
       { error: "Could not check for updates" },
       "Update check failed",
       ERROR_EXIT_CODE,
     );
   if (options.check || !result.isNewer)
     return printResult(
+      deps,
       { current: version, latest: result.latestVersion, updated: false },
       "Update check completed",
     );
-  const refusal = updateRefusal(process.execPath);
+  const refusal = updateRefusal(deps.execPath);
   if (refusal)
-    return printResult({ error: refusal }, "Update refused", ERROR_EXIT_CODE);
-  await updateExecutable(result, process.execPath);
+    return printResult(
+      deps,
+      { error: refusal },
+      "Update refused",
+      ERROR_EXIT_CODE,
+    );
+  await updateExecutable(result, deps.execPath, deps.fetch);
   return printResult(
+    deps,
     { current: version, latest: result.latestVersion, updated: true },
     "Updated",
   );
@@ -377,7 +426,8 @@ async function sendCommand(
   handle: string,
   message: string,
   options: PassthroughOptions,
-): Promise<never> {
+  deps: CliDeps,
+): Promise<void> {
   const [config, session] = await Promise.all([
     loadConfig(),
     loadSession(handle),
@@ -386,7 +436,7 @@ async function sendCommand(
     throw new Error(`session ${handle} ${RUNNING_SESSION_ERROR}`);
   if (!session.sessionId)
     throw new Error(`session ${handle} has no session id`);
-  printPassthroughNotes(session.harness, options);
+  printPassthroughNotes(session.harness, options, deps);
   const adapter = getAdapter(session.harness);
   const harnessOptions = await harnessOptionsFor(
     session,
@@ -400,7 +450,7 @@ async function sendCommand(
     harnessOptions,
   );
   const parsed = adapter.parseResumeOutput(
-    await runForeground(command.argv, session.cwd),
+    await deps.runForeground(command.argv, session.cwd),
   );
   session.result = parsed.result;
   session.lastResult = parsed.result;
@@ -408,6 +458,7 @@ async function sendCommand(
   if (options.browser && session.harness === "claude") session.browser = true;
   await saveSession(session);
   return printResult(
+    deps,
     {
       handle,
       ...resultOutput(parsed.result, resultLimit(options)),
@@ -459,6 +510,7 @@ async function harnessOptionsFor(
 function printPassthroughNotes(
   harness: HarnessName,
   options: PassthroughOptions,
+  deps: CliDeps,
 ): void {
   const ignored: string[] = [];
   if (options.permissionMode && harness !== "claude")
@@ -469,7 +521,7 @@ function printPassthroughNotes(
     ignored.push("--allowed-tools");
   if (options.schema && harness === "pi") ignored.push("--schema");
   if (ignored.length)
-    console.error(`Ignored for ${harness}: ${ignored.join(", ")}`);
+    deps.stderr(`Ignored for ${harness}: ${ignored.join(", ")}\n`);
 }
 
 async function refreshSession(handle: string): Promise<Session> {
@@ -482,9 +534,10 @@ async function refreshSession(handle: string): Promise<Session> {
   );
 }
 
-async function statusCommand(handle: string): Promise<never> {
+async function statusCommand(handle: string, deps: CliDeps): Promise<void> {
   const session = await refreshSession(handle);
   return printResult(
+    deps,
     {
       ...session,
       running:
@@ -499,7 +552,8 @@ async function statusCommand(handle: string): Promise<never> {
 async function logsCommand(
   handle: string,
   options: { tail?: string; err?: boolean },
-): Promise<never> {
+  deps: CliDeps,
+): Promise<void> {
   const session = await loadSession(handle);
   const logPath = options.err
     ? session.errPath
@@ -516,13 +570,14 @@ async function logsCommand(
     if (lines.at(-1) === "") lines.pop();
     result = lines.slice(-tail).join("\n");
   }
-  return printLog(result);
+  return printLog(deps, result);
 }
 
 async function waitCommand(
   handle: string,
   options: { resultLimit?: string },
-): Promise<never> {
+  deps: CliDeps,
+): Promise<void> {
   let session = await refreshSession(handle);
   while (session.status === SESSION_STATUS.running) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
@@ -530,6 +585,7 @@ async function waitCommand(
   }
   if (session.status === SESSION_STATUS.failed)
     return printResult(
+      deps,
       { error: session.error ?? "Detached spawn failed" },
       "Spawn failed",
       ERROR_EXIT_CODE,
@@ -545,6 +601,7 @@ async function waitCommand(
         .argv.join(" ")
     : undefined;
   return printResult(
+    deps,
     {
       handle: session.handle,
       harness: session.harness,
@@ -562,17 +619,22 @@ async function waitCommand(
   );
 }
 
-async function stopCommand(handle: string): Promise<never> {
+async function stopCommand(handle: string, deps: CliDeps): Promise<void> {
   const session = await loadSession(handle);
   return printResult(
+    deps,
     { ...(await stopSession(session)), running: false },
     "Session stopped",
   );
 }
 
-async function sessionsCommand(options: { all?: boolean }): Promise<never> {
+async function sessionsCommand(
+  options: { all?: boolean },
+  deps: CliDeps,
+): Promise<void> {
   const sessions = await listSessions(options.all ? undefined : sessionOwner());
   return printResult(
+    deps,
     sessions.map(
       ({
         handle,
@@ -598,47 +660,61 @@ async function sessionsCommand(options: { all?: boolean }): Promise<never> {
   );
 }
 
-async function rmCommand(handle: string): Promise<never> {
+async function rmCommand(handle: string, deps: CliDeps): Promise<void> {
   await removeSession(handle);
-  return printResult({ removed: [handle] }, "Session removed");
+  return printResult(deps, { removed: [handle] }, "Session removed");
 }
 
-async function pruneCommand(options: { olderThan?: string }): Promise<never> {
+async function pruneCommand(
+  options: { olderThan?: string },
+  deps: CliDeps,
+): Promise<void> {
   if (options.olderThan === undefined)
     throw new Error(`${OLDER_THAN_OPTION} is required`);
   const removed = await pruneSessions(
     parseNonNegativeInteger(options.olderThan, OLDER_THAN_FLAG),
   );
-  return printResult({ removed }, "Sessions pruned");
+  return printResult(deps, { removed }, "Sessions pruned");
 }
 
-async function main(): Promise<void> {
-  await loadDotEnv(configDir());
-  await loadDotEnv(process.cwd());
+export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
   const program = new Command().name("smart-router");
   program.version(version);
+  program.configureOutput({
+    writeOut: deps.stdout,
+    writeErr: deps.stderr,
+  });
+  program.exitOverride();
   program
     .command("install-skill")
     .action(async () =>
-      printResult({ skillPath: await installSkill() }, "Skill installed"),
+      printResult(
+        deps,
+        { skillPath: await installSkill(deps.stderr) },
+        "Skill installed",
+      ),
     );
   program
     .command("doctor")
     .action(async () =>
-      printResult(await doctor(await loadConfig()), "Doctor completed"),
+      printResult(
+        deps,
+        await deps.doctor(await loadConfig()),
+        "Doctor completed",
+      ),
     );
   program
     .command("init")
     .option("--section <section>")
     .option("--reset")
-    .action(runInit);
+    .action((options) => deps.runInit(options));
   program
     .command("route <prompt>")
     .option("--cwd <dir>")
     .option("--hint <text>")
     .option("--confidential")
     .option("--dry-run")
-    .action(routeCommand);
+    .action((prompt, options) => routeCommand(prompt, options, deps));
   program
     .command("spawn <prompt>")
     .option("--cwd <dir>")
@@ -656,7 +732,7 @@ async function main(): Promise<void> {
     .option("--schema <file>")
     .option(RESULT_LIMIT_OPTION)
     .option("--no-guardrails")
-    .action(spawnCommand);
+    .action((prompt, options) => spawnCommand(prompt, options, deps));
   program
     .command("send <handle> <message>")
     .option("--permission-mode <mode>")
@@ -665,37 +741,69 @@ async function main(): Promise<void> {
     .option("--allowed-tools <list>")
     .option("--schema <file>")
     .option(RESULT_LIMIT_OPTION)
-    .action(sendCommand);
-  program.command("status <handle>").action(statusCommand);
+    .action((handle, message, options) =>
+      sendCommand(handle, message, options, deps),
+    );
+  program
+    .command("status <handle>")
+    .action((handle) => statusCommand(handle, deps));
   program
     .command("logs <handle>")
     .option("--tail <n>")
     .option("--err")
-    .action(logsCommand);
+    .action((handle, options) => logsCommand(handle, options, deps));
   program
     .command("wait <handle>")
     .option(RESULT_LIMIT_OPTION)
-    .action(waitCommand);
-  program.command("stop <handle>").action(stopCommand);
-  program.command("sessions").option(ALL_OPTION).action(sessionsCommand);
-  program.command("rm <handle>").action(rmCommand);
-  program.command("prune").option(OLDER_THAN_OPTION).action(pruneCommand);
+    .action((handle, options) => waitCommand(handle, options, deps));
+  program
+    .command("stop <handle>")
+    .action((handle) => stopCommand(handle, deps));
+  program
+    .command("sessions")
+    .option(ALL_OPTION)
+    .action((options) => sessionsCommand(options, deps));
+  program.command("rm <handle>").action((handle) => rmCommand(handle, deps));
+  program
+    .command("prune")
+    .option(OLDER_THAN_OPTION)
+    .action((options) => pruneCommand(options, deps));
   program.command("quota").action(async () => {
-    const result = await getQuota(await loadConfig());
+    const result = await deps.getQuota(await loadConfig());
     return printResult(
+      deps,
       result,
       "Quota retrieved",
       "error" in result ? ERROR_EXIT_CODE : SUCCESS_EXIT_CODE,
     );
   });
-  program.command("update").option("--check").action(updateCommand);
-  await program.parseAsync();
+  program
+    .command("update")
+    .option("--check")
+    .action((options) => updateCommand(options, deps));
+  return program;
 }
 
-main().catch((error: unknown) =>
-  printResult(
-    { error: error instanceof Error ? error.message : String(error) },
-    error instanceof Error ? error.message : String(error),
-    ERROR_EXIT_CODE,
-  ),
-);
+export async function runCli(
+  argv: string[],
+  deps: CliDeps = DEFAULT_DEPS,
+): Promise<void> {
+  try {
+    await loadDotEnv(configDir());
+    await loadDotEnv(process.cwd());
+    await buildProgram(deps).parseAsync(argv, { from: "user" });
+  } catch (error) {
+    if (error instanceof Error && error.name === "CommanderError") {
+      deps.exit(Number("exitCode" in error ? error.exitCode : ERROR_EXIT_CODE));
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    printResult(deps, { error: message }, message, ERROR_EXIT_CODE);
+  }
+}
+
+async function main(): Promise<void> {
+  await runCli(process.argv.slice(2));
+}
+
+if (import.meta.main) void main();

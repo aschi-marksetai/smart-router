@@ -10,16 +10,12 @@ import {
 import { harnessBinary, type Config, type HarnessName } from "./config.ts";
 import { record } from "./files.ts";
 
-const CLAUDE_CATALOG_GLOB = join(
-  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
-  "cache",
-  "model-catalog",
-  "*.json",
-);
-const CODEX_MODELS_CACHE = join(
-  process.env.CODEX_HOME ?? join(homedir(), ".codex"),
-  "models_cache.json",
-);
+type EnumerateDeps = {
+  fetch?: (url: string, init?: RequestInit) => Promise<Response>;
+  runCodexModels?: (binary: string) => Promise<string>;
+  claudeConfigDir?: string;
+  codexHome?: string;
+};
 const ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models";
 const OPENAI_MODELS_URL = "https://api.openai.com/v1/models";
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
@@ -135,8 +131,10 @@ export function parsePiRegistry(
   );
 }
 
-function newestCatalog(): string {
-  const catalogs = globSync(CLAUDE_CATALOG_GLOB);
+function newestCatalog(directory: string): string {
+  const catalogs = globSync(
+    join(directory, "cache", "model-catalog", "*.json"),
+  );
   const newest = catalogs.sort(
     (left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs,
   )[0];
@@ -147,44 +145,74 @@ function newestCatalog(): string {
 async function responseJson(
   url: string,
   headers: HeadersInit,
+  fetchModels: NonNullable<EnumerateDeps["fetch"]>,
 ): Promise<unknown> {
-  const response = await fetch(url, { headers });
+  const response = await fetchModels(url, { headers });
   if (!response.ok) throw new Error(`Model request failed: ${response.status}`);
   return response.json();
 }
 
-async function fetchAnthropicModels(key: string): Promise<unknown> {
-  return responseJson(ANTHROPIC_MODELS_URL, {
-    "x-api-key": key,
-    "anthropic-version": ANTHROPIC_VERSION,
-  });
-}
-
-async function enumerateClaude(config: Config): Promise<EnumeratedModel[]> {
-  if (config.harnesses.claude?.auth === "api-key") {
-    const key = process.env[config.providers.anthropic?.apiKeyEnv ?? ""];
-    if (!key) throw new Error("Anthropic API key not set");
-    return parseAnthropicModels(await fetchAnthropicModels(key));
-  }
-  return parseClaudeCatalog(
-    JSON.parse(await readFile(newestCatalog(), "utf8")),
+async function fetchAnthropicModels(
+  key: string,
+  fetchModels: NonNullable<EnumerateDeps["fetch"]>,
+): Promise<unknown> {
+  return responseJson(
+    ANTHROPIC_MODELS_URL,
+    {
+      "x-api-key": key,
+      "anthropic-version": ANTHROPIC_VERSION,
+    },
+    fetchModels,
   );
 }
 
-async function enumerateCodex(config: Config): Promise<EnumeratedModel[]> {
+async function enumerateClaude(
+  config: Config,
+  deps: EnumerateDeps,
+): Promise<EnumeratedModel[]> {
+  if (config.harnesses.claude?.auth === "api-key") {
+    const key = process.env[config.providers.anthropic?.apiKeyEnv ?? ""];
+    if (!key) throw new Error("Anthropic API key not set");
+    return parseAnthropicModels(
+      await fetchAnthropicModels(key, deps.fetch ?? fetch),
+    );
+  }
+  const directory =
+    deps.claudeConfigDir ??
+    process.env.CLAUDE_CONFIG_DIR ??
+    join(homedir(), ".claude");
+  return parseClaudeCatalog(
+    JSON.parse(await readFile(newestCatalog(directory), "utf8")),
+  );
+}
+
+async function enumerateCodex(
+  config: Config,
+  deps: EnumerateDeps,
+): Promise<EnumeratedModel[]> {
   const binary = harnessBinary(config, "codex");
   try {
     return parseCodexModels(
-      JSON.parse((await $`${binary} debug models`.quiet()).text()),
+      JSON.parse(
+        await (
+          deps.runCodexModels ??
+          (async (command) => (await $`${command} debug models`.quiet()).text())
+        )(binary),
+      ),
     );
   } catch {
+    const directory =
+      deps.codexHome ?? process.env.CODEX_HOME ?? join(homedir(), ".codex");
     return parseCodexModels(
-      JSON.parse(await readFile(CODEX_MODELS_CACHE, "utf8")),
+      JSON.parse(await readFile(join(directory, "models_cache.json"), "utf8")),
     );
   }
 }
 
-async function enumeratePi(config: Config): Promise<EnumeratedModel[]> {
+async function enumeratePi(
+  config: Config,
+  deps: EnumerateDeps,
+): Promise<EnumeratedModel[]> {
   const providers = Object.entries(config.providers).filter(([, provider]) =>
     Boolean(process.env[provider.apiKeyEnv]),
   );
@@ -195,14 +223,22 @@ async function enumeratePi(config: Config): Promise<EnumeratedModel[]> {
         if (!key) return [];
         if (provider === "openrouter")
           return parseOpenRouterModels(
-            await responseJson(OPENROUTER_MODELS_URL, {
-              Authorization: `Bearer ${key}`,
-            }),
+            await responseJson(
+              OPENROUTER_MODELS_URL,
+              {
+                Authorization: `Bearer ${key}`,
+              },
+              deps.fetch ?? fetch,
+            ),
           );
         if (provider === "openai") {
-          const payload = await responseJson(OPENAI_MODELS_URL, {
-            Authorization: `Bearer ${key}`,
-          });
+          const payload = await responseJson(
+            OPENAI_MODELS_URL,
+            {
+              Authorization: `Bearer ${key}`,
+            },
+            deps.fetch ?? fetch,
+          );
           const registry = models(record(payload)?.data).flatMap((model) => {
             const id = model.id;
             return typeof id === "string"
@@ -212,13 +248,13 @@ async function enumeratePi(config: Config): Promise<EnumeratedModel[]> {
           return parsePiRegistry("openai", registry);
         }
         if (provider === "anthropic")
-          return parseAnthropicModels(await fetchAnthropicModels(key)).map(
-            (model) => ({
-              ...model,
-              id: `pi:anthropic/${model.model}`,
-              model: `anthropic/${model.model}`,
-            }),
-          );
+          return parseAnthropicModels(
+            await fetchAnthropicModels(key, deps.fetch ?? fetch),
+          ).map((model) => ({
+            ...model,
+            id: `pi:anthropic/${model.model}`,
+            model: `anthropic/${model.model}`,
+          }));
         const builtinProvider = getBuiltinProviders().find(
           (id) => id === provider,
         );
@@ -233,8 +269,9 @@ async function enumeratePi(config: Config): Promise<EnumeratedModel[]> {
 export async function enumerate(
   harness: HarnessName,
   config: Config,
+  deps: EnumerateDeps = {},
 ): Promise<EnumeratedModel[]> {
-  if (harness === "claude") return enumerateClaude(config);
-  if (harness === "codex") return enumerateCodex(config);
-  return enumeratePi(config);
+  if (harness === "claude") return enumerateClaude(config, deps);
+  if (harness === "codex") return enumerateCodex(config, deps);
+  return enumeratePi(config, deps);
 }

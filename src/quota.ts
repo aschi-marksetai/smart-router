@@ -57,25 +57,32 @@ export function normalizeCodexbar(payload: unknown): QuotaProvider | null {
 
 export async function runCodexbar(
   provider: string,
+  runCommand: (provider: string) => Promise<string> = async (name) =>
+    (await $`codexbar usage --format json --provider ${name}`.quiet()).text(),
 ): Promise<QuotaProvider | null> {
   try {
-    const output =
-      await $`codexbar usage --format json --provider ${provider}`.quiet();
-    return normalizeCodexbar(JSON.parse(output.text()));
+    return normalizeCodexbar(JSON.parse(await runCommand(provider)));
   } catch {
     return null;
   }
 }
 
-export async function getQuota(config?: Config): Promise<QuotaResult> {
+export async function getQuota(
+  config?: Config,
+  deps: {
+    which?: (binary: string) => string | null;
+    runCodexbar?: typeof runCodexbar;
+  } = {},
+): Promise<QuotaResult> {
   if (config && !config.quota.enabled) return { error: "quota disabled" };
-  if (!Bun.which(CODEXBAR_BINARY)) return { error: "codexbar not installed" };
+  if (!(deps.which ?? Bun.which)(CODEXBAR_BINARY))
+    return { error: "codexbar not installed" };
   const entries = await Promise.all(
     Object.entries(
       config?.quota.providers ?? { claude: "claude", codex: "codex" },
     ).map(
       async ([harness, provider]) =>
-        [harness, await runCodexbar(provider)] as const,
+        [harness, await (deps.runCodexbar ?? runCodexbar)(provider)] as const,
     ),
   );
   return Object.fromEntries(entries);

@@ -1,6 +1,6 @@
 {
   "name": "smart-router",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "bin": {
     "smart-router": "src/cli.ts"
@@ -9,6 +9,7 @@
     "eval": "promptfoo eval -c evals/promptfooconfig.yaml",
     "eval:view": "promptfoo view",
     "test": "bun test",
+    "coverage": "bun test --coverage",
     "typecheck": "tsc --noEmit",
     "build": "bun scripts/build.ts",
     "formula": "bun run scripts/formula.ts",

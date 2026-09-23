@@ -193,6 +193,15 @@ test("builds Codex commands and parses result usage", async () => {
       '{"type":"thread.started","thread_id":"thread-123"}\n{"type":"error","message":"Codex failed"}',
     ),
   ).toThrow("Codex failed");
+  expect(
+    codex.parseResumeOutput(
+      '1\n{"type":"item.completed","item":{"type":"agent_message","text":"continued"}}',
+    ),
+  ).toEqual({
+    sessionId: "",
+    result: "continued",
+    usage: null,
+  });
 });
 
 test("uses only accepted resume flags", () => {
@@ -239,6 +248,17 @@ test("builds Pi commands and parses assistant messages", () => {
   ]);
   expect(
     pi.parseSpawnOutput(
+      '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Pi reply"}]}}',
+    ).result,
+  ).toBe("Pi reply");
+  expect(
+    pi.buildResume("session.json", "continue", {
+      cwd: "/project",
+      model: "model",
+    }).sessionId,
+  ).toBe("session.json");
+  expect(
+    pi.parseResumeOutput(
       '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Pi reply"}]}}',
     ).result,
   ).toBe("Pi reply");

@@ -34,6 +34,7 @@ test("strips export prefixes and matching quotes while preserving equals", async
 
 test("loads dotenv assignments without overriding the environment", async () => {
   directory = await mkdtemp(join(tmpdir(), "smart-router-env-"));
+  await loadDotEnv(directory);
   await writeFile(
     join(directory, ".env"),
     `# comment\n${ENVIRONMENT_KEY}=from-file\nEMPTY=\n`,

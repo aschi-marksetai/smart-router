@@ -58,13 +58,14 @@ export async function checkForUpdate({
 export async function readUpdateNotice(
   currentVersion = "0.0.0",
   fetch: FetchLike = globalThis.fetch,
+  now: () => number = Date.now,
 ): Promise<UpdateResult | null> {
   const cachePath = join(stateDir(), UPDATE_CACHE_FILE_NAME);
   try {
     const cached = JSON.parse(
       await fs.readFile(cachePath, "utf8"),
     ) as UpdateResult;
-    const cacheAge = Date.now() - (await fs.stat(cachePath)).mtimeMs;
+    const cacheAge = now() - (await fs.stat(cachePath)).mtimeMs;
     if (cacheAge < UPDATE_CACHE_INTERVAL_MS) return cached;
   } catch {}
   try {

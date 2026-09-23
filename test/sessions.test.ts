@@ -12,9 +12,11 @@ import { join } from "node:path";
 import * as codex from "../src/harness/codex.ts";
 import { DEFAULT_CONFIG, saveConfig } from "../src/config.ts";
 import {
+  addUsage,
   completeSessionFromLog,
   createSession,
   listSessions,
+  isProcessRunning,
   loadSession,
   pruneSessions,
   removeSession,
@@ -280,6 +282,7 @@ test("marks a session stopped", async () => {
   const directory = await mkdtemp(join(tmpdir(), "smart-router-state-"));
   temporaryDirectories.push(directory);
   process.env[STATE_DIRECTORY_ENV] = directory;
+  const child = Bun.spawn(["sleep", "30"]);
   const session = await createSession({
     harness: "claude",
     model: "opus",
@@ -288,8 +291,10 @@ test("marks a session stopped", async () => {
     sessionId: "session-123",
     prompt: "Stop.",
     status: SESSION_STATUS.running,
+    pid: child.pid,
   });
   expect((await stopSession(session)).status).toBe(SESSION_STATUS.stopped);
+  await child.exited;
 });
 
 test("stores Codex error events and stderr when a detached session fails", async () => {
@@ -319,6 +324,52 @@ test("stores Codex error events and stderr when a detached session fails", async
     status: SESSION_STATUS.failed,
     error: "Codex failed\nstderr failure",
   });
+});
+
+test("handles missing state, empty results, and unreadable logs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-state-"));
+  temporaryDirectories.push(directory);
+  process.env[STATE_DIRECTORY_ENV] = directory;
+  expect(await listSessions()).toEqual([]);
+  const session = await createSession({
+    harness: "codex",
+    model: "model",
+    effort: "medium",
+    cwd: directory,
+    prompt: "task",
+    status: SESSION_STATUS.running,
+    errPath: join(directory, "missing.err"),
+  });
+  await writeFile(sessionLogPath(session.handle), "empty");
+  expect(
+    (
+      await completeSessionFromLog(session, () => ({
+        sessionId: "",
+        result: "",
+        usage: null,
+      }))
+    ).error,
+  ).toBe("Harness output did not contain a result");
+  await rm(sessionLogPath(session.handle));
+  expect(
+    (
+      await completeSessionFromLog(session, () => {
+        throw new Error("parser failed");
+      })
+    ).status,
+  ).toBe(SESSION_STATUS.failed);
+});
+
+test("accumulates session usage and detects a missing process", () => {
+  const first = { inputTokens: 2, outputTokens: 3, costUsd: 0.1 };
+  const second = { inputTokens: 4, outputTokens: 5, costUsd: 0.2 };
+  expect(addUsage(first, second)).toEqual({
+    inputTokens: 6,
+    outputTokens: 8,
+    costUsd: 0.30000000000000004,
+  });
+  expect(addUsage(first, { ...second, costUsd: null })?.costUsd).toBeNull();
+  expect(isProcessRunning(999999999)).toBe(false);
 });
 
 test("tails newline-terminated logs without an empty line", async () => {

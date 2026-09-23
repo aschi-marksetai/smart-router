@@ -70,6 +70,49 @@ const TYPESAFE_KEYS_URL = "https://console.typesafe.ai/keys";
 
 type InitSection = "auth" | "models" | "rules" | "preferences";
 type PreferencesEditMethod = "editor" | "claude" | "codex" | "skip";
+type Prompts = Pick<
+  typeof import("@clack/prompts"),
+  | "select"
+  | "multiselect"
+  | "text"
+  | "confirm"
+  | "password"
+  | "note"
+  | "intro"
+  | "outro"
+  | "cancel"
+  | "isCancel"
+>;
+export type InitDeps = {
+  prompts: Prompts;
+  enumerate: typeof enumerate;
+  doctor: typeof doctor;
+  launch: (
+    argv: string[],
+    options: { cwd?: string; stdio: ["inherit", "inherit", "inherit"] },
+  ) => { exited: Promise<number> };
+  env: NodeJS.ProcessEnv;
+  which: typeof Bun.which;
+};
+const defaultDeps: InitDeps = {
+  prompts: {
+    select,
+    multiselect,
+    text,
+    confirm,
+    password,
+    note,
+    intro,
+    outro,
+    cancel,
+    isCancel,
+  },
+  enumerate,
+  doctor,
+  launch: (argv, options) => Bun.spawn(argv, options),
+  env: process.env,
+  which: Bun.which,
+};
 
 class SetupCancelled extends Error {}
 
@@ -84,20 +127,24 @@ function isSection(value: string | undefined): value is InitSection {
   return ["auth", "models", "rules", "preferences"].includes(value ?? "");
 }
 
-async function prompt<T>(question: Promise<T | symbol>): Promise<T> {
+async function prompt<T>(
+  question: Promise<T | symbol>,
+  deps: InitDeps,
+): Promise<T> {
   const answer = await question;
-  if (!isCancel(answer)) return answer;
-  cancel("Setup cancelled");
+  if (!deps.prompts.isCancel(answer)) return answer;
+  deps.prompts.cancel("Setup cancelled");
   throw new SetupCancelled();
 }
 
 async function beginSection(
   title: string,
   hasExistingConfig: boolean,
+  deps: InitDeps,
 ): Promise<"continue" | "skip"> {
   if (!hasExistingConfig) return "continue";
   const answer = await prompt(
-    select({
+    deps.prompts.select({
       message: title,
       options: [
         { value: KEEP, label: "Keep as is" },
@@ -105,6 +152,7 @@ async function beginSection(
       ],
       initialValue: KEEP,
     }),
+    deps,
   );
   return answer === KEEP ? "skip" : "continue";
 }
@@ -112,23 +160,25 @@ async function beginSection(
 async function runAuth(
   config: Config,
   hasExistingConfig: boolean,
+  deps: InitDeps,
 ): Promise<Config> {
-  const start = await beginSection("Authentication", hasExistingConfig);
+  const start = await beginSection("Authentication", hasExistingConfig, deps);
   if (start === "skip") return config;
   const next = structuredClone(config);
   for (const harness of HARNESS_NAMES) {
     const enabled = await prompt(
-      confirm({
+      deps.prompts.confirm({
         message: `Enable ${harness}?`,
         initialValue: next.harnesses[harness]?.enabled ?? false,
       }),
+      deps,
     );
     const current = next.harnesses[harness] ?? { enabled };
     if (harness === "pi") next.harnesses.pi = { ...next.harnesses.pi, enabled };
     else next.harnesses[harness] = { ...current, enabled };
     if (!enabled) continue;
     const auth = await prompt(
-      select<"subscription" | "api-key">({
+      deps.prompts.select<"subscription" | "api-key">({
         message: `${harness} authentication`,
         options:
           harness === "pi"
@@ -140,13 +190,15 @@ async function runAuth(
         initialValue:
           current.auth ?? (harness === "pi" ? "api-key" : "subscription"),
       }),
+      deps,
     );
     const capabilities = await prompt(
-      text({
+      deps.prompts.text({
         message: `Capabilities note for routing (${harness})`,
         initialValue:
           current.capabilities ?? DEFAULT_HARNESS_CAPABILITIES[harness],
       }),
+      deps,
     );
     if (harness === "pi") {
       next.harnesses.pi = {
@@ -162,23 +214,25 @@ async function runAuth(
   for (const provider of PROVIDER_NAMES) {
     const current = next.providers[provider]?.apiKeyEnv;
     const defaultValue = current ?? providerEnvironmentVariable(provider);
-    const state = process.env[defaultValue] ? "set" : "not set";
+    const state = deps.env[defaultValue] ? "set" : "not set";
     const apiKeyEnv =
       (await prompt(
-        text({
+        deps.prompts.text({
           message: `${provider} key environment variable (${state})`,
           initialValue: defaultValue,
         }),
+        deps,
       )) ?? "";
     if (apiKeyEnv) next.providers[provider] = { apiKeyEnv };
     if (!apiKeyEnv) delete next.providers[provider];
   }
-  if (Bun.which("codexbar")) {
+  if (deps.which("codexbar")) {
     const enabled = await prompt(
-      confirm({
+      deps.prompts.confirm({
         message: "Use codexbar for quota?",
         initialValue: next.quota.enabled,
       }),
+      deps,
     );
     next.quota.enabled = enabled;
     if (enabled) {
@@ -186,10 +240,11 @@ async function runAuth(
         if (!next.harnesses[harness]?.enabled) continue;
         const provider =
           (await prompt(
-            text({
+            deps.prompts.text({
               message: `${harness} codexbar provider (blank = none)`,
               initialValue: next.quota.providers[harness] ?? "",
             }),
+            deps,
           )) ?? "";
         if (provider) next.quota.providers[harness] = provider;
         if (!provider) delete next.quota.providers[harness];
@@ -212,28 +267,29 @@ function selectedModels(
 async function runModels(
   config: Config,
   hasExistingConfig: boolean,
+  deps: InitDeps,
 ): Promise<Config> {
-  const start = await beginSection("Models", hasExistingConfig);
+  const start = await beginSection("Models", hasExistingConfig, deps);
   if (start === "skip") return config;
   const next = structuredClone(config);
   for (const harness of HARNESS_NAMES) {
     if (!next.harnesses[harness]?.enabled) continue;
     let models: EnumeratedModel[];
     try {
-      models = await enumerate(harness, next);
+      models = await deps.enumerate(harness, next);
     } catch (error) {
-      note(String(error), `${harness} models unavailable`);
+      deps.prompts.note(String(error), `${harness} models unavailable`);
       continue;
     }
     if (!models.length) {
-      note("No models found", harness);
+      deps.prompts.note("No models found", harness);
       continue;
     }
     const currentIds = next.models
       .filter((model) => model.harness === harness)
       .map(({ id }) => id);
     const selectedIds = await prompt(
-      multiselect({
+      deps.prompts.multiselect({
         message: `Enable ${harness} models`,
         options: [
           { value: ENABLE_ALL, label: "Enable all" },
@@ -245,6 +301,7 @@ async function runModels(
         ],
         initialValues: currentIds,
       }),
+      deps,
     );
     const enabledModels = selectedModels(models, selectedIds);
     const enabledModelIds = new Set(enabledModels.map(({ id }) => id));
@@ -282,8 +339,9 @@ function candidates(config: Config): { id: string; effort: string }[] {
 async function runRules(
   config: Config,
   hasExistingConfig: boolean,
+  deps: InitDeps,
 ): Promise<Config> {
-  const start = await beginSection("Rules", hasExistingConfig);
+  const start = await beginSection("Rules", hasExistingConfig, deps);
   if (start === "skip") return config;
   const next = structuredClone(config);
   const cutoffPercent = { ...next.rules.quotaCutoffPercent };
@@ -295,7 +353,7 @@ async function runRules(
       continue;
     const cutoff =
       (await prompt(
-        text({
+        deps.prompts.text({
           message: `${harness} cutoff percent used (blank = none)`,
           initialValue: cutoffPercent[harness]?.toString() ?? "",
           validate: (value) =>
@@ -303,6 +361,7 @@ async function runRules(
               ? undefined
               : "Enter a finite number",
         }),
+        deps,
       )) ?? "";
     if (cutoff) cutoffPercent[harness] = Number(cutoff);
     if (!cutoff) delete cutoffPercent[harness];
@@ -312,10 +371,11 @@ async function runRules(
     : undefined;
   const confidentialGlobs =
     (await prompt(
-      text({
+      deps.prompts.text({
         message: "Confidential path globs, comma-separated (blank = none)",
         initialValue: next.rules.confidentialPathGlobs?.join(", ") ?? "",
       }),
+      deps,
     )) ?? "";
   const globs = confidentialGlobs
     .split(",")
@@ -324,13 +384,14 @@ async function runRules(
   next.rules.confidentialPathGlobs = globs.length ? globs : undefined;
   const excludedProviders =
     (await prompt(
-      text({
+      deps.prompts.text({
         message: "Confidential excluded providers, comma-separated",
         initialValue: (
           next.rules.confidentialExcludedProviders ??
           DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS
         ).join(", "),
       }),
+      deps,
     )) ?? "";
   const providers = excludedProviders
     .split(",")
@@ -339,7 +400,7 @@ async function runRules(
   next.rules.confidentialExcludedProviders = providers;
   const confidenceFloor =
     (await prompt(
-      text({
+      deps.prompts.text({
         message:
           "Confidence floor, 0 to 1 (below it the default model runs; 0.35 recommended)",
         initialValue: (
@@ -350,47 +411,52 @@ async function runRules(
             ? undefined
             : "Enter a finite number",
       }),
+      deps,
     )) ?? "";
   next.rules.confidenceFloor = confidenceFloor
     ? Number(confidenceFloor)
     : DEFAULT_CONFIDENCE_FLOOR;
   next.updates = {
     check: await prompt(
-      confirm({
+      deps.prompts.confirm({
         message: "Check for updates once a day?",
         initialValue: next.updates?.check ?? true,
       }),
+      deps,
     ),
   };
   next.spawn.autoSandbox = await prompt(
-    confirm({
+    deps.prompts.confirm({
       message: "Choose the Codex sandbox automatically from the task?",
       initialValue: next.spawn.autoSandbox,
     }),
+    deps,
   );
   next.spawn.allowFullAccess = await prompt(
-    confirm({
+    deps.prompts.confirm({
       message: "Allow automatic Codex full-access sandbox?",
       initialValue: next.spawn.allowFullAccess,
     }),
+    deps,
   );
   const enabledCandidates = candidates(next);
   if (!enabledCandidates.length) return next;
   const enabledModelIds = [...new Set(enabledCandidates.map(({ id }) => id))];
   const stoppingPointRequiredFor = await prompt(
-    multiselect({
+    deps.prompts.multiselect({
       message: "Models that must be given a stopping point",
       options: enabledModelIds.map((id) => ({ value: id })),
       initialValues: next.rules.stoppingPointRequiredFor?.filter((id) =>
         enabledModelIds.includes(id),
       ),
     }),
+    deps,
   );
   next.rules.stoppingPointRequiredFor = stoppingPointRequiredFor.length
     ? stoppingPointRequiredFor
     : undefined;
   const defaultModelId = await prompt(
-    select({
+    deps.prompts.select({
       message: "Default model",
       options: enabledModelIds.map((id) => ({ value: id })),
       initialValue: enabledCandidates.some(
@@ -399,19 +465,21 @@ async function runRules(
         ? next.defaultModelId
         : enabledCandidates[0].id,
     }),
+    deps,
   );
   next.defaultModelId = defaultModelId;
   const efforts = enabledCandidates
     .filter(({ id }) => id === defaultModelId)
     .map(({ effort }) => effort);
   const defaultEffort = await prompt(
-    select({
+    deps.prompts.select({
       message: "Default effort",
       options: efforts.map((effort) => ({ value: effort })),
       initialValue: efforts.includes(next.defaultEffort)
         ? next.defaultEffort
         : efforts[0],
     }),
+    deps,
   );
   next.defaultEffort = defaultEffort;
   return next;
@@ -420,8 +488,9 @@ async function runRules(
 async function runPreferences(
   config: Config,
   hasExistingConfig: boolean,
+  deps: InitDeps,
 ): Promise<Config> {
-  const start = await beginSection("Preferences", hasExistingConfig);
+  const start = await beginSection("Preferences", hasExistingConfig, deps);
   if (start === "skip") return config;
   const configDirectory = configDir();
   const preferencesPath = join(configDirectory, PREFERENCES_FILE_NAME);
@@ -435,7 +504,7 @@ async function runPreferences(
   }
   if (!existsSync(guardrailsPath))
     await writeFile(guardrailsPath, guardrailsTemplate);
-  const detection = await doctor(config);
+  const detection = await deps.doctor(config);
   const editOptions: { value: PreferencesEditMethod; label: string }[] = [
     { value: "editor", label: "Open in $EDITOR" },
   ];
@@ -448,14 +517,15 @@ async function runPreferences(
     editOptions.push({ value: "codex", label: "Interview me with Codex" });
   editOptions.push({ value: "skip", label: "Skip" });
   const editMethod = await prompt(
-    select<PreferencesEditMethod>({
+    deps.prompts.select<PreferencesEditMethod>({
       message: "How do you want to edit preferences.md?",
       options: editOptions,
     }),
+    deps,
   );
   if (editMethod === "editor") {
-    const editor = process.env[EDITOR_ENVIRONMENT_VARIABLE] ?? "vi";
-    const editorProcess = Bun.spawn([editor, preferencesPath], {
+    const editor = deps.env[EDITOR_ENVIRONMENT_VARIABLE] ?? "vi";
+    const editorProcess = deps.launch([editor, preferencesPath], {
       stdio: ["inherit", "inherit", "inherit"],
     });
     await editorProcess.exited;
@@ -492,7 +562,7 @@ async function runPreferences(
             CODEX_WORKSPACE_WRITE_SANDBOX,
             interviewPrompt,
           ];
-    const interviewProcess = Bun.spawn(argv, {
+    const interviewProcess = deps.launch(argv, {
       cwd: configDirectory,
       stdio: ["inherit", "inherit", "inherit"],
     });
@@ -501,19 +571,23 @@ async function runPreferences(
   return config;
 }
 
-export async function runInit(options: {
-  section?: string;
-  reset?: boolean;
-}): Promise<void> {
+export async function runInit(
+  options: {
+    section?: string;
+    reset?: boolean;
+  },
+  deps: InitDeps = defaultDeps,
+): Promise<void> {
   let config = options.reset
     ? structuredClone(DEFAULT_CONFIG)
     : await loadConfig();
   const keyEnvironmentVariable = config.jev.apiKeyEnv;
-  if (!process.env[keyEnvironmentVariable]) {
+  if (!deps.env[keyEnvironmentVariable]) {
     const apiKey = await prompt(
-      password({
+      deps.prompts.password({
         message: `Paste your TypeSafe API key (for Jev routing) — get one at ${TYPESAFE_KEYS_URL}`,
       }),
+      deps,
     );
     if (apiKey.trim()) {
       await writeDotEnvValue(
@@ -521,9 +595,11 @@ export async function runInit(options: {
         keyEnvironmentVariable,
         apiKey.trim(),
       );
-      process.env[keyEnvironmentVariable] = apiKey.trim();
+      deps.env[keyEnvironmentVariable] = apiKey.trim();
     } else {
-      note("Routing will fall back to the default model until the key exists.");
+      deps.prompts.note(
+        "Routing will fall back to the default model until the key exists.",
+      );
     }
   }
   const section = options.section;
@@ -532,35 +608,35 @@ export async function runInit(options: {
   const hasExistingConfig = !options.reset && existsSync(configPath());
   const sections: Record<
     InitSection,
-    (config: Config, existing: boolean) => Promise<Config>
+    (config: Config, existing: boolean, deps: InitDeps) => Promise<Config>
   > = {
     auth: runAuth,
     models: runModels,
     rules: runRules,
     preferences: runPreferences,
   };
-  intro("smart-router setup");
+  deps.prompts.intro("smart-router setup");
   const names: InitSection[] = section
     ? [section]
     : ["auth", "models", "rules", "preferences"];
   try {
     for (const name of names) {
-      config = await sections[name](config, hasExistingConfig);
+      config = await sections[name](config, hasExistingConfig, deps);
       await saveConfig(config);
     }
   } catch (error) {
     if (error instanceof SetupCancelled) return;
     throw error;
   }
-  outro("Configuration saved");
+  deps.prompts.outro("Configuration saved");
   const skillPath = join(
-    process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
+    deps.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
     "skills",
     "smart-router",
     "SKILL.md",
   );
   if (!existsSync(skillPath))
-    note(
+    deps.prompts.note(
       "Install the Claude Code skill with: smart-router install-skill",
       "Next step",
     );

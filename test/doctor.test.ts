@@ -46,6 +46,32 @@ test("detects configured API-key authentication", async () => {
   expect(result.availableModels).toEqual(["claude:new"]);
 });
 
+test("ignores failed model enumeration and keeps configured candidates", async () => {
+  process.env[TEST_ANTHROPIC_KEY] = "test";
+  const config: Config = {
+    ...DEFAULT_CONFIG,
+    harnesses: {
+      claude: { enabled: true, auth: "api-key", binary: "/usr/bin/true" },
+    },
+    providers: { anthropic: { apiKeyEnv: TEST_ANTHROPIC_KEY } },
+    models: [
+      {
+        id: "claude:opus",
+        harness: "claude",
+        model: "opus",
+        efforts: ["high"],
+      },
+    ],
+  };
+  const result = await doctor(config, {
+    enumerate: async () => {
+      throw new Error("offline");
+    },
+  });
+  expect(result.availableModels).toEqual([]);
+  expect(result.candidates).toEqual(["claude:opus@high"]);
+});
+
 test("builds candidates only for installed and authed harnesses", () => {
   const config: Config = {
     ...DEFAULT_CONFIG,

@@ -11,11 +11,19 @@ const CODEX_MODELS_CACHE = join(
   process.env.CODEX_HOME ?? join(homedir(), ".codex"),
   "models_cache.json",
 );
+const CODEX_AUTH_FILE = join(
+  process.env.CODEX_HOME ?? join(homedir(), ".codex"),
+  "auth.json",
+);
 const CLAUDE_CATALOG_GLOB = join(
   process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
   "cache",
   "model-catalog",
   "*.json",
+);
+const CLAUDE_CREDENTIALS_FILE = join(
+  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
+  ".credentials.json",
 );
 const CODEXBAR_BINARY = "codexbar";
 const HARNESS_NAMES: HarnessName[] = ["claude", "codex", "pi"];
@@ -79,7 +87,8 @@ async function detectHarness(
       authed:
         config.harnesses.claude?.auth === "api-key"
           ? providerKeySet
-          : globSync(CLAUDE_CATALOG_GLOB).length > 0,
+          : globSync(CLAUDE_CATALOG_GLOB).length > 0 ||
+            existsSync(CLAUDE_CREDENTIALS_FILE),
     };
   if (name === "codex")
     return {
@@ -88,7 +97,7 @@ async function detectHarness(
       authed:
         config.harnesses.codex?.auth === "api-key"
           ? providerKeySet || Boolean(process.env[CODEX_API_KEY_ENV])
-          : existsSync(CODEX_MODELS_CACHE),
+          : existsSync(CODEX_MODELS_CACHE) || existsSync(CODEX_AUTH_FILE),
     };
   const authed = piProviderKeySet;
   return { installed, version, authed };

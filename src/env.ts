@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { isMissingFile } from "./files.ts";
+import { isMissingFile, isPermissionDenied } from "./files.ts";
 
 const DOT_ENV_FILE_NAME = ".env";
 const COMMENT_PREFIX = "#";
@@ -49,7 +49,7 @@ export async function loadDotEnv(cwd: string): Promise<void> {
   try {
     contents = await readFile(join(cwd, DOT_ENV_FILE_NAME), "utf8");
   } catch (error) {
-    if (isMissingFile(error)) return;
+    if (isMissingFile(error) || isPermissionDenied(error)) return;
     throw error;
   }
   for (const line of contents.split(/\r?\n/)) {

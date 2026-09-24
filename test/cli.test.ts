@@ -413,3 +413,9 @@ test("update check reports a failed release request", async () => {
     1,
   );
 });
+
+test("--version exits 0 without an error payload", async () => {
+  const result = await cli(["--version"]);
+  expect(result.exitCode).toBe(0);
+  expect(result.json).toBeUndefined();
+});

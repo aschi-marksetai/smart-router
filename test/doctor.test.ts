@@ -1,4 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DEFAULT_CONFIG, type Config } from "../src/config.ts";
 import { buildCandidates, doctor, type Detection } from "../src/doctor.ts";
 
@@ -44,6 +47,66 @@ test("detects configured API-key authentication", async () => {
   expect(result.harnesses.claude.authed).toBe(true);
   expect(result.harnesses.codex.authed).toBe(true);
   expect(result.availableModels).toEqual(["claude:new"]);
+});
+
+test("detects subscription credentials without model caches", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-doctor-"));
+  const claudeDirectory = join(directory, "claude");
+  const codexDirectory = join(directory, "codex");
+  const previousClaudeDirectory = process.env.CLAUDE_CONFIG_DIR;
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CLAUDE_CONFIG_DIR = claudeDirectory;
+  process.env.CODEX_HOME = codexDirectory;
+  await mkdir(claudeDirectory);
+  await mkdir(codexDirectory);
+  await writeFile(join(claudeDirectory, ".credentials.json"), "{}");
+  await writeFile(join(codexDirectory, "auth.json"), "{}");
+  const { doctor: detect } = await import(
+    `../src/doctor.ts?test=${crypto.randomUUID()}`
+  );
+  const config: Config = {
+    ...DEFAULT_CONFIG,
+    harnesses: {
+      claude: { enabled: true, auth: "subscription", binary: "/usr/bin/true" },
+      codex: { enabled: true, auth: "subscription", binary: "/usr/bin/true" },
+    },
+  };
+  const result = await detect(config, { enumerate: async () => [] });
+  expect(result.harnesses.claude.authed).toBe(true);
+  expect(result.harnesses.codex.authed).toBe(true);
+  if (previousClaudeDirectory === undefined)
+    delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = previousClaudeDirectory;
+  if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+  else process.env.CODEX_HOME = previousCodexHome;
+  await rm(directory, { recursive: true });
+});
+
+test("rejects subscription authentication without model caches or credentials", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-doctor-"));
+  const previousClaudeDirectory = process.env.CLAUDE_CONFIG_DIR;
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CLAUDE_CONFIG_DIR = join(directory, "claude");
+  process.env.CODEX_HOME = join(directory, "codex");
+  const { doctor: detect } = await import(
+    `../src/doctor.ts?test=${crypto.randomUUID()}`
+  );
+  const config: Config = {
+    ...DEFAULT_CONFIG,
+    harnesses: {
+      claude: { enabled: true, auth: "subscription", binary: "/usr/bin/true" },
+      codex: { enabled: true, auth: "subscription", binary: "/usr/bin/true" },
+    },
+  };
+  const result = await detect(config, { enumerate: async () => [] });
+  expect(result.harnesses.claude.authed).toBe(false);
+  expect(result.harnesses.codex.authed).toBe(false);
+  if (previousClaudeDirectory === undefined)
+    delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = previousClaudeDirectory;
+  if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+  else process.env.CODEX_HOME = previousCodexHome;
+  await rm(directory, { recursive: true });
 });
 
 test("ignores failed model enumeration and keeps configured candidates", async () => {

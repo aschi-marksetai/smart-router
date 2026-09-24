@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 import { readFile } from "node:fs/promises";
 import { version } from "./assets.ts";
 import { installSkill } from "./install.ts";
@@ -793,7 +793,7 @@ export async function runCli(
     await loadDotEnv(process.cwd());
     await buildProgram(deps).parseAsync(argv, { from: "user" });
   } catch (error) {
-    if (error instanceof Error && error.name === "CommanderError") {
+    if (error instanceof CommanderError) {
       deps.exit(Number("exitCode" in error ? error.exitCode : ERROR_EXIT_CODE));
       return;
     }

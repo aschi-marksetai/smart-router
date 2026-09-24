@@ -116,7 +116,7 @@ Read-only. Detects and prints:
 
 `availableModels` lists best-effort enumerated models from enabled, authenticated harnesses that are neither configured nor in `ignoredModels`.
 
-Detection: `Bun.which` for binaries (a `command -v` subprocess is not portable to Linux), `--version` for versions. Authed: claude → `~/.claude/cache/model-catalog/*.json` exists; codex → `~/.codex/models_cache.json` exists or `CODEX_API_KEY` set; pi → any provider key set. Never read auth/credential files.
+Detection: `Bun.which` for binaries (a `command -v` subprocess is not portable to Linux), `--version` for versions. Authed: claude → `~/.claude/cache/model-catalog/*.json` or `~/.claude/.credentials.json` exists; codex → `~/.codex/models_cache.json` or `~/.codex/auth.json` exists, or `CODEX_API_KEY` set; pi → any provider key set. Never read auth/credential files.
 
 ### `smart-router init [--section auth|models|rules|preferences] [--reset]`
 

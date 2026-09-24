@@ -331,15 +331,23 @@ export async function route(
     };
   }
   const selectedModel = response.answers.model;
-  const fallback =
+  const selectedModelIsCandidate = candidates.some(
+    ({ id }) => id === selectedModel.choice,
+  );
+  const confidenceFallback =
     config.rules.confidenceFloor !== undefined &&
     selectedModel.confidence < config.rules.confidenceFloor;
-  const fallbackRequired = !eligibleDefault || fallback;
+  const fallbackRequired =
+    !eligibleDefault || !selectedModelIsCandidate || confidenceFallback;
   const reasons = [];
   if (!config.quota.enabled) reasons.push("quota disabled");
   if (quotaUnavailable && config.rules.quotaCutoffPercent !== undefined)
     reasons.push("codexbar not installed; quota cutoff skipped");
   if (fallbackReason) reasons.push(fallbackReason);
+  if (!selectedModelIsCandidate)
+    reasons.push(
+      `Jev picked ${selectedModel.choice}, which is not a candidate`,
+    );
   const reason = reasons.length ? reasons.join("; ") : "selected by Jev";
   return {
     pick: fallbackRequired

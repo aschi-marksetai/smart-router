@@ -3,7 +3,13 @@ import { Command, CommanderError } from "commander";
 import { readFile } from "node:fs/promises";
 import { version } from "./assets.ts";
 import { installSkill } from "./install.ts";
-import { harnessBinary, type HarnessName, loadConfig } from "./config.ts";
+import {
+  DIRECT_MODEL_DENY,
+  harnessBinary,
+  type Config,
+  type HarnessName,
+  loadConfig,
+} from "./config.ts";
 import { doctor } from "./doctor.ts";
 import { loadDotEnv } from "./env.ts";
 import { getAdapter } from "./harness/index.ts";
@@ -172,8 +178,20 @@ function parsePick(value: string): Pick {
   };
 }
 
-function directPick(modelId: string, effort: string): Pick {
+function directPick(modelId: string, effort: string, config: Config): Pick {
   const [harness, model] = parseHarness(modelId);
+  const enabledModels = config.models.filter(
+    (candidate) => config.harnesses[candidate.harness]?.enabled,
+  );
+  const selectedModel = enabledModels.find(({ id }) => id === modelId);
+  if (!selectedModel)
+    throw new Error(
+      `${modelId} is not an enabled model; enabled: ${enabledModels.map(({ id }) => id).join(", ")}; run smart-router init --section models`,
+    );
+  if (!selectedModel.efforts.includes(effort))
+    throw new Error(
+      `${effort} is not supported by ${modelId}; supported: ${selectedModel.efforts.join(", ")}; run smart-router init --section models`,
+    );
   return { harness, model, effort };
 }
 
@@ -202,6 +220,13 @@ async function spawnCommand(
   deps: CliDeps,
 ): Promise<void> {
   const config = await loadConfig();
+  if (
+    config.rules.directModel === DIRECT_MODEL_DENY &&
+    (options.model || options.effort)
+  )
+    throw new Error(
+      'direct model picks are disabled by rules.directModel; let the router choose and pass escalation context with --hint, for example --hint "escalate: previous attempt on codex:gpt-6-luna failed: <why>"',
+    );
   const cwd = options.cwd ?? process.cwd();
   const routeResult = options.model
     ? null
@@ -213,6 +238,7 @@ async function spawnCommand(
     selected = directPick(
       options.model,
       options.effort ?? config.defaultEffort,
+      config,
     );
   } else {
     if (!routeResult) throw new Error("Route result is missing");

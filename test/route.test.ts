@@ -58,12 +58,15 @@ const config: Config = {
   defaultEffort: "high",
 };
 
-function deps(overrides: Partial<RouteDeps> = {}): RouteDeps {
+function deps(
+  overrides: Partial<RouteDeps> = {},
+  modelChoice = "claude:opus",
+): RouteDeps {
   const client: JevClient = {
     systemOne: async () => ({
       answers: {
         model: {
-          choice: "claude:opus",
+          choice: modelChoice,
           confidence: 0.9,
           probabilities: {},
         },
@@ -185,6 +188,15 @@ test("falls back below the confidence floor", async () => {
   );
   expect("fellBack" in result && result.fellBack).toBe(true);
   expect("pick" in result && result.pick).toBe("codex:terra@high");
+});
+
+test("falls back when Jev picks a model outside the candidates", async () => {
+  const result = await route("task", {}, deps({}, "codex:unknown"));
+  expect(result).toMatchObject({
+    pick: "codex:terra@high",
+    fellBack: true,
+    reason: "Jev picked codex:unknown, which is not a candidate",
+  });
 });
 
 test("clamps the selected effort to the model's supported efforts", async () => {

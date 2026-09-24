@@ -24,7 +24,7 @@ Optional flags:
 - `--hint "<text>"` adds context for the routing decision, such as "needs a browser" or "bulk mechanical work".
 - `--browser` enables Claude in Chrome for browser work and persists on `send`.
 - `--confidential` keeps the task off OpenRouter.
-- `--model harness:model --effort <level>` skips routing and picks directly, for example `--model harness:model --effort level`.
+- `--model harness:model --effort <level>` skips routing and picks directly, for example `--model harness:model --effort level`; some setups disable it, so use `--hint` for escalation instead.
 - `--no-guardrails` skips the appended operating rules when the prompt already carries its own.
 - `--result-limit <chars>` bounds returned result text while retaining the full result in the session.
 

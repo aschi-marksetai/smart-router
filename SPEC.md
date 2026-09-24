@@ -70,6 +70,7 @@ A CLI that picks which coding-agent harness and model should run a task, spawns 
     "confidentialExcludedProviders": ["openrouter"], // provider prefixes excluded for confidential tasks
     "stoppingPointRequiredFor": ["codex:gpt-5.6-sol", "codex:gpt-6-astra"], // spawn refuses these picks when the prompt states no stopping point
     "confidenceFloor": 0.35, // below this, use defaultModelId instead of Jev's pick; 0.35 default because confidence is how peaked the distribution is and a 9-option choice rarely exceeds 0.6
+    "directModel": "allow", // allow (default) or deny caller-provided --model and --effort picks
   },
   "quota": {
     "enabled": true,
@@ -155,13 +156,13 @@ Pipeline:
 2. Apply enabled rules only: `quotaCutoffPercent` (needs codexbar; if codexbar is missing, skip this rule and note it in `reason`), `confidentialPathGlobs` or `--confidential` (drop `openrouter/*` models).
 3. Build Jev `state`: `{ preferences: <preferences.md>, task: <prompt, truncated to 8k chars>, hint, cwd, quota: <normalized codexbar snapshot or null>, candidates: [{ id, harness, model, efforts, auth, capabilities }] }`.
 4. One Jev call with five questions. `model`: a Choice over the eligible model ids (`harness:model`, no effort), instructions "Pick the model that should run this task according to the user's preferences", criteria map = model id → one-line description (harness, auth, supported efforts, capabilities). `effort`: a Choice over the union of effort levels the eligible models support, instructions "Pick the reasoning effort this task needs". `needsBrowser`, `needsNetwork`, `needsFullAccess`, and `statesStoppingPoint` are Noul scores. All are returned as numbers and do not affect the pick. The pick is `model@effort`; if the chosen model does not support the chosen effort, use the highest effort it supports below it. Effort is asked separately so probability mass is not split across tiers of the same model.
-5. If the `model` answer's `confidence < rules.confidenceFloor`, pick `defaultModelId@defaultEffort` and set `fellBack: true`.
+5. If the `model` answer's `confidence < rules.confidenceFloor` or its choice is not a candidate, pick `defaultModelId@defaultEffort` and set `fellBack: true`.
 6. If the Jev call itself fails (network, auth, rate limit), do not error: pick `defaultModelId@defaultEffort`, set `fellBack: true`, put the error message in `reason`, and set the Noul scores to null.
 7. `--dry-run` prints the state that would be sent instead of calling Jev.
 
 ### `smart-router spawn "<prompt>" [route flags] [--model <harness:model>] [--effort <e>] [--worktree] [--no-guardrails]`
 
-`route` (skipped when `--model` is given), then the harness adapter's `spawn`. Blocks until the turn finishes. As soon as the pick is known, before the delegate starts, spawn prints one stderr line `Routed to <harness:model@effort> (confidence <n>)` (or `(caller override)` with `--model`) so a caller tailing stderr sees the choice immediately.
+`route` (skipped when `--model` is given), then the harness adapter's `spawn`. Blocks until the turn finishes. As soon as the pick is known, before the delegate starts, spawn prints one stderr line `Routed to <harness:model@effort> (confidence <n>)` (or `(caller override)` with `--model`) so a caller tailing stderr sees the choice immediately. When `rules.directModel` is `deny`, `--model` and `--effort` cause spawn to exit 1 before routing; otherwise `--model` and its effort must be enabled in `config.models`, or spawn exits 1 and directs the caller to `smart-router init --section models`.
 
 Automatic sandbox: for Codex, `spawn.autoSandbox` uses the route's `needsFullAccess`, `needsBrowser`, and `needsNetwork` scores (threshold 0.5) to select `danger-full-access` for full-access or browser tasks or to keep the configured sandbox with `sandbox_workspace_write.network_access=true` for network tasks. The scores survive a confidence fallback; only a Jev outage leaves them null, which means the configured sandbox. `--sandbox` always overrides it. `spawn.allowFullAccess` disables automatic full access when false. The chosen sandbox and network override persist in the session and apply to `send` unless `--sandbox` overrides them.
 

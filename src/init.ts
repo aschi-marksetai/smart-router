@@ -22,6 +22,8 @@ import {
 import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import {
   configPath,
+  DIRECT_MODEL_ALLOW,
+  DIRECT_MODEL_DENY,
   DEFAULT_CONFIG,
   DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
   DEFAULT_HARNESS_CAPABILITIES,
@@ -416,6 +418,17 @@ async function runRules(
   next.rules.confidenceFloor = confidenceFloor
     ? Number(confidenceFloor)
     : DEFAULT_CONFIDENCE_FLOOR;
+  next.rules.directModel = await prompt(
+    deps.prompts.select({
+      message: "Allow callers to pick a model directly with --model?",
+      options: [
+        { value: DIRECT_MODEL_ALLOW, label: "Allow" },
+        { value: DIRECT_MODEL_DENY, label: "Deny" },
+      ],
+      initialValue: next.rules.directModel ?? DIRECT_MODEL_ALLOW,
+    }),
+    deps,
+  );
   next.updates = {
     check: await prompt(
       deps.prompts.confirm({

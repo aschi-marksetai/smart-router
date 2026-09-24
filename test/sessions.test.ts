@@ -31,6 +31,14 @@ const STATE_DIRECTORY_ENV = "SMART_ROUTER_STATE_DIR";
 const CONFIG_DIRECTORY_ENV = "SMART_ROUTER_CONFIG_DIR";
 const OWNER_ENVIRONMENT_VARIABLE = "SMART_ROUTER_OWNER";
 const temporaryDirectories: string[] = [];
+const TEST_MODEL = [
+  {
+    id: "claude:test",
+    harness: "claude" as const,
+    model: "test",
+    efforts: ["medium"],
+  },
+];
 
 afterEach(async () => {
   delete process.env[STATE_DIRECTORY_ENV];
@@ -143,6 +151,7 @@ test("limits CLI result output while retaining the full session result", async (
   await saveConfig({
     ...DEFAULT_CONFIG,
     harnesses: { claude: { enabled: true, binary } },
+    models: TEST_MODEL,
   });
   const child = Bun.spawn(
     [
@@ -247,6 +256,7 @@ test("records a failed session when a detached process cannot launch", async () 
   await saveConfig({
     ...DEFAULT_CONFIG,
     harnesses: { codex: { enabled: true, binary: missingBinary } },
+    models: [{ ...TEST_MODEL[0], id: "codex:test", harness: "codex" }],
   });
   const child = Bun.spawn(
     [

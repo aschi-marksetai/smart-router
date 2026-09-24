@@ -38,6 +38,12 @@ const CODEX_OUTPUT = [
 const RELEASE_VERSION = "99.0.0";
 const RELEASE_ASSET = `smart-router-${process.platform}-${process.arch === "arm64" ? "arm64" : "x64"}`;
 const DETACHED_PID = 999_999_999;
+const INVALID_MODEL_ERROR =
+  "codex:unknown is not an enabled model; enabled: claude:opus, codex:terra; run smart-router init --section models";
+const INVALID_EFFORT_ERROR =
+  "low is not supported by codex:terra; supported: high; run smart-router init --section models";
+const DIRECT_MODEL_DENIED_ERROR =
+  'direct model picks are disabled by rules.directModel; let the router choose and pass escalation context with --hint, for example --hint "escalate: previous attempt on codex:gpt-6-luna failed: <why>"';
 
 let directory: string;
 let config: Config;
@@ -240,6 +246,32 @@ test("spawn parses Claude and Codex output, flags, and stopping-point refusal", 
         "codex:terra needs a stated stopping point: add success criteria and where to stop to the prompt, then call spawn again",
     },
     1,
+  );
+});
+
+test("spawn rejects disabled overrides and accepts enabled overrides", async () => {
+  expectJson(
+    await cli(["spawn", "task", "--model", "codex:unknown"]),
+    { error: INVALID_MODEL_ERROR },
+    1,
+  );
+  config.rules.directModel = "deny";
+  await saveConfig(config);
+  expectJson(
+    await cli(["spawn", "task", "--effort", "high"]),
+    { error: DIRECT_MODEL_DENIED_ERROR },
+    1,
+  );
+  config.rules.directModel = "allow";
+  await saveConfig(config);
+  expectJson(
+    await cli(["spawn", "task", "--model", "codex:terra", "--effort", "low"]),
+    { error: INVALID_EFFORT_ERROR },
+    1,
+  );
+  expectJson(
+    await cli(["spawn", "task", "--model", "claude:opus", "--effort", "high"]),
+    { harness: "claude", model: "opus", effort: "high" },
   );
 });
 

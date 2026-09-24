@@ -235,12 +235,13 @@ test("rules handle blank and numeric cutoffs, validation, globs, floor, stopping
   const config = await loadConfig();
   config.rules.quotaCutoffPercent = { claude: 40 };
   config.rules.stoppingPointRequiredFor = ["claude:sonnet", "pi:off"];
+  config.rules.directModel = "deny";
   // prettier-ignore
   config.models.push({ id: "pi:off", harness: "pi", model: "off", efforts: ["medium"] });
   await saveConfig(config);
   // prettier-ignore
   const { deps, assertConsumed } = scripted({
-    select: [answer("Rules", "edit"), answer("Default model", "codex:sol"), answer("Default effort", "low")],
+    select: [answer("Rules", "edit"), answer("Allow callers to pick a model directly with --model?", "allow", (options) => { expect(options.initialValue).toBe("deny"); }), answer("Default model", "codex:sol"), answer("Default effort", "low")],
     text: [
       answer("claude cutoff percent used (blank = none)", "", (options) => { expect(options.initialValue).toBe("40"); expect(validate(options, "bad")).toBe("Enter a finite number"); }),
       answer("codex cutoff percent used (blank = none)", "60", (options) => expect(validate(options, "Infinity")).toBe("Enter a finite number")),
@@ -258,6 +259,7 @@ test("rules handle blank and numeric cutoffs, validation, globs, floor, stopping
     confidentialPathGlobs: ["**/secret/**", "*.key"],
     confidentialExcludedProviders: ["openrouter", "google"],
     confidenceFloor: 0.35,
+    directModel: "allow",
     stoppingPointRequiredFor: ["claude:sonnet"],
   });
   expect(saved.defaultModelId).toBe("codex:sol");

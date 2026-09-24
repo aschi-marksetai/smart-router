@@ -10,6 +10,8 @@ export const DEFAULT_CODEX_SANDBOX = "workspace-write";
 export const DEFAULT_JEV_MODEL = "jev-latest";
 export const DEFAULT_JEV_API_KEY_ENV = "TYPESAFE_API_KEY";
 export const DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS = ["openrouter"];
+export const DIRECT_MODEL_ALLOW = "allow";
+export const DIRECT_MODEL_DENY = "deny";
 export const DEFAULT_HARNESS_CAPABILITIES: Record<HarnessName, string> = {
   claude: "",
   codex: "",
@@ -34,6 +36,8 @@ export type ModelConfig = {
   model: string;
   efforts: string[];
 };
+export type DirectModelRule =
+  typeof DIRECT_MODEL_ALLOW | typeof DIRECT_MODEL_DENY;
 export type Config = {
   version: number;
   harnesses: {
@@ -45,6 +49,7 @@ export type Config = {
   models: ModelConfig[];
   ignoredModels: string[];
   rules: {
+    directModel?: DirectModelRule;
     quotaCutoffPercent?: Partial<Record<HarnessName, number>>;
     confidentialExcludedProviders?: string[];
     confidentialPathGlobs?: string[];
@@ -72,6 +77,7 @@ export const DEFAULT_CONFIG: Config = {
   ignoredModels: [],
   rules: {
     confidentialExcludedProviders: DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
+    directModel: DIRECT_MODEL_ALLOW,
   },
   defaultModelId: "",
   defaultEffort: DEFAULT_EFFORT,

@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadDotEnv, writeDotEnvValue } from "../src/env.ts";
+import { isPermissionDenied } from "../src/files.ts";
 
 const ENVIRONMENT_KEY = "SMART_ROUTER_DOTENV_TEST";
 const QUOTED_ENVIRONMENT_KEY = "SMART_ROUTER_DOTENV_QUOTED_TEST";
@@ -17,7 +18,7 @@ afterEach(async () => {
   delete process.env[EXPORTED_ENVIRONMENT_KEY];
   delete process.env[EQUALS_ENVIRONMENT_KEY];
   delete process.env[CONFIG_ENVIRONMENT_KEY];
-  if (directory) await rm(directory, { recursive: true });
+  if (directory) await rm(directory, { recursive: true, force: true });
 });
 
 test("strips export prefixes and matching quotes while preserving equals", async () => {
@@ -44,6 +45,23 @@ test("loads dotenv assignments without overriding the environment", async () => 
   process.env[ENVIRONMENT_KEY] = "existing";
   await loadDotEnv(directory);
   expect(process.env[ENVIRONMENT_KEY]).toBe("existing");
+});
+
+const permissionTest = process.getuid?.() === 0 ? test.skip : test;
+
+permissionTest("ignores an unreadable dotenv file", async () => {
+  directory = await mkdtemp(join(tmpdir(), "smart-router-env-"));
+  await writeFile(join(directory, ".env"), `${ENVIRONMENT_KEY}=hidden\n`, {
+    mode: 0o000,
+  });
+  await loadDotEnv(directory);
+  expect(process.env[ENVIRONMENT_KEY]).toBeUndefined();
+});
+
+test("recognizes permission errors", () => {
+  expect(isPermissionDenied({ code: "EACCES" })).toBe(true);
+  expect(isPermissionDenied({ code: "EPERM" })).toBe(true);
+  expect(isPermissionDenied({ code: "ENOENT" })).toBe(false);
 });
 
 test("loads the config dotenv before the current working directory dotenv", async () => {

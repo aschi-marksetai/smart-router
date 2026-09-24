@@ -7,24 +7,9 @@ import { harnessBinary, type Config, type HarnessName } from "./config.ts";
 import { enumerate } from "./enumerate.ts";
 
 const CODEX_API_KEY_ENV = "CODEX_API_KEY";
-const CODEX_MODELS_CACHE = join(
-  process.env.CODEX_HOME ?? join(homedir(), ".codex"),
-  "models_cache.json",
-);
-const CODEX_AUTH_FILE = join(
-  process.env.CODEX_HOME ?? join(homedir(), ".codex"),
-  "auth.json",
-);
-const CLAUDE_CATALOG_GLOB = join(
-  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
-  "cache",
-  "model-catalog",
-  "*.json",
-);
-const CLAUDE_CREDENTIALS_FILE = join(
-  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
-  ".credentials.json",
-);
+const codexHome = () => process.env.CODEX_HOME ?? join(homedir(), ".codex");
+const claudeConfigDir = () =>
+  process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
 const CODEXBAR_BINARY = "codexbar";
 const HARNESS_NAMES: HarnessName[] = ["claude", "codex", "pi"];
 const CLAUDE_PROVIDER = "anthropic";
@@ -87,8 +72,10 @@ async function detectHarness(
       authed:
         config.harnesses.claude?.auth === "api-key"
           ? providerKeySet
-          : globSync(CLAUDE_CATALOG_GLOB).length > 0 ||
-            existsSync(CLAUDE_CREDENTIALS_FILE),
+          : globSync(
+              join(claudeConfigDir(), "cache", "model-catalog", "*.json"),
+            ).length > 0 ||
+            existsSync(join(claudeConfigDir(), ".credentials.json")),
     };
   if (name === "codex")
     return {
@@ -97,7 +84,8 @@ async function detectHarness(
       authed:
         config.harnesses.codex?.auth === "api-key"
           ? providerKeySet || Boolean(process.env[CODEX_API_KEY_ENV])
-          : existsSync(CODEX_MODELS_CACHE) || existsSync(CODEX_AUTH_FILE),
+          : existsSync(join(codexHome(), "models_cache.json")) ||
+            existsSync(join(codexHome(), "auth.json")),
     };
   const authed = piProviderKeySet;
   return { installed, version, authed };

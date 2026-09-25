@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as codex from "../src/harness/codex.ts";
 import { DEFAULT_CONFIG, saveConfig } from "../src/config.ts";
+import { runDetached } from "../src/runner.ts";
 import {
   addUsage,
   completeSessionFromLog,
@@ -30,6 +31,7 @@ import {
 const STATE_DIRECTORY_ENV = "SMART_ROUTER_STATE_DIR";
 const CONFIG_DIRECTORY_ENV = "SMART_ROUTER_CONFIG_DIR";
 const OWNER_ENVIRONMENT_VARIABLE = "SMART_ROUTER_OWNER";
+const SLOW_DELEGATE_DELAY_SECONDS = 2;
 const temporaryDirectories: string[] = [];
 const TEST_MODEL = [
   {
@@ -211,6 +213,41 @@ test("resume command restores the persisted Codex sandbox and network override",
     "-c sandbox_workspace_write.network_access=true",
   );
   expect(output.resumeCommand).toContain('-c sandbox_mode="workspace-write"');
+});
+
+test("wait returns the result of a real detached child", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-wait-"));
+  temporaryDirectories.push(directory);
+  process.env[STATE_DIRECTORY_ENV] = directory;
+  process.env[CONFIG_DIRECTORY_ENV] = directory;
+  const binary = join(directory, "slow-codex");
+  await writeFile(
+    binary,
+    `#!/bin/sh\nsleep ${SLOW_DELEGATE_DELAY_SECONDS}\nprintf '%s\\n' '{"type":"thread.started","thread_id":"fake-thread"}' '{"type":"item.completed","item":{"type":"agent_message","text":"fake result"}}'\n`,
+  );
+  await chmod(binary, 0o755);
+  const logPath = join(directory, "delegate.log");
+  const { pid, errPath } = await runDetached([binary], directory, logPath);
+  const session = await createSession({
+    harness: "codex",
+    model: "gpt-6-luna",
+    effort: "medium",
+    cwd: directory,
+    prompt: "task",
+    status: SESSION_STATUS.running,
+    pid,
+    logPath,
+    errPath,
+  });
+  const child = Bun.spawn(["bun", "src/cli.ts", "wait", session.handle], {
+    cwd: process.cwd(),
+    env: process.env,
+    stdout: "pipe",
+  });
+  const output = JSON.parse(await new Response(child.stdout).text());
+  expect(await child.exited).toBe(0);
+  expect(output.result).toBe("fake result");
+  expect((await loadSession(session.handle)).status).toBe(SESSION_STATUS.done);
 });
 
 test("marks a completed detached session done from its fixture log", async () => {

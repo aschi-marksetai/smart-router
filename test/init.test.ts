@@ -243,6 +243,9 @@ test("rules handle blank and numeric cutoffs, validation, globs, floor, stopping
   const { deps, assertConsumed } = scripted({
     select: [answer("Rules", "edit"), answer("Allow callers to pick a model directly with --model?", "allow", (options) => { expect(options.initialValue).toBe("deny"); }), answer("Default model", "codex:sol"), answer("Default effort", "low")],
     text: [
+      answer("Maximum running delegates", "7", (options) => { expect(options.initialValue).toBe("6"); expect(validate(options, "0")).toBe("Enter a positive integer"); }),
+      answer("Maximum running delegates per caller", "4", (options) => expect(options.initialValue).toBe("3")),
+      answer("Maximum delegation depth", "3", (options) => expect(options.initialValue).toBe("2")),
       answer("claude cutoff percent used (blank = none)", "", (options) => { expect(options.initialValue).toBe("40"); expect(validate(options, "bad")).toBe("Enter a finite number"); }),
       answer("codex cutoff percent used (blank = none)", "60", (options) => expect(validate(options, "Infinity")).toBe("Enter a finite number")),
       answer("Confidential path globs, comma-separated (blank = none)", " **/secret/**, *.key "),
@@ -255,6 +258,7 @@ test("rules handle blank and numeric cutoffs, validation, globs, floor, stopping
   await runInit({ section: "rules" }, deps);
   const saved = await loadConfig();
   expect(saved.rules).toMatchObject({
+    concurrency: { maxRunning: 7, maxPerCaller: 4, maxDepth: 3 },
     quotaCutoffPercent: { codex: 60 },
     confidentialPathGlobs: ["**/secret/**", "*.key"],
     confidentialExcludedProviders: ["openrouter", "google"],
@@ -345,6 +349,9 @@ test("reset starts from defaults and cancel mid-section leaves saved config unch
   const cancelled = scripted({
     select: [answer("Rules", "edit")],
     text: [
+      answer("Maximum running delegates", "6"),
+      answer("Maximum running delegates per caller", "3"),
+      answer("Maximum delegation depth", "2"),
       answer("claude cutoff percent used (blank = none)", "12"),
       answer("codex cutoff percent used (blank = none)", CANCEL),
     ],

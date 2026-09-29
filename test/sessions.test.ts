@@ -26,6 +26,7 @@ import {
   sessionLogPath,
   SESSION_STATUS,
   stopSession,
+  sweepSessions,
 } from "../src/sessions.ts";
 
 const STATE_DIRECTORY_ENV = "SMART_ROUTER_STATE_DIR";
@@ -269,18 +270,54 @@ test("marks a completed detached session done from its fixture log", async () =>
     cwd: "/project",
     prompt: "Write a focused implementation.",
     status: SESSION_STATUS.running,
-    pid: 1,
+    pid: 999_999_998,
     logPath,
   });
-  const completed = await completeSessionFromLog(
-    session,
-    codex.parseSpawnOutput,
-  );
+  await sweepSessions();
+  const completed = await loadSession(session.handle);
   expect(completed).toMatchObject({
     sessionId: "thread-123",
     result: "Finished",
     status: SESSION_STATUS.done,
   });
+});
+
+test("sweeps dead delegates to done or failed with their last activity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-sweep-"));
+  temporaryDirectories.push(directory);
+  process.env[STATE_DIRECTORY_ENV] = directory;
+  const running = {
+    harness: "codex" as const,
+    model: "terra",
+    effort: "high",
+    cwd: directory,
+    prompt: "task",
+    status: "running" as const,
+  };
+  const failed = await createSession({
+    ...running,
+    pid: 999_999_999,
+    logPath: join(directory, "failed.log"),
+  });
+  await writeFile(
+    failed.logPath!,
+    '{"type":"item.completed","item":{"type":"command_execution","command":"bun test"}}\n{"type":"item.started","item":{"type":"agent_message","text":"Still working"}}',
+  );
+  await sweepSessions();
+  expect(await loadSession(failed.handle)).toMatchObject({
+    status: SESSION_STATUS.failed,
+    error:
+      "delegate process exited without reporting (killed; likely out of memory or the pids limit)",
+    lastMessage: "Still working",
+    lastAction: "bun test",
+  });
+  const reused = await createSession({
+    ...running,
+    pid: process.pid,
+    processStartTime: "original",
+  });
+  await sweepSessions(() => "reused");
+  expect((await loadSession(reused.handle)).status).toBe(SESSION_STATUS.failed);
 });
 
 test("records a failed session when a detached process cannot launch", async () => {

@@ -4,6 +4,9 @@ import { readFile } from "node:fs/promises";
 import { version } from "./assets.ts";
 import { installSkill } from "./install.ts";
 import {
+  DEFAULT_MAX_DEPTH,
+  DEFAULT_MAX_PER_CALLER,
+  DEFAULT_MAX_RUNNING,
   DIRECT_MODEL_DENY,
   harnessBinary,
   type Config,
@@ -31,7 +34,6 @@ import {
 import { runDetached, runForeground } from "./runner.ts";
 import {
   addUsage,
-  completeSessionFromLog,
   createSessionHandle,
   createSession,
   isProcessRunning,
@@ -44,10 +46,14 @@ import {
   sessionOwner,
   SESSION_STATUS,
   stopSession,
+  sweepSessions,
+  processStartTime,
+  withSessionsLock,
   type Session,
 } from "./sessions.ts";
 
 const ERROR_EXIT_CODE = 1;
+const CAPACITY_EXIT_CODE = 3;
 const SUCCESS_EXIT_CODE = 0;
 const HARNESS_NAMES: HarnessName[] = ["claude", "codex", "pi"];
 
@@ -63,6 +69,7 @@ type SpawnOptions = RouteOptions & {
   allowedTools?: string;
   schema?: string;
   resultLimit?: string;
+  waitForSlot?: string;
 };
 type PassthroughOptions = {
   permissionMode?: string;
@@ -84,6 +91,11 @@ const ALL_OPTION = "--all";
 const OLDER_THAN_FLAG = "--older-than";
 const OLDER_THAN_OPTION = `${OLDER_THAN_FLAG} <days>`;
 const NEW_MODELS_NOTICE = "New models available:";
+const SLOT_POLL_INTERVAL_MS = 50;
+const OWNER_ENVIRONMENT_VARIABLE = "SMART_ROUTER_OWNER";
+const DEPTH_ENVIRONMENT_VARIABLE = "SMART_ROUTER_DEPTH";
+
+type CapacityLimit = "maxRunning" | "maxPerCaller" | "maxDepth";
 
 export type CliDeps = {
   stdout: (text: string) => void;
@@ -130,6 +142,87 @@ function parseNonNegativeInteger(value: string, flag: string): number {
   if (!Number.isSafeInteger(number) || number < 0)
     throw new Error(`${flag} must be a non-negative integer`);
   return number;
+}
+
+function currentDepth(): number {
+  const depth = Number(process.env[DEPTH_ENVIRONMENT_VARIABLE] ?? 0);
+  return Number.isSafeInteger(depth) && depth >= 0 ? depth : 0;
+}
+
+function capacityOutput(limit: CapacityLimit, callerSessions: Session[]) {
+  return {
+    error: "capacity" as const,
+    limit,
+    running: callerSessions.map(
+      ({ handle, model, createdAt, promptPreview }) => ({
+        handle,
+        model,
+        createdAt,
+        promptPreview,
+      }),
+    ),
+    next:
+      limit === "maxDepth"
+        ? "delegates at this depth must do the work themselves"
+        : "wait on one of these handles with smart-router wait <handle>, or stop one",
+  };
+}
+
+async function reserveSpawnSession(
+  options: Omit<Parameters<typeof createSession>[0], "status" | "depth">,
+  config: Config,
+  waitForSlot: string | undefined,
+  deps: CliDeps,
+): Promise<Session | ReturnType<typeof capacityOutput>> {
+  const owner = sessionOwner();
+  const depth = currentDepth() + 1;
+  const limits = config.rules.concurrency ?? {
+    maxRunning: DEFAULT_MAX_RUNNING,
+    maxPerCaller: DEFAULT_MAX_PER_CALLER,
+    maxDepth: DEFAULT_MAX_DEPTH,
+  };
+  const waitSeconds =
+    waitForSlot === undefined ? undefined : Number(waitForSlot);
+  if (
+    waitSeconds !== undefined &&
+    (!Number.isFinite(waitSeconds) || waitSeconds < 0)
+  )
+    throw new Error("--wait-for-slot must be a non-negative number");
+  const deadline = deps.now() + (waitSeconds ?? 0) * 1_000;
+  while (true) {
+    let capacity: ReturnType<typeof capacityOutput> | undefined;
+    const session = await withSessionsLock(async () => {
+      await sweepSessions();
+      const running = (await listSessions()).filter(
+        ({ status }) => status === SESSION_STATUS.running,
+      );
+      const callerSessions = running.filter(
+        (session) => session.owner === owner,
+      );
+      let limit: CapacityLimit | undefined;
+      if (depth > limits.maxDepth) limit = "maxDepth";
+      else if (running.length >= limits.maxRunning) limit = "maxRunning";
+      else if (callerSessions.length >= limits.maxPerCaller)
+        limit = "maxPerCaller";
+      if (limit) {
+        capacity = capacityOutput(limit, callerSessions);
+        return undefined;
+      }
+      return createSession({
+        ...options,
+        status: SESSION_STATUS.running,
+        depth,
+      });
+    });
+    if (session) return session;
+    if (!capacity) throw new Error("Capacity check failed");
+    const shouldWait =
+      capacity.limit !== "maxDepth" &&
+      waitSeconds !== undefined &&
+      deps.now() < deadline;
+    if (!shouldWait) return capacity;
+    await new Promise((resolve) => setTimeout(resolve, SLOT_POLL_INTERVAL_MS));
+  }
 }
 
 function resultLimit(options: { resultLimit?: string }): number | undefined {
@@ -219,6 +312,7 @@ async function spawnCommand(
   options: SpawnOptions,
   deps: CliDeps,
 ): Promise<void> {
+  await sweepSessions();
   const config = await loadConfig();
   if (
     config.rules.directModel === DIRECT_MODEL_DENY &&
@@ -305,44 +399,57 @@ async function spawnCommand(
       : undefined,
   });
   const command = adapter.buildSpawn(spawnPrompt, harnessOptions);
-  if (options.detach) {
-    const handle = createSessionHandle();
-    const logPath = sessionLogPath(handle);
-    let pid: number;
-    let errPath: string;
-    try {
-      ({ pid, errPath } = await deps.runDetached(command.argv, cwd, logPath));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await createSession({
-        ...selected,
-        ...sessionSettings,
-        cwd,
-        sessionId: command.sessionId,
-        prompt: spawnPrompt,
-        status: SESSION_STATUS.failed,
-        error: message,
-        handle,
-        logPath,
-        usage: null,
-        route: routeResult,
-      });
-      throw new Error(message);
-    }
-    await createSession({
+  const handle = createSessionHandle();
+  const logPath = options.detach ? sessionLogPath(handle) : undefined;
+  const reservation = await reserveSpawnSession(
+    {
       ...selected,
       ...sessionSettings,
       cwd,
       sessionId: command.sessionId,
       prompt: spawnPrompt,
-      status: SESSION_STATUS.running,
       handle,
-      pid,
       logPath,
-      errPath,
       usage: null,
       route: routeResult,
-    });
+    },
+    config,
+    options.waitForSlot,
+    deps,
+  );
+  if ("limit" in reservation)
+    return printResult(
+      deps,
+      reservation,
+      `Capacity limit reached: ${reservation.limit}`,
+      CAPACITY_EXIT_CODE,
+    );
+  const session = reservation;
+  const environment = {
+    ...process.env,
+    [OWNER_ENVIRONMENT_VARIABLE]: session.owner,
+    [DEPTH_ENVIRONMENT_VARIABLE]: String(session.depth ?? 1),
+  };
+  if (options.detach) {
+    const detachedLogPath = session.logPath ?? sessionLogPath(handle);
+    try {
+      const detached = await deps.runDetached(
+        command.argv,
+        cwd,
+        detachedLogPath,
+        environment,
+      );
+      session.pid = detached.pid;
+      session.processStartTime = processStartTime(detached.pid);
+      session.errPath = detached.errPath;
+      await saveSession(session);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      session.status = SESSION_STATUS.failed;
+      session.error = message;
+      await saveSession(session);
+      throw new Error(message);
+    }
     deps.stdout(
       `${JSON.stringify({
         handle,
@@ -357,24 +464,25 @@ async function spawnCommand(
     deps.exit(SUCCESS_EXIT_CODE);
     return;
   }
-  const parsed = adapter.parseSpawnOutput(
-    await deps.runForeground(command.argv, cwd),
-  );
-  const sessionId = parsed.sessionId || command.sessionId;
-  if (!sessionId)
-    throw new Error("Harness output did not contain a session id");
-  const session = await createSession({
-    ...selected,
-    ...sessionSettings,
-    cwd,
-    sessionId,
-    prompt: spawnPrompt,
-    status: SESSION_STATUS.done,
-    result: parsed.result,
-    lastResult: parsed.result,
-    usage: parsed.usage,
-    route: routeResult,
-  });
+  let parsed: ReturnType<typeof adapter.parseSpawnOutput>;
+  try {
+    parsed = adapter.parseSpawnOutput(
+      await deps.runForeground(command.argv, cwd, environment),
+    );
+    session.sessionId = parsed.sessionId || command.sessionId;
+    if (!session.sessionId)
+      throw new Error("Harness output did not contain a session id");
+    session.status = SESSION_STATUS.done;
+    session.result = parsed.result;
+    session.lastResult = parsed.result;
+    session.usage = parsed.usage;
+    await saveSession(session);
+  } catch (error) {
+    session.status = SESSION_STATUS.failed;
+    session.error = error instanceof Error ? error.message : String(error);
+    await saveSession(session);
+    throw error;
+  }
   deps.stdout(
     `${JSON.stringify({
       handle: session.handle,
@@ -382,7 +490,7 @@ async function spawnCommand(
       sandbox,
       route: routeResult,
       resumeCommand: adapter
-        .buildResume(sessionId, '"<msg>"', harnessOptions)
+        .buildResume(session.sessionId, '"<msg>"', harnessOptions)
         .argv.join(" "),
       ...resultOutput(parsed.result, resultLimit(options)),
       usage: parsed.usage,
@@ -551,17 +659,19 @@ function printPassthroughNotes(
 }
 
 async function refreshSession(handle: string): Promise<Session> {
-  const session = await loadSession(handle);
-  if (session.status !== SESSION_STATUS.running || !session.pid) return session;
-  if (isProcessRunning(session.pid)) return session;
-  return completeSessionFromLog(
-    session,
-    getAdapter(session.harness).parseSpawnOutput,
-  );
+  await sweepSessions();
+  return loadSession(handle);
 }
 
 async function statusCommand(handle: string, deps: CliDeps): Promise<void> {
   const session = await refreshSession(handle);
+  if (session.status === SESSION_STATUS.failed)
+    return printResult(
+      deps,
+      { error: session.error ?? "Detached spawn failed" },
+      "Spawn failed",
+      ERROR_EXIT_CODE,
+    );
   return printResult(
     deps,
     {
@@ -658,6 +768,7 @@ async function sessionsCommand(
   options: { all?: boolean },
   deps: CliDeps,
 ): Promise<void> {
+  await sweepSessions();
   const sessions = await listSessions(options.all ? undefined : sessionOwner());
   return printResult(
     deps,
@@ -669,6 +780,7 @@ async function sessionsCommand(
         harness,
         model,
         effort,
+        depth,
         createdAt,
         promptPreview,
       }) => ({
@@ -678,6 +790,7 @@ async function sessionsCommand(
         harness,
         model,
         effort,
+        depth,
         createdAt,
         promptPreview,
       }),
@@ -756,6 +869,7 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .option("--sandbox <policy>")
     .option("--allowed-tools <list>")
     .option("--schema <file>")
+    .option("--wait-for-slot <seconds>")
     .option(RESULT_LIMIT_OPTION)
     .option("--no-guardrails")
     .action((prompt, options) => spawnCommand(prompt, options, deps));

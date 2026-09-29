@@ -71,6 +71,7 @@ A CLI that picks which coding-agent harness and model should run a task, spawns 
     "stoppingPointRequiredFor": ["codex:gpt-5.6-sol", "codex:gpt-6-astra"], // spawn refuses these picks when the prompt states no stopping point
     "confidenceFloor": 0.35, // below this, use defaultModelId instead of Jev's pick; 0.35 default because confidence is how peaked the distribution is and a 9-option choice rarely exceeds 0.6
     "directModel": "allow", // allow (default) or deny caller-provided --model and --effort picks
+    "concurrency": { "maxRunning": 6, "maxPerCaller": 3, "maxDepth": 2 },
   },
   "quota": {
     "enabled": true,
@@ -127,7 +128,7 @@ At the start of every init run, prompt for a missing TypeSafe API key and store 
 
 - **auth**: for claude, codex, pi: enabled? auth by subscription or API key? Each enabled harness gets a "Capabilities note for routing" text prompt prefilled with its current or default value. For API-key providers (openai, anthropic, openrouter, google, plus any provider pi's registry knows): which env var holds the key (default to the conventional name; show whether it is currently set).
 - **models**: for each enabled harness, call `enumerate(harness)` (below), show a multi-select with a first row "Enable all" that selects everything. Rows are labeled `<name>  <model id>` and sorted by name with natural numeric ordering. Then per selected model, effort levels come from the enumeration data (do not prompt).
-- **rules**: per subscription harness "cutoff at what percent used? (blank = none)". Confidential path globs and excluded provider prefixes (comma-separated, blank = none). Confidence floor (default 0.35). Default model + effort chosen from enabled candidates.
+- **rules**: positive-integer prompts for the three concurrency limits, per-subscription harness quota cutoffs, confidential path globs and excluded provider prefixes, confidence floor, and the default model + effort.
 - **preferences**: if `preferences.md` is missing, seed it from `templates/preferences.md`, then offer to open it in `$EDITOR`, edit it through an interactive Claude Code or Codex interview when that binary is installed, or skip editing.
 
 ### `smart-router route "<prompt>" [--cwd <dir>] [--hint <text>] [--confidential] [--dry-run]`
@@ -160,7 +161,7 @@ Pipeline:
 6. If the Jev call itself fails (network, auth, rate limit), do not error: pick `defaultModelId@defaultEffort`, set `fellBack: true`, put the error message in `reason`, and set the Noul scores to null.
 7. `--dry-run` prints the state that would be sent instead of calling Jev.
 
-### `smart-router spawn "<prompt>" [route flags] [--model <harness:model>] [--effort <e>] [--worktree] [--no-guardrails]`
+### `smart-router spawn "<prompt>" [route flags] [--model <harness:model>] [--effort <e>] [--worktree] [--wait-for-slot <seconds>] [--no-guardrails]`
 
 `route` (skipped when `--model` is given), then the harness adapter's `spawn`. Blocks until the turn finishes. As soon as the pick is known, before the delegate starts, spawn prints one stderr line `Routed to <harness:model@effort> (confidence <n>)` (or `(caller override)` with `--model`) so a caller tailing stderr sees the choice immediately. When `rules.directModel` is `deny`, `--model` and `--effort` cause spawn to exit 1 before routing; otherwise `--model` and its effort must be enabled in `config.models`, or spawn exits 1 and directs the caller to `smart-router init --section models`.
 
@@ -189,6 +190,7 @@ Output:
 `spawn --detach` does everything a foreground spawn does up to launching the delegate (routing, stopping-point check, guardrails, the `Routed to` stderr line), then starts the harness process detached from the CLI with its stdout redirected to `<sessions dir>/<handle>.log`, records `pid`, `status: "running"` and `logPath` in the session file, prints `{ handle, harness, model, effort, route, logPath }` and exits immediately. The child must outlive the CLI (node `child_process.spawn` with `detached: true`, `unref()`, and file descriptors for stdio).
 
 The child's stderr is written to the sibling `<handle>.err` file and recorded as `errPath`.
+`spawn`, `sessions`, and `status` sweep running sessions first. A dead or PID-reused delegate is completed from its log when a final result exists; otherwise it fails with the delegate-exited error and any recoverable `lastMessage` and `lastAction`.
 
 To make one runner serve both modes, each harness adapter exposes `buildSpawn(prompt, opts) → { argv, sessionId? }` and `parseSpawnOutput(stdout) → { sessionId, result, usage }`, and likewise `buildResume` / `parseResumeOutput`. The CLI runs the argv itself, foreground or detached.
 
@@ -209,7 +211,7 @@ Spawn, send, wait and status include `usage: { inputTokens, outputTokens, costUs
 
 ### Session ownership and cleanup
 
-Sessions record `owner` as `SMART_ROUTER_OWNER`, else `CLAUDE_CODE_SESSION_ID` (set by Claude Code in every Bash call, so one Claude session keeps one owner across calls), else `process.ppid`. `sessions` lists the current owner's session summaries newest first; `sessions --all` includes all owners. `rm <handle>` removes its JSON, log and error files; `prune --older-than <days>` removes only finished sessions older than the threshold.
+Sessions record `owner` as `SMART_ROUTER_OWNER`, else `CLAUDE_CODE_SESSION_ID`, else `process.ppid`, plus delegation `depth`. Spawns propagate the owner and incremented depth. An atomic sessions-directory lock enforces the configured running, per-caller, and depth caps; capacity exits 3 with JSON, while `--wait-for-slot` polls until its timeout. `sessions` lists the current owner's session summaries newest first; `sessions --all` includes all owners.
 
 ### Per-spawn passthrough flags
 
@@ -231,7 +233,7 @@ One module per harness, all exposing `spawn(prompt, opts) → { sessionId, resul
 - **codex**: spawn `codex exec --json -C <cwd> -m <model> -c model_reasoning_effort="<effort>" -s <config.spawn.codexSandbox> [--worktree] <prompt>` (`codex exec` is already non-interactive; it has no `-a` flag); `thread_id` from the first `thread.started` event; result = text of the last `item.completed` agent message. Resume: `codex exec resume <id> --json -m <model> -c sandbox_mode="<config.spawn.codexSandbox>" <message>`. Add `--skip-git-repo-check` when cwd is not inside a git repo.
 - **pi**: spawn `pi -p <prompt> --mode json --model <provider/model> --thinking <effort> --session <path under state dir>`; result = final assistant text from the JSON events. Resume: same command with the same `--session` path. Model ids for pi are `provider/model`.
 
-Session file: `{ handle, owner, harness, model, effort, cwd, sessionId, createdAt, promptPreview, status, browser?, sandbox?, usesNetworkAccess?, pid?, logPath?, result?, lastResult?, error?, usage? }`. The optional `error` stores the failure message for failed sessions. `status` is `running`, `done`, `failed` or `stopped`; foreground spawns write `done` directly. Handle = 6 lowercase alphanumerics.
+Session file: `{ handle, owner, depth?, harness, model, effort, cwd, sessionId, createdAt, promptPreview, status, browser?, sandbox?, usesNetworkAccess?, pid?, processStartTime?, logPath?, result?, lastResult?, error?, lastMessage?, lastAction?, usage? }`. `status` is `running`, `done`, `failed` or `stopped`; handle = 6 lowercase alphanumerics.
 
 ## Model enumeration (`src/enumerate.ts`)
 

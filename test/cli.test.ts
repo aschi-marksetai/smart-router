@@ -49,6 +49,7 @@ let directory: string;
 let config: Config;
 let runnerOutput = CLAUDE_OUTPUT;
 let runnerArguments: string[][];
+let runnerEnvironments: NodeJS.ProcessEnv[];
 let routeResponse: "success" | "offline" | "stopping" = "success";
 let quotaEnabled = true;
 
@@ -97,8 +98,8 @@ async function cli(
   // prettier-ignore
   const deps: CliDeps = {
     stdout: (text) => { stdout += text; }, stderr: (text) => { stderr += text; }, exit: (code) => { exitCode = code; },
-    runForeground: async (argv) => {
-      runnerArguments.push(argv); return runnerOutput;
+    runForeground: async (argv, _cwd, env) => {
+      runnerArguments.push(argv); runnerEnvironments.push(env ?? {}); return runnerOutput;
     },
     runDetached: async (_argv, _cwd, logPath) => {
       const errPath = logPath.replace(/\.log$/, ".err");
@@ -142,6 +143,7 @@ beforeEach(async () => {
   process.env.SMART_ROUTER_OWNER = OWNER;
   process.env.SMART_ROUTER_NO_UPDATE_CHECK = "1";
   runnerArguments = [];
+  runnerEnvironments = [];
   runnerOutput = CLAUDE_OUTPUT;
   routeResponse = "success";
   quotaEnabled = true;
@@ -163,7 +165,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
   // prettier-ignore
-  for (const name of ["SMART_ROUTER_CONFIG_DIR", "SMART_ROUTER_STATE_DIR", "CLAUDE_CONFIG_DIR", "SMART_ROUTER_OWNER", "SMART_ROUTER_NO_UPDATE_CHECK"])
+  for (const name of ["SMART_ROUTER_CONFIG_DIR", "SMART_ROUTER_STATE_DIR", "CLAUDE_CONFIG_DIR", "SMART_ROUTER_OWNER", "SMART_ROUTER_DEPTH", "SMART_ROUTER_NO_UPDATE_CHECK"])
     delete process.env[name];
 });
 
@@ -212,6 +214,7 @@ test("route selects, dry-runs, and falls back after a Jev failure", async () => 
 });
 
 test("spawn parses Claude and Codex output, flags, and stopping-point refusal", async () => {
+  process.env.SMART_ROUTER_DEPTH = "1";
   // prettier-ignore
   const claude = await cli(["spawn", "finish task", "--model", "claude:opus", "--no-guardrails", "--result-limit", "4"]);
   expectJson(claude, {
@@ -225,6 +228,12 @@ test("spawn parses Claude and Codex output, flags, and stopping-point refusal", 
   );
   expect(runnerArguments[0]).toContain("finish task");
   expect(runnerArguments[0].join(" ")).not.toContain("## Operating rules");
+  expect(runnerEnvironments[0]).toMatchObject({
+    SMART_ROUTER_OWNER: OWNER,
+    SMART_ROUTER_DEPTH: "2",
+  });
+  expect((await loadSession(claude.json.handle)).depth).toBe(2);
+  delete process.env.SMART_ROUTER_DEPTH;
   runnerOutput = CODEX_OUTPUT;
   const schemaPath = join(directory, "schema.json");
   await writeFile(schemaPath, '{"type":"object"}');
@@ -273,6 +282,63 @@ test("spawn rejects disabled overrides and accepts enabled overrides", async () 
     await cli(["spawn", "task", "--model", "claude:opus", "--effort", "high"]),
     { harness: "claude", model: "opus", effort: "high" },
   );
+});
+
+test("each concurrency limit exits 3 with capacity JSON", async () => {
+  const spawn = ["spawn", "task", "--model", "claude:opus"];
+  const running = await createSession({
+    harness: "claude",
+    model: "opus",
+    effort: "high",
+    cwd: directory,
+    prompt: "existing task",
+    status: SESSION_STATUS.running,
+    pid: process.pid,
+  });
+  config.rules.concurrency = { maxRunning: 1, maxPerCaller: 3, maxDepth: 2 };
+  await saveConfig(config);
+  const global = await cli([...spawn, "--wait-for-slot", "0.01"]);
+  expectJson(global, { error: "capacity", limit: "maxRunning" }, 3);
+  expect(global.json.running[0].handle).toBe(running.handle);
+  config.rules.concurrency = { maxRunning: 6, maxPerCaller: 1, maxDepth: 2 };
+  await saveConfig(config);
+  expectJson(await cli(spawn), { error: "capacity", limit: "maxPerCaller" }, 3);
+  process.env.SMART_ROUTER_DEPTH = "2";
+  config.rules.concurrency = { maxRunning: 6, maxPerCaller: 3, maxDepth: 2 };
+  await saveConfig(config);
+  const depth = await cli(spawn);
+  expectJson(depth, { error: "capacity", limit: "maxDepth" }, 3);
+  expect(depth.json.next).toContain("do the work themselves");
+  delete process.env.SMART_ROUTER_DEPTH;
+});
+
+test("spawn lock enforces maxRunning and wait-for-slot polls", async () => {
+  config.rules.concurrency = { maxRunning: 1, maxPerCaller: 3, maxDepth: 2 };
+  await saveConfig(config);
+  const detached = async (_argv: string[], _cwd: string, logPath: string) => ({
+    pid: process.pid,
+    errPath: logPath.replace(/\.log$/, ".err"),
+  });
+  const spawnDetached = (prompt: string) =>
+    cli(["spawn", prompt, "--model", "claude:opus", "--detach"], {
+      runDetached: detached,
+    });
+  const results = await Promise.all([
+    spawnDetached("one"),
+    spawnDetached("two"),
+  ]);
+  expect(results.map(({ exitCode }) => exitCode).sort()).toEqual([0, 3]);
+  const successfulSpawn = results.find(({ exitCode }) => exitCode === 0);
+  if (!successfulSpawn) throw new Error("expected one successful spawn");
+  const active = await loadSession(successfulSpawn.json.handle);
+  setTimeout(async () => {
+    active.status = SESSION_STATUS.done;
+    await saveSession(active);
+  }, 20);
+  const waitArgs = ["spawn", "waiting", "--model", "claude:opus"];
+  expectJson(await cli([...waitArgs, "--wait-for-slot", "0.1"]), {
+    result: "finished work",
+  });
 });
 
 test("records detached launch failures and reports failed waits", async () => {

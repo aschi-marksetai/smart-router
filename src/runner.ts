@@ -13,9 +13,11 @@ function lastLines(output: string): string {
 export async function runForeground(
   argv: string[],
   cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<string> {
   const child = spawn(argv[0], argv.slice(1), {
     cwd,
+    env,
     stdio: [IGNORE, "pipe", "pipe"],
   });
   let stdout = "";
@@ -46,6 +48,7 @@ export async function runDetached(
   argv: string[],
   cwd: string,
   logPath: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ pid: number; errPath: string }> {
   mkdirSync(dirname(logPath), { recursive: true });
   const logFile = openSync(logPath, "a");
@@ -56,6 +59,7 @@ export async function runDetached(
   const errFile = openSync(errPath, "a");
   const child = spawn(argv[0], argv.slice(1), {
     cwd,
+    env,
     detached: true,
     stdio: [IGNORE, logFile, errFile],
   });

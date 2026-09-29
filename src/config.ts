@@ -10,6 +10,9 @@ export const DEFAULT_CODEX_SANDBOX = "workspace-write";
 export const DEFAULT_JEV_MODEL = "jev-latest";
 export const DEFAULT_JEV_API_KEY_ENV = "TYPESAFE_API_KEY";
 export const DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS = ["openrouter"];
+export const DEFAULT_MAX_RUNNING = 6;
+export const DEFAULT_MAX_PER_CALLER = 3;
+export const DEFAULT_MAX_DEPTH = 2;
 export const DIRECT_MODEL_ALLOW = "allow";
 export const DIRECT_MODEL_DENY = "deny";
 export const DEFAULT_HARNESS_CAPABILITIES: Record<HarnessName, string> = {
@@ -38,6 +41,11 @@ export type ModelConfig = {
 };
 export type DirectModelRule =
   typeof DIRECT_MODEL_ALLOW | typeof DIRECT_MODEL_DENY;
+export type ConcurrencyRules = {
+  maxRunning: number;
+  maxPerCaller: number;
+  maxDepth: number;
+};
 export type Config = {
   version: number;
   harnesses: {
@@ -55,6 +63,7 @@ export type Config = {
     confidentialPathGlobs?: string[];
     stoppingPointRequiredFor?: string[];
     confidenceFloor?: number;
+    concurrency?: ConcurrencyRules;
   };
   defaultModelId: string;
   defaultEffort: string;
@@ -78,6 +87,11 @@ export const DEFAULT_CONFIG: Config = {
   rules: {
     confidentialExcludedProviders: DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
     directModel: DIRECT_MODEL_ALLOW,
+    concurrency: {
+      maxRunning: DEFAULT_MAX_RUNNING,
+      maxPerCaller: DEFAULT_MAX_PER_CALLER,
+      maxDepth: DEFAULT_MAX_DEPTH,
+    },
   },
   defaultModelId: "",
   defaultEffort: DEFAULT_EFFORT,
@@ -102,7 +116,14 @@ export async function loadConfig(): Promise<Config> {
     return {
       ...DEFAULT_CONFIG,
       ...saved,
-      rules: { ...DEFAULT_CONFIG.rules, ...saved.rules },
+      rules: {
+        ...DEFAULT_CONFIG.rules,
+        ...saved.rules,
+        concurrency: {
+          ...DEFAULT_CONFIG.rules.concurrency,
+          ...saved.rules?.concurrency,
+        },
+      },
       updates: { ...DEFAULT_CONFIG.updates, ...saved.updates },
       spawn: { ...DEFAULT_CONFIG.spawn, ...saved.spawn },
       quota: {

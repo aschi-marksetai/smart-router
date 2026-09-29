@@ -1,9 +1,24 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import type { HarnessName } from "./config.ts";
+import { getAdapter } from "./harness/index.ts";
 import { sessionsDir } from "./paths.ts";
-import type { ParsedOutput, Usage } from "./harness/types.ts";
+import {
+  parseJsonLines,
+  record,
+  type ParsedOutput,
+  type Usage,
+} from "./harness/types.ts";
 
 const HANDLE_BYTES = 3;
 const PROMPT_PREVIEW_LENGTH = 160;
@@ -14,6 +29,11 @@ const STDERR_LINE_LIMIT = 20;
 const OWNER_ENVIRONMENT_VARIABLE = "SMART_ROUTER_OWNER";
 const CLAUDE_SESSION_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_SESSION_ID";
 const DAY_MS = 24 * 60 * 60 * 1_000;
+const SPAWN_LOCK_DIRECTORY = ".spawn.lock";
+const LOCK_RETRY_INTERVAL_MS = 20;
+const LOCK_STALE_TIMEOUT_MS = 30_000;
+export const DELEGATE_EXIT_ERROR =
+  "delegate process exited without reporting (killed; likely out of memory or the pids limit)";
 
 export const SESSION_STATUS = {
   running: "running",
@@ -45,11 +65,15 @@ export type Session = {
   promptPreview: string;
   status: SessionStatus;
   pid?: number;
+  processStartTime?: string;
+  depth?: number;
   logPath?: string;
   errPath?: string;
   result?: string;
   lastResult?: string;
   error?: string;
+  lastMessage?: string;
+  lastAction?: string;
   usage?: Usage | null;
   route?: unknown;
 };
@@ -103,11 +127,15 @@ export async function createSession(
     promptPreview: options.prompt.slice(0, PROMPT_PREVIEW_LENGTH),
     status: options.status,
     pid: options.pid,
+    processStartTime: options.processStartTime,
+    depth: options.depth,
     logPath: options.logPath,
     errPath: options.errPath,
     result: options.result,
     lastResult: options.lastResult ?? options.result,
     error: options.error,
+    lastMessage: options.lastMessage,
+    lastAction: options.lastAction,
     usage: options.usage,
     route: options.route,
   };
@@ -206,6 +234,109 @@ export function isProcessRunning(pid: number): boolean {
   }
 }
 
+export function processStartTime(pid: number): string | undefined {
+  try {
+    if (process.platform === "linux") {
+      const processStat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      return processStat.slice(processStat.lastIndexOf(")") + 2).split(" ")[19];
+    }
+    if (process.platform === "darwin")
+      return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+        encoding: "utf8",
+      }).trim();
+  } catch {}
+  return undefined;
+}
+
+function isSessionProcessRunning(
+  session: Session,
+  getProcessStartTime: (pid: number) => string | undefined,
+): boolean {
+  if (!session.pid || !isProcessRunning(session.pid)) return false;
+  const currentStartTime = getProcessStartTime(session.pid);
+  if (!session.processStartTime || !currentStartTime) return true;
+  return session.processStartTime === currentStartTime;
+}
+
+function logActivity(
+  output: string,
+): Pick<Session, "lastMessage" | "lastAction"> {
+  let lastMessage: string | undefined;
+  let lastAction: string | undefined;
+  for (const value of parseJsonLines(output)) {
+    const event = record(value);
+    const item = record(event?.item);
+    const message = record(event?.message);
+    const content = Array.isArray(message?.content) ? message.content : [];
+    for (const candidate of [item, ...content.map(record)]) {
+      const type = candidate?.type;
+      const text = candidate?.text;
+      if (
+        (type === "agent_message" || type === "text") &&
+        typeof text === "string"
+      )
+        lastMessage = text;
+      if (
+        typeof type === "string" &&
+        (type.includes("command") || type.includes("tool"))
+      ) {
+        const action = candidate?.command ?? candidate?.name ?? candidate?.tool;
+        lastAction =
+          typeof action === "string" ? action : JSON.stringify(candidate);
+      }
+    }
+  }
+  return { lastMessage, lastAction };
+}
+
+export async function sweepSessions(
+  getProcessStartTime = processStartTime,
+): Promise<Session[]> {
+  const sessions = await listSessions();
+  for (const session of sessions) {
+    const shouldSweep =
+      session.status === SESSION_STATUS.running &&
+      !!session.pid &&
+      !isSessionProcessRunning(session, getProcessStartTime);
+    if (shouldSweep)
+      await completeSessionFromLog(
+        session,
+        getAdapter(session.harness).parseSpawnOutput,
+        true,
+      );
+  }
+  return sessions;
+}
+
+export async function withSessionsLock<T>(
+  action: () => Promise<T>,
+): Promise<T> {
+  await mkdir(sessionsDir(), { recursive: true });
+  const lockPath = join(sessionsDir(), SPAWN_LOCK_DIRECTORY);
+  while (true) {
+    try {
+      await mkdir(lockPath);
+      break;
+    } catch (error) {
+      if (!(
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "EEXIST"
+      ))
+        throw error;
+      const lockAge = Date.now() - (await stat(lockPath)).mtimeMs;
+      if (lockAge > LOCK_STALE_TIMEOUT_MS)
+        await rm(lockPath, { recursive: true });
+      await Bun.sleep(LOCK_RETRY_INTERVAL_MS);
+    }
+  }
+  try {
+    return await action();
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
+  }
+}
+
 async function failureMessage(
   session: Session,
   parseError?: unknown,
@@ -229,9 +360,12 @@ async function failureMessage(
 export async function completeSessionFromLog(
   session: Session,
   parseOutput: (output: string) => ParsedOutput,
+  delegateExited = false,
 ): Promise<Session> {
+  let output = "";
+  let parseError: unknown;
   try {
-    const output = await readFile(
+    output = await readFile(
       session.logPath ?? sessionLogPath(session.handle),
       "utf8",
     );
@@ -240,14 +374,18 @@ export async function completeSessionFromLog(
     session.result = parsed.result;
     session.lastResult = parsed.result;
     session.usage = addUsage(session.usage, parsed.usage);
-    if (parsed.result) session.status = SESSION_STATUS.done;
-    else {
-      session.status = SESSION_STATUS.failed;
-      session.error = await failureMessage(session);
-    }
+    session.status = parsed.result
+      ? SESSION_STATUS.done
+      : SESSION_STATUS.failed;
   } catch (error) {
     session.status = SESSION_STATUS.failed;
-    session.error = await failureMessage(session, error);
+    parseError = error;
+  }
+  if (session.status === SESSION_STATUS.failed) {
+    session.error = delegateExited
+      ? DELEGATE_EXIT_ERROR
+      : await failureMessage(session, parseError);
+    if (delegateExited) Object.assign(session, logActivity(output));
   }
   await saveSession(session);
   return session;

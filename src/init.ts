@@ -27,6 +27,9 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
   DEFAULT_HARNESS_CAPABILITIES,
+  DEFAULT_MAX_DEPTH,
+  DEFAULT_MAX_PER_CALLER,
+  DEFAULT_MAX_RUNNING,
   harnessBinary,
   loadConfig,
   type Config,
@@ -346,6 +349,31 @@ async function runRules(
   const start = await beginSection("Rules", hasExistingConfig, deps);
   if (start === "skip") return config;
   const next = structuredClone(config);
+  const concurrency = next.rules.concurrency ?? {
+    maxRunning: DEFAULT_MAX_RUNNING,
+    maxPerCaller: DEFAULT_MAX_PER_CALLER,
+    maxDepth: DEFAULT_MAX_DEPTH,
+  };
+  const concurrencyPrompts: [string, keyof typeof concurrency][] = [
+    ["Maximum running delegates", "maxRunning"],
+    ["Maximum running delegates per caller", "maxPerCaller"],
+    ["Maximum delegation depth", "maxDepth"],
+  ];
+  for (const [message, key] of concurrencyPrompts) {
+    const value = await prompt(
+      deps.prompts.text({
+        message,
+        initialValue: concurrency[key].toString(),
+        validate: (answer) =>
+          Number.isSafeInteger(Number(answer)) && Number(answer) > 0
+            ? undefined
+            : "Enter a positive integer",
+      }),
+      deps,
+    );
+    concurrency[key] = Number(value);
+  }
+  next.rules.concurrency = concurrency;
   const cutoffPercent = { ...next.rules.quotaCutoffPercent };
   for (const harness of HARNESS_NAMES) {
     if (

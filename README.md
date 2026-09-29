@@ -33,7 +33,7 @@ smart-router send <handle> "run the tests and fix failures"
 | `send <handle> <message>` | Continue a session                                  |
 | `quota`                   | Show subscription quota                             |
 
-Config lives in `~/.config/smart-router` (override with `SMART_ROUTER_CONFIG_DIR`); sessions live in `~/.local/state/smart-router`.
+Config lives in `~/.config/smart-router` (override with `SMART_ROUTER_CONFIG_DIR`); sessions live in `~/.local/state/smart-router`. Jev can route through OpenRouter by setting `jev.provider` to `openrouter` and `jev.apiKeyEnv` to `OPENROUTER_API_KEY`. Set `jev.zdr` to require zero data retention for Jev routing calls.
 
 ## Development
 

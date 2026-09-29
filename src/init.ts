@@ -25,7 +25,7 @@ import {
   DIRECT_MODEL_ALLOW,
   DIRECT_MODEL_DENY,
   DEFAULT_CONFIG,
-  DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
+  DEFAULT_CONFIDENTIAL_EXCLUDED_MODELS,
   DEFAULT_HARNESS_CAPABILITIES,
   DEFAULT_MAX_DEPTH,
   DEFAULT_MAX_PER_CALLER,
@@ -72,6 +72,8 @@ const PROVIDER_ENVIRONMENT_VARIABLES: Record<string, string> = {
   google: "GOOGLE_API_KEY",
 };
 const TYPESAFE_KEYS_URL = "https://console.typesafe.ai/keys";
+const TYPESAFE_KEY_ENV = "TYPESAFE_API_KEY";
+const OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY";
 
 type InitSection = "auth" | "models" | "rules" | "preferences";
 type PreferencesEditMethod = "editor" | "claude" | "codex" | "skip";
@@ -412,22 +414,30 @@ async function runRules(
     .map((glob) => glob.trim())
     .filter(Boolean);
   next.rules.confidentialPathGlobs = globs.length ? globs : undefined;
-  const excludedProviders =
+  const excludedModels =
     (await prompt(
       deps.prompts.text({
-        message: "Confidential excluded providers, comma-separated",
+        message: "Confidential excluded model patterns, comma-separated",
         initialValue: (
-          next.rules.confidentialExcludedProviders ??
-          DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS
+          next.rules.confidentialExcludedModels ??
+          DEFAULT_CONFIDENTIAL_EXCLUDED_MODELS
         ).join(", "),
       }),
       deps,
     )) ?? "";
-  const providers = excludedProviders
+  const modelPatterns = excludedModels
     .split(",")
-    .map((provider) => provider.trim())
+    .map((pattern) => pattern.trim())
     .filter(Boolean);
-  next.rules.confidentialExcludedProviders = providers;
+  next.rules.confidentialExcludedModels = modelPatterns;
+  next.rules.confidentialRequireZdr = await prompt(
+    deps.prompts.confirm({
+      message:
+        "Require zero data retention for confidential OpenRouter models?",
+      initialValue: next.rules.confidentialRequireZdr ?? false,
+    }),
+    deps,
+  );
   const confidenceFloor =
     (await prompt(
       deps.prompts.text({
@@ -622,11 +632,29 @@ export async function runInit(
   let config = options.reset
     ? structuredClone(DEFAULT_CONFIG)
     : await loadConfig();
-  const keyEnvironmentVariable = config.jev.apiKeyEnv;
+  config.jev.provider = await prompt(
+    deps.prompts.select({
+      message: "Jev provider",
+      options: [
+        { value: "typesafe", label: "TypeSafe" },
+        { value: "openrouter", label: "OpenRouter" },
+      ],
+      initialValue: config.jev.provider ?? "typesafe",
+    }),
+    deps,
+  );
+  const keyEnvironmentVariable =
+    config.jev.provider === "openrouter"
+      ? OPENROUTER_KEY_ENV
+      : TYPESAFE_KEY_ENV;
+  config.jev.apiKeyEnv = keyEnvironmentVariable;
   if (!deps.env[keyEnvironmentVariable]) {
     const apiKey = await prompt(
       deps.prompts.password({
-        message: `Paste your TypeSafe API key (for Jev routing) — get one at ${TYPESAFE_KEYS_URL}`,
+        message:
+          config.jev.provider === "openrouter"
+            ? "Paste your OpenRouter API key (for Jev routing)"
+            : `Paste your TypeSafe API key (for Jev routing) — get one at ${TYPESAFE_KEYS_URL}`,
       }),
       deps,
     );
@@ -642,6 +670,15 @@ export async function runInit(
         "Routing will fall back to the default model until the key exists.",
       );
     }
+  }
+  if (config.jev.provider === "openrouter") {
+    config.jev.zdr = await prompt(
+      deps.prompts.confirm({
+        message: "Require zero data retention for routing calls?",
+        initialValue: config.jev.zdr ?? false,
+      }),
+      deps,
+    );
   }
   const section = options.section;
   if (section !== undefined && !isSection(section))

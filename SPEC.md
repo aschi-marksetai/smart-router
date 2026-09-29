@@ -6,7 +6,7 @@ A CLI that picks which coding-agent harness and model should run a task, spawns 
 
 - Bun 1.4 runtime, TypeScript, ESM. No build step: `bun run src/cli.ts`. Tests: `bun test`.
 - `commander` for flags, `@clack/prompts` for the wizard (same pair openclaw uses).
-- `@typesafe-ai/sdk` for the Jev call: `new TypeSafeClient()` reads `TYPESAFE_API_KEY`; `client.systemOne({ state, model, questions })`; `choice(instructions, criteria)` where `criteria` is a map of option id → description (or null); `noul(instructions)`. A choice answer is `{ choice, confidence, probabilities }`. `@earendil-works/pi-ai` for the offline model registry.
+- `@typesafe-ai/sdk` for the Jev call: `new TypeSafeClient()` reads the configured key; `client.systemOne({ state, model, questions })`. Jev uses TypeSafe by default and can use OpenRouter with `OPENROUTER_API_KEY`; OpenRouter ZDR calls use its provider option. `@earendil-works/pi-ai` for the offline model registry.
 - Config is JSON (stdlib read/write). No TOML dependency.
 - Formatter: prettier.
 
@@ -66,8 +66,9 @@ A CLI that picks which coding-agent harness and model should run a task, spawns 
   "rules": {
     // all optional; anything absent is left to Jev
     "quotaCutoffPercent": { "claude": 85, "codex": 90 }, // per subscription provider; codexbar weekly window usedPercent >= cutoff removes that harness
-    "confidentialPathGlobs": ["**/awm/**", "**/grainger/**"], // cwd matching any glob excludes every openrouter model
-    "confidentialExcludedProviders": ["openrouter"], // provider prefixes excluded for confidential tasks
+    "confidentialPathGlobs": ["**/awm/**", "**/grainger/**"], // cwd matching any glob marks the task confidential
+    "confidentialExcludedModels": ["pi:openrouter/some-lab/*"], // candidate id patterns excluded for confidential tasks; default []
+    "confidentialRequireZdr": false, // also require OpenRouter's ZDR list for confidential tasks
     "stoppingPointRequiredFor": ["codex:gpt-5.6-sol", "codex:gpt-6-astra"], // spawn refuses these picks when the prompt states no stopping point
     "confidenceFloor": 0.35, // below this, use defaultModelId instead of Jev's pick; 0.35 default because confidence is how peaked the distribution is and a 9-option choice rarely exceeds 0.6
     "directModel": "allow", // allow (default) or deny caller-provided --model and --effort picks
@@ -85,7 +86,8 @@ A CLI that picks which coding-agent harness and model should run a task, spawns 
     "autoSandbox": true,
     "allowFullAccess": true,
   },
-  "jev": { "model": "jev-latest", "apiKeyEnv": "TYPESAFE_API_KEY" },
+  // prettier-ignore
+  "jev": { "model": "jev-latest", "apiKeyEnv": "TYPESAFE_API_KEY", "provider": "typesafe", "zdr": false },
 }
 ```
 
@@ -124,7 +126,7 @@ Detection: `Bun.which` for binaries (a `command -v` subprocess is not portable t
 
 The wizard. Sections in order: auth, models, rules, preferences. On an existing config every prompt prefills the current value and each section opens with "Keep as is" preselected. `--section` runs one section. `--reset` starts from empty.
 
-At the start of every init run, prompt for a missing TypeSafe API key and store a non-blank answer in the config directory's `.env` file.
+At the start of every init run, choose TypeSafe or OpenRouter and prompt for the selected provider's missing key, storing a non-blank answer in the config directory's `.env` file. Jev also supports `provider: "openrouter"` and `zdr: false`; confidential rules support `confidentialExcludedModels` (default `[]`) and `confidentialRequireZdr` (default `false`).
 
 - **auth**: for claude, codex, pi: enabled? auth by subscription or API key? Each enabled harness gets a "Capabilities note for routing" text prompt prefilled with its current or default value. For API-key providers (openai, anthropic, openrouter, google, plus any provider pi's registry knows): which env var holds the key (default to the conventional name; show whether it is currently set).
 - **models**: for each enabled harness, call `enumerate(harness)` (below), show a multi-select with a first row "Enable all" that selects everything. Rows are labeled `<name>  <model id>` and sorted by name with natural numeric ordering. Then per selected model, effort levels come from the enumeration data (do not prompt).
@@ -154,7 +156,7 @@ Decision only. Output:
 Pipeline:
 
 1. Candidates = `config.models` (each with its supported efforts), keep only those whose harness is installed and authed (doctor logic).
-2. Apply enabled rules only: `quotaCutoffPercent` (needs codexbar; if codexbar is missing, skip this rule and note it in `reason`), `confidentialPathGlobs` or `--confidential` (drop `openrouter/*` models).
+2. Apply enabled rules only: `quotaCutoffPercent` (needs codexbar; if codexbar is missing, skip this rule and note it in `reason`), confidential path/flag exclusions (match `confidentialExcludedModels` against candidate ids with Bun.Glob), and optional `confidentialRequireZdr` (cache OpenRouter's ZDR list for 24 hours; fetch failure drops OpenRouter candidates).
 3. Build Jev `state`: `{ preferences: <preferences.md>, task: <prompt, truncated to 8k chars>, hint, cwd, quota: <normalized codexbar snapshot or null>, candidates: [{ id, harness, model, efforts, auth, capabilities }] }`.
 4. One Jev call with five questions. `model`: a Choice over the eligible model ids (`harness:model`, no effort), instructions "Pick the model that should run this task according to the user's preferences", criteria map = model id → one-line description (harness, auth, supported efforts, capabilities). `effort`: a Choice over the union of effort levels the eligible models support, instructions "Pick the reasoning effort this task needs". `needsBrowser`, `needsNetwork`, `needsFullAccess`, and `statesStoppingPoint` are Noul scores. All are returned as numbers and do not affect the pick. The pick is `model@effort`; if the chosen model does not support the chosen effort, use the highest effort it supports below it. Effort is asked separately so probability mass is not split across tiers of the same model.
 5. If the `model` answer's `confidence < rules.confidenceFloor` or its choice is not a candidate, pick `defaultModelId@defaultEffort` and set `fellBack: true`.

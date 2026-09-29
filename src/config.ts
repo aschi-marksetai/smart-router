@@ -9,7 +9,7 @@ export const DEFAULT_CLAUDE_PERMISSION_MODE = "bypassPermissions";
 export const DEFAULT_CODEX_SANDBOX = "workspace-write";
 export const DEFAULT_JEV_MODEL = "jev-latest";
 export const DEFAULT_JEV_API_KEY_ENV = "TYPESAFE_API_KEY";
-export const DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS = ["openrouter"];
+export const DEFAULT_CONFIDENTIAL_EXCLUDED_MODELS: string[] = [];
 export const DEFAULT_MAX_RUNNING = 6;
 export const DEFAULT_MAX_PER_CALLER = 3;
 export const DEFAULT_MAX_DEPTH = 2;
@@ -59,8 +59,9 @@ export type Config = {
   rules: {
     directModel?: DirectModelRule;
     quotaCutoffPercent?: Partial<Record<HarnessName, number>>;
-    confidentialExcludedProviders?: string[];
+    confidentialExcludedModels?: string[];
     confidentialPathGlobs?: string[];
+    confidentialRequireZdr?: boolean;
     stoppingPointRequiredFor?: string[];
     confidenceFloor?: number;
     concurrency?: ConcurrencyRules;
@@ -73,7 +74,12 @@ export type Config = {
     autoSandbox: boolean;
     allowFullAccess: boolean;
   };
-  jev: { model: string; apiKeyEnv: string };
+  jev: {
+    model: string;
+    apiKeyEnv: string;
+    provider: "typesafe" | "openrouter";
+    zdr: boolean;
+  };
   quota: { enabled: boolean; providers: Partial<Record<HarnessName, string>> };
   updates?: { check: boolean };
 };
@@ -85,7 +91,8 @@ export const DEFAULT_CONFIG: Config = {
   models: [],
   ignoredModels: [],
   rules: {
-    confidentialExcludedProviders: DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
+    confidentialExcludedModels: DEFAULT_CONFIDENTIAL_EXCLUDED_MODELS,
+    confidentialRequireZdr: false,
     directModel: DIRECT_MODEL_ALLOW,
     concurrency: {
       maxRunning: DEFAULT_MAX_RUNNING,
@@ -101,7 +108,12 @@ export const DEFAULT_CONFIG: Config = {
     autoSandbox: true,
     allowFullAccess: true,
   },
-  jev: { model: DEFAULT_JEV_MODEL, apiKeyEnv: DEFAULT_JEV_API_KEY_ENV },
+  jev: {
+    model: DEFAULT_JEV_MODEL,
+    apiKeyEnv: DEFAULT_JEV_API_KEY_ENV,
+    provider: "typesafe",
+    zdr: false,
+  },
   quota: { enabled: true, providers: { claude: "claude", codex: "codex" } },
   updates: { check: true },
 };
@@ -113,18 +125,31 @@ export function configPath(): string {
 export async function loadConfig(): Promise<Config> {
   try {
     const saved = JSON.parse(await readFile(configPath(), "utf8"));
+    const confidentialExcludedModels =
+      saved.rules?.confidentialExcludedModels ??
+      saved.rules?.confidentialExcludedProviders?.map(
+        (provider: string) => `pi:${provider}/*`,
+      ) ??
+      DEFAULT_CONFIDENTIAL_EXCLUDED_MODELS;
+    const rules = {
+      ...DEFAULT_CONFIG.rules,
+      ...saved.rules,
+      confidentialExcludedModels,
+    };
+    delete rules.confidentialExcludedProviders;
     return {
       ...DEFAULT_CONFIG,
       ...saved,
       rules: {
         ...DEFAULT_CONFIG.rules,
-        ...saved.rules,
+        ...rules,
         concurrency: {
           ...DEFAULT_CONFIG.rules.concurrency,
           ...saved.rules?.concurrency,
         },
       },
       updates: { ...DEFAULT_CONFIG.updates, ...saved.updates },
+      jev: { ...DEFAULT_CONFIG.jev, ...saved.jev },
       spawn: { ...DEFAULT_CONFIG.spawn, ...saved.spawn },
       quota: {
         ...DEFAULT_CONFIG.quota,

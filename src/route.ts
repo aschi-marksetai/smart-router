@@ -1,18 +1,23 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, mkdir, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk";
 import {
-  DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS,
   DEFAULT_HARNESS_CAPABILITIES,
   type Config,
   type HarnessName,
 } from "./config.ts";
 import { doctor, type DoctorResult } from "./doctor.ts";
 import { isMissingFile } from "./files.ts";
-import { configDir } from "./paths.ts";
+import { configDir, stateDir } from "./paths.ts";
 import { getQuota, type QuotaResult, type QuotaSnapshot } from "./quota.ts";
 
 const MAX_TASK_LENGTH = 8_000;
+export const OPENROUTER_API_BASE_URL = "https://openrouter.ai/api";
+export const OPENROUTER_ZDR_URL = `${OPENROUTER_API_BASE_URL}/v1/endpoints/zdr`;
+export const OPENROUTER_SYSTEM_ONE_URL = `${OPENROUTER_API_BASE_URL}/v1/systemone`;
+const OPENROUTER_ZDR_CACHE_FILE = "openrouter-zdr.json";
+const OPENROUTER_ZDR_CACHE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const OPENROUTER_PROVIDER_PREFIX = "openrouter/";
 const PREFERENCES_FILE_NAME = "preferences.md";
 const PICK_INSTRUCTIONS =
   "Pick the model that should run this task according to the user's preferences";
@@ -81,6 +86,7 @@ export type RouteDeps = {
   doctor: (config: Config) => Promise<DoctorResult>;
   getQuota: () => Promise<QuotaResult>;
   preferences: string | (() => Promise<string>);
+  fetch?: (input: string, init?: RequestInit) => Promise<Response>;
 };
 export type CodexSandboxChoice = {
   sandbox: string;
@@ -152,7 +158,7 @@ function capabilitiesNote(capabilities: string): string {
   return capabilities ? `; capabilities: ${capabilities}` : "";
 }
 
-function routeQuestions(candidates: RouteCandidate[]) {
+export function routeQuestions(candidates: RouteCandidate[]) {
   const modelCriteria = Object.fromEntries(
     candidates.map((candidate) => [
       candidate.id,
@@ -193,16 +199,53 @@ function clampEffort(efforts: string[], selectedEffort: string): string {
   return efforts[Math.floor(efforts.length / 2)] ?? efforts[0];
 }
 
-export function defaultRouteDeps(config: Config): RouteDeps {
+export function defaultRouteDeps(
+  config: Config,
+  fetch: (
+    input: string,
+    init?: RequestInit,
+  ) => Promise<Response> = globalThis.fetch,
+): RouteDeps {
   const lazyClient: JevClient = {
-    systemOne: (request) =>
-      new TypeSafeClient({
+    systemOne: async (request) => {
+      if (config.jev.provider === "openrouter" && config.jev.zdr) {
+        const response = await fetch(OPENROUTER_SYSTEM_ONE_URL, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env[config.jev.apiKeyEnv] ?? ""}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: request.model,
+            state: request.state,
+            questions: request.questions,
+            provider: { zdr: true },
+          }),
+        });
+        if (!response.ok)
+          throw new Error(`Jev request failed: ${response.status}`);
+        const payload = await response.json();
+        if (
+          typeof payload !== "object" ||
+          payload === null ||
+          !("answers" in payload)
+        )
+          throw new Error("Invalid Jev response");
+        return payload as JevResponse;
+      }
+      const client = new TypeSafeClient({
         apiKey: process.env[config.jev.apiKeyEnv],
-      }).systemOne(request),
+        ...(config.jev.provider === "openrouter"
+          ? { baseURL: OPENROUTER_API_BASE_URL }
+          : {}),
+      });
+      return client.systemOne(request);
+    },
   };
   return {
     config,
     client: lazyClient,
+    fetch,
     doctor,
     getQuota: () => getQuota(config),
     preferences: async () => {
@@ -214,6 +257,36 @@ export function defaultRouteDeps(config: Config): RouteDeps {
       }
     },
   };
+}
+
+async function openRouterZdrModels(
+  fetch: (input: string, init?: RequestInit) => Promise<Response>,
+): Promise<Set<string> | null> {
+  const cachePath = join(stateDir(), OPENROUTER_ZDR_CACHE_FILE);
+  try {
+    const cached = JSON.parse(await readFile(cachePath, "utf8")) as string[];
+    if (
+      Date.now() - (await stat(cachePath)).mtimeMs <
+      OPENROUTER_ZDR_CACHE_INTERVAL_MS
+    )
+      return new Set(cached);
+  } catch {}
+  try {
+    const response = await fetch(OPENROUTER_ZDR_URL);
+    if (!response.ok)
+      throw new Error(`OpenRouter ZDR check failed: ${response.status}`);
+    const payload = (await response.json()) as {
+      data?: { model_id?: string }[];
+    };
+    const models = (payload.data ?? []).flatMap(({ model_id }) =>
+      model_id ? [model_id] : [],
+    );
+    await mkdir(dirname(cachePath), { recursive: true });
+    await writeFile(cachePath, JSON.stringify(models));
+    return new Set(models);
+  } catch {
+    return null;
+  }
 }
 
 export function needsStoppingPoint(
@@ -259,18 +332,46 @@ export async function route(
       new Bun.Glob(glob).match(cwd),
     ) ??
       false);
-  const candidates = expandCandidates(
+  const configuredCandidates = expandCandidates(
     config,
     new Set(detection.candidates),
-  ).filter((candidate) => {
+  );
+  const hasOpenRouterCandidates = configuredCandidates.some(
+    ({ harness, model }) =>
+      harness === "pi" && model.startsWith(OPENROUTER_PROVIDER_PREFIX),
+  );
+  const zdrModels =
+    confidential &&
+    config.rules.confidentialRequireZdr &&
+    hasOpenRouterCandidates
+      ? await openRouterZdrModels(
+          deps.fetch ?? ((input) => globalThis.fetch(input)),
+        )
+      : new Set<string>();
+  let zdrUnavailable = false;
+  const candidates = configuredCandidates.filter((candidate) => {
     if (
       confidential &&
-      (
-        config.rules.confidentialExcludedProviders ??
-        DEFAULT_CONFIDENTIAL_EXCLUDED_PROVIDERS
-      ).some((provider) => candidate.model.startsWith(`${provider}/`))
+      (config.rules.confidentialExcludedModels ?? []).some((pattern) =>
+        new Bun.Glob(pattern).match(candidate.id),
+      )
     )
       return false;
+    if (
+      confidential &&
+      config.rules.confidentialRequireZdr &&
+      candidate.harness === "pi" &&
+      candidate.model.startsWith(OPENROUTER_PROVIDER_PREFIX)
+    ) {
+      if (!zdrModels) {
+        zdrUnavailable = true;
+        return false;
+      }
+      if (
+        !zdrModels.has(candidate.model.slice(OPENROUTER_PROVIDER_PREFIX.length))
+      )
+        return false;
+    }
     const cutoff = config.rules.quotaCutoffPercent?.[candidate.harness];
     const usage = quota?.[candidate.harness] ?? null;
     return (
@@ -340,6 +441,10 @@ export async function route(
   const fallbackRequired =
     !eligibleDefault || !selectedModelIsCandidate || confidenceFallback;
   const reasons = [];
+  if (zdrUnavailable)
+    reasons.push(
+      "OpenRouter ZDR list unavailable; OpenRouter candidates dropped",
+    );
   if (!config.quota.enabled) reasons.push("quota disabled");
   if (quotaUnavailable && config.rules.quotaCutoffPercent !== undefined)
     reasons.push("codexbar not installed; quota cutoff skipped");

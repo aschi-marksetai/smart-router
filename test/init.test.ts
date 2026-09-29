@@ -55,7 +55,13 @@ function scripted(script: Script, overrides: Partial<InitDeps> = {}) {
   const launches: string[][] = [];
   const seen: string[] = [];
   const prompt = (kind: PromptKind) => (options: Record<string, unknown>) => {
-    const answer = script[kind]?.shift();
+    const answers = script[kind];
+    const answer =
+      kind === "select" &&
+      options.message === "Jev provider" &&
+      answers?.[0]?.message !== "Jev provider"
+        ? { message: "Jev provider", value: "typesafe" }
+        : answers?.shift();
     expect(answer, `unexpected ${kind}: ${options.message}`).toBeDefined();
     expect(options.message).toBe(answer?.message);
     answer?.check?.(options);
@@ -145,7 +151,7 @@ test("TypeSafe key is requested only when missing, saved, and blank is noted", a
   first.assertConsumed();
   const second = scripted({ select: [answer("Models", "keep")] });
   await runInit({ section: "models" }, second.deps);
-  expect(second.seen).toEqual(["select: Models"]);
+  expect(second.seen).toEqual(["select: Jev provider", "select: Models"]);
   const blank = scripted({
     password: [answer(message, "  ")],
     select: [answer("Models", "keep")],
@@ -155,6 +161,29 @@ test("TypeSafe key is requested only when missing, saved, and blank is noted", a
   // prettier-ignore
   expect(blank.notes).toContainEqual(["Routing will fall back to the default model until the key exists.", undefined]);
   blank.assertConsumed();
+});
+
+test("selects OpenRouter Jev, prompts for its key, and confirms routing ZDR", async () => {
+  await setup();
+  const { deps, assertConsumed } = scripted({
+    select: [answer("Jev provider", "openrouter")],
+    password: [
+      answer("Paste your OpenRouter API key (for Jev routing)", "router-key"),
+    ],
+    confirm: [answer("Require zero data retention for routing calls?", true)],
+  });
+  delete deps.env.OPENROUTER_API_KEY;
+  await runInit({ section: "models" }, deps);
+  const saved = await loadConfig();
+  expect(saved.jev).toMatchObject({
+    provider: "openrouter",
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    zdr: true,
+  });
+  expect(await readFile(join(directory, ".env"), "utf8")).toBe(
+    "OPENROUTER_API_KEY=router-key",
+  );
+  assertConsumed();
 });
 
 test("auth sets harnesses, capabilities, provider env vars, and codexbar quota", async () => {
@@ -249,10 +278,10 @@ test("rules handle blank and numeric cutoffs, validation, globs, floor, stopping
       answer("claude cutoff percent used (blank = none)", "", (options) => { expect(options.initialValue).toBe("40"); expect(validate(options, "bad")).toBe("Enter a finite number"); }),
       answer("codex cutoff percent used (blank = none)", "60", (options) => expect(validate(options, "Infinity")).toBe("Enter a finite number")),
       answer("Confidential path globs, comma-separated (blank = none)", " **/secret/**, *.key "),
-      answer("Confidential excluded providers, comma-separated", "openrouter, google"),
+      answer("Confidential excluded model patterns, comma-separated", "pi:openrouter/*, pi:google/*"),
       answer("Confidence floor, 0 to 1 (below it the default model runs; 0.35 recommended)", "", (options) => expect(validate(options, "NaN")).toBe("Enter a finite number")),
     ],
-    confirm: [answer("Check for updates once a day?", false), answer("Choose the Codex sandbox automatically from the task?", false), answer("Allow automatic Codex full-access sandbox?", false)],
+    confirm: [answer("Require zero data retention for confidential OpenRouter models?", false), answer("Check for updates once a day?", false), answer("Choose the Codex sandbox automatically from the task?", false), answer("Allow automatic Codex full-access sandbox?", false)],
     multiselect: [answer("Models that must be given a stopping point", ["claude:sonnet"], (options) => { expect((options.options as { value: string }[]).map(({ value }) => value)).toEqual(["claude:sonnet", "codex:sol"]); expect(options.initialValues).toEqual(["claude:sonnet"]); })],
   });
   await runInit({ section: "rules" }, deps);
@@ -261,7 +290,7 @@ test("rules handle blank and numeric cutoffs, validation, globs, floor, stopping
     concurrency: { maxRunning: 7, maxPerCaller: 4, maxDepth: 3 },
     quotaCutoffPercent: { codex: 60 },
     confidentialPathGlobs: ["**/secret/**", "*.key"],
-    confidentialExcludedProviders: ["openrouter", "google"],
+    confidentialExcludedModels: ["pi:openrouter/*", "pi:google/*"],
     confidenceFloor: 0.35,
     directModel: "allow",
     stoppingPointRequiredFor: ["claude:sonnet"],

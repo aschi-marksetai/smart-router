@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from "../src/config.ts";
@@ -30,9 +30,19 @@ test("does not restore removed default quota providers", async () => {
   const directory = await mkdtemp(join(tmpdir(), "smart-router-config-"));
   temporaryDirectories.push(directory);
   process.env[CONFIG_DIRECTORY_ENV] = directory;
-  await saveConfig({
-    ...DEFAULT_CONFIG,
-    quota: { enabled: true, providers: { codex: "codex" } },
-  });
-  expect((await loadConfig()).quota.providers).toEqual({ codex: "codex" });
+  await writeFile(
+    join(directory, "config.json"),
+    JSON.stringify({
+      quota: { enabled: true, providers: { codex: "codex" } },
+      rules: { confidentialExcludedProviders: ["openrouter"] },
+    }),
+  );
+  const migrated = await loadConfig();
+  expect(migrated.quota.providers).toEqual({ codex: "codex" });
+  expect(migrated.rules.confidentialExcludedModels).toEqual([
+    "pi:openrouter/*",
+  ]);
+  await saveConfig(migrated);
+  const saved = await Bun.file(join(directory, "config.json")).text();
+  expect(saved).not.toContain("confidentialExcludedProviders");
 });

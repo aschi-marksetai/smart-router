@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,9 @@ import {
   shouldUseClaudeBrowser,
   type JevClient,
   type RouteDeps,
+  OPENROUTER_SYSTEM_ONE_URL,
+  OPENROUTER_ZDR_URL,
+  routeQuestions,
 } from "../src/route.ts";
 
 const detection: DoctorResult = {
@@ -132,7 +135,7 @@ test("matches confidential path globs", async () => {
   );
   expect(
     "preferences" in result && result.candidates.map(({ id }) => id),
-  ).toEqual(["claude:opus", "codex:terra"]);
+  ).toEqual(["claude:opus", "codex:terra", "pi:openrouter/model"]);
 });
 
 test("applies quota and confidential rules", async () => {
@@ -143,23 +146,142 @@ test("applies quota and confidential rules", async () => {
       config: { ...config, rules: { quotaCutoffPercent: { claude: 85 } } },
     }),
   );
-  expect("candidates" in result && result.candidates).toEqual(["codex:terra"]);
+  expect("candidates" in result && result.candidates).toEqual([
+    "codex:terra",
+    "pi:openrouter/model",
+  ]);
 });
 
-test("uses configured confidential provider exclusions", async () => {
+test("matches configured confidential model patterns", async () => {
   const result = await route(
     "task",
     { confidential: true },
     deps({
       config: {
         ...config,
-        rules: { confidentialExcludedProviders: ["different-provider"] },
+        rules: { confidentialExcludedModels: ["codex:*", "pi:openrouter/*"] },
       },
     }),
   );
-  expect("candidates" in result && result.candidates).toContain(
-    "pi:openrouter/model",
+  expect("candidates" in result && result.candidates).toEqual(["claude:opus"]);
+});
+
+function candidateIds(result: Awaited<ReturnType<typeof route>>): string[] {
+  return "preferences" in result
+    ? result.candidates.map(({ id }) => id)
+    : result.candidates;
+}
+
+test("requires cached OpenRouter ZDR models for confidential routing", async () => {
+  const previousState = process.env.SMART_ROUTER_STATE_DIR;
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-zdr-"));
+  process.env.SMART_ROUTER_STATE_DIR = directory;
+  let calls = 0;
+  const mockFetch = Object.assign(
+    async () => {
+      calls++;
+      if (calls === 2) throw new Error("offline");
+      return new Response(JSON.stringify({ data: [{ model_id: "model" }] }));
+    },
+    { preconnect: () => {} },
   );
+  const globalFetch = spyOn(globalThis, "fetch").mockImplementation(mockFetch);
+  const zdrConfig = { ...config, rules: { confidentialRequireZdr: true } };
+  try {
+    const routeConfig = {
+      ...zdrConfig,
+      models: [
+        ...zdrConfig.models,
+        {
+          ...config.models[2],
+          id: "pi:openrouter/other",
+          model: "openrouter/other",
+        },
+      ],
+    };
+    const doctorWithExtra = async () => ({
+      ...detection,
+      candidates: [...detection.candidates, "pi:openrouter/other@medium"],
+    });
+    const routeDeps = deps({
+      config: routeConfig,
+      doctor: doctorWithExtra,
+    });
+    const options = { confidential: true, dryRun: true };
+    const kept = ["claude:opus", "codex:terra", "pi:openrouter/model"];
+    for (let attempt = 0; attempt < 2; attempt++)
+      expect(candidateIds(await route("task", options, routeDeps))).toEqual(
+        kept,
+      );
+    expect(calls).toBe(1);
+    expect(globalFetch.mock.calls[0][0]).toBe(OPENROUTER_ZDR_URL);
+    await rm(join(directory, "openrouter-zdr.json"));
+    const failed = await route("task", { confidential: true }, routeDeps);
+    expect(candidateIds(failed)).toEqual(["claude:opus", "codex:terra"]);
+    expect("reason" in failed && failed.reason).toContain(
+      "OpenRouter ZDR list unavailable",
+    );
+  } finally {
+    globalFetch.mockRestore();
+    if (previousState === undefined) delete process.env.SMART_ROUTER_STATE_DIR;
+    else process.env.SMART_ROUTER_STATE_DIR = previousState;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("OpenRouter Jev ZDR client sends the direct endpoint request", async () => {
+  let received:
+    { input: string | URL | Request; init?: RequestInit } | undefined;
+  const fixture =
+    '{"model":"typesafe/jev-1.13-20260917","answers":{"kind":{"type":"choice","choice":"animal","probabilities":{"animal":1,"vehicle":0},"confidence":1}},"usage":{"input_tokens":312,"output_tokens":31,"cost":0.000013104},"id":"gen-dec-1","provider":"TypeSafe"}';
+  const client = defaultRouteDeps(
+    {
+      ...config,
+      jev: {
+        ...config.jev,
+        provider: "openrouter",
+        apiKeyEnv: "OPENROUTER_API_KEY",
+        zdr: true,
+      },
+    },
+    async (input, init) => {
+      received = { input, init };
+      return new Response(fixture);
+    },
+  ).client;
+  process.env.OPENROUTER_API_KEY = "test-key";
+  try {
+    const request = {
+      state: {
+        preferences: "",
+        task: "task",
+        hint: null,
+        cwd: "/",
+        quota: null,
+        candidates: [],
+      },
+      model: "typesafe/jev-1.13-20260917",
+      questions: routeQuestions([]),
+    };
+    const response = await client.systemOne(request);
+    expect(received?.input).toBe(OPENROUTER_SYSTEM_ONE_URL);
+    expect(received?.init?.headers).toEqual({
+      Authorization: "Bearer test-key",
+      "Content-Type": "application/json",
+    });
+    const body = JSON.parse(String(received?.init?.body));
+    expect([
+      body.model,
+      body.state.task,
+      "questions" in body,
+      body.provider.zdr,
+    ]).toEqual(["typesafe/jev-1.13-20260917", "task", true, true]);
+    expect(JSON.stringify(response.answers)).toBe(
+      JSON.stringify(JSON.parse(fixture).answers),
+    );
+  } finally {
+    delete process.env.OPENROUTER_API_KEY;
+  }
 });
 
 test("falls back below the confidence floor", async () => {

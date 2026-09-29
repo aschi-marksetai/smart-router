@@ -2,7 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_CONFIG, type Config } from "../src/config.ts";
+import { DEFAULT_CONFIG, loadConfig, type Config } from "../src/config.ts";
 import type { DoctorResult } from "../src/doctor.ts";
 import {
   CODEX_DANGER_FULL_ACCESS_SANDBOX,
@@ -230,25 +230,26 @@ test("requires cached OpenRouter ZDR models for confidential routing", async () 
 });
 
 test("OpenRouter Jev ZDR client sends the direct endpoint request", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-route-"));
+  const previousConfigDirectory = process.env.SMART_ROUTER_CONFIG_DIR;
+  process.env.SMART_ROUTER_CONFIG_DIR = directory;
+  await writeFile(
+    join(directory, "config.json"),
+    JSON.stringify({
+      jev: { provider: "typesafe", apiKeyEnv: "TYPESAFE_API_KEY" },
+    }),
+  );
+  const loadedConfig = await loadConfig();
+  loadedConfig.jev.provider = "openrouter";
+  loadedConfig.jev.zdr = true;
   let received:
     { input: string | URL | Request; init?: RequestInit } | undefined;
   const fixture =
     '{"model":"typesafe/jev-1.13-20260917","answers":{"kind":{"type":"choice","choice":"animal","probabilities":{"animal":1,"vehicle":0},"confidence":1}},"usage":{"input_tokens":312,"output_tokens":31,"cost":0.000013104},"id":"gen-dec-1","provider":"TypeSafe"}';
-  const client = defaultRouteDeps(
-    {
-      ...config,
-      jev: {
-        ...config.jev,
-        provider: "openrouter",
-        apiKeyEnv: "OPENROUTER_API_KEY",
-        zdr: true,
-      },
-    },
-    async (input, init) => {
-      received = { input, init };
-      return new Response(fixture);
-    },
-  ).client;
+  const client = defaultRouteDeps(loadedConfig, async (input, init) => {
+    received = { input, init };
+    return new Response(fixture);
+  }).client;
   process.env.OPENROUTER_API_KEY = "test-key";
   try {
     const request = {
@@ -281,6 +282,10 @@ test("OpenRouter Jev ZDR client sends the direct endpoint request", async () => 
     );
   } finally {
     delete process.env.OPENROUTER_API_KEY;
+    if (previousConfigDirectory === undefined)
+      delete process.env.SMART_ROUTER_CONFIG_DIR;
+    else process.env.SMART_ROUTER_CONFIG_DIR = previousConfigDirectory;
+    await rm(directory, { recursive: true });
   }
 });
 

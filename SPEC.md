@@ -87,11 +87,12 @@ A CLI that picks which coding-agent harness and model should run a task, spawns 
     "allowFullAccess": true,
   },
   // prettier-ignore
-  "jev": { "model": "jev-latest", "apiKeyEnv": "TYPESAFE_API_KEY", "provider": "typesafe", "zdr": false },
+  "jev": { "model": "jev-latest", "provider": "typesafe", "zdr": false },
 }
 ```
 
 Model `id` is always `harness:model`. A candidate is `harness:model@effort`.
+Jev uses `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` according to `jev.provider`; optional `jev.apiKeyEnv` overrides that default.
 Absent capability notes default to Claude's browser and local tools, Codex CLI web fetch and search without browser or screenshots, and pi without browser.
 
 Env vars are read from the process environment; the CLI also loads `.env` from the config directory and then from the current directory if present (dotenv-style parse, stdlib; existing variables are never overridden). `init` writes the TypeSafe key to the config directory's `.env` when it is missing.

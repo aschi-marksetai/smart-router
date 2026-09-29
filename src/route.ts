@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk";
 import {
   DEFAULT_HARNESS_CAPABILITIES,
+  jevApiKeyEnv,
   type Config,
   type HarnessName,
 } from "./config.ts";
@@ -212,7 +213,7 @@ export function defaultRouteDeps(
         const response = await fetch(OPENROUTER_SYSTEM_ONE_URL, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${process.env[config.jev.apiKeyEnv] ?? ""}`,
+            Authorization: `Bearer ${process.env[jevApiKeyEnv(config)] ?? ""}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -234,7 +235,7 @@ export function defaultRouteDeps(
         return payload as JevResponse;
       }
       const client = new TypeSafeClient({
-        apiKey: process.env[config.jev.apiKeyEnv],
+        apiKey: process.env[jevApiKeyEnv(config)],
         ...(config.jev.provider === "openrouter"
           ? { baseURL: OPENROUTER_API_BASE_URL }
           : {}),

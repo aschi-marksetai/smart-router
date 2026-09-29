@@ -31,7 +31,9 @@ import {
   DEFAULT_MAX_PER_CALLER,
   DEFAULT_MAX_RUNNING,
   harnessBinary,
+  jevApiKeyEnv,
   loadConfig,
+  OPENROUTER_API_KEY_ENV,
   type Config,
   type HarnessName,
   saveConfig,
@@ -68,12 +70,10 @@ const PROVIDER_NAMES = [
 const PROVIDER_ENVIRONMENT_VARIABLES: Record<string, string> = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
-  openrouter: "OPENROUTER_API_KEY",
+  openrouter: OPENROUTER_API_KEY_ENV,
   google: "GOOGLE_API_KEY",
 };
 const TYPESAFE_KEYS_URL = "https://console.typesafe.ai/keys";
-const TYPESAFE_KEY_ENV = "TYPESAFE_API_KEY";
-const OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY";
 
 type InitSection = "auth" | "models" | "rules" | "preferences";
 type PreferencesEditMethod = "editor" | "claude" | "codex" | "skip";
@@ -643,11 +643,7 @@ export async function runInit(
     }),
     deps,
   );
-  const keyEnvironmentVariable =
-    config.jev.provider === "openrouter"
-      ? OPENROUTER_KEY_ENV
-      : TYPESAFE_KEY_ENV;
-  config.jev.apiKeyEnv = keyEnvironmentVariable;
+  const keyEnvironmentVariable = jevApiKeyEnv(config);
   if (!deps.env[keyEnvironmentVariable]) {
     const apiKey = await prompt(
       deps.prompts.password({

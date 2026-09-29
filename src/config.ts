@@ -8,7 +8,8 @@ export const DEFAULT_EFFORT = "medium";
 export const DEFAULT_CLAUDE_PERMISSION_MODE = "bypassPermissions";
 export const DEFAULT_CODEX_SANDBOX = "workspace-write";
 export const DEFAULT_JEV_MODEL = "jev-latest";
-export const DEFAULT_JEV_API_KEY_ENV = "TYPESAFE_API_KEY";
+export const TYPESAFE_API_KEY_ENV = "TYPESAFE_API_KEY";
+export const OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
 export const DEFAULT_CONFIDENTIAL_EXCLUDED_MODELS: string[] = [];
 export const DEFAULT_MAX_RUNNING = 6;
 export const DEFAULT_MAX_PER_CALLER = 3;
@@ -76,7 +77,7 @@ export type Config = {
   };
   jev: {
     model: string;
-    apiKeyEnv: string;
+    apiKeyEnv?: string;
     provider: "typesafe" | "openrouter";
     zdr: boolean;
   };
@@ -110,7 +111,6 @@ export const DEFAULT_CONFIG: Config = {
   },
   jev: {
     model: DEFAULT_JEV_MODEL,
-    apiKeyEnv: DEFAULT_JEV_API_KEY_ENV,
     provider: "typesafe",
     zdr: false,
   },
@@ -120,6 +120,12 @@ export const DEFAULT_CONFIG: Config = {
 
 export function configPath(): string {
   return join(configDir(), CONFIG_FILE_NAME);
+}
+
+export function jevApiKeyEnv(config: Config): string {
+  if (config.jev.apiKeyEnv) return config.jev.apiKeyEnv;
+  if (config.jev.provider === "openrouter") return OPENROUTER_API_KEY_ENV;
+  return TYPESAFE_API_KEY_ENV;
 }
 
 export async function loadConfig(): Promise<Config> {
@@ -137,6 +143,12 @@ export async function loadConfig(): Promise<Config> {
       confidentialExcludedModels,
     };
     delete rules.confidentialExcludedProviders;
+    const jev = { ...DEFAULT_CONFIG.jev, ...saved.jev };
+    if (
+      jev.apiKeyEnv === TYPESAFE_API_KEY_ENV ||
+      jev.apiKeyEnv === OPENROUTER_API_KEY_ENV
+    )
+      delete jev.apiKeyEnv;
     return {
       ...DEFAULT_CONFIG,
       ...saved,
@@ -149,7 +161,7 @@ export async function loadConfig(): Promise<Config> {
         },
       },
       updates: { ...DEFAULT_CONFIG.updates, ...saved.updates },
-      jev: { ...DEFAULT_CONFIG.jev, ...saved.jev },
+      jev,
       spawn: { ...DEFAULT_CONFIG.spawn, ...saved.spawn },
       quota: {
         ...DEFAULT_CONFIG.quota,

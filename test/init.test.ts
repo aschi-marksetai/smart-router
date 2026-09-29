@@ -177,9 +177,9 @@ test("selects OpenRouter Jev, prompts for its key, and confirms routing ZDR", as
   const saved = await loadConfig();
   expect(saved.jev).toMatchObject({
     provider: "openrouter",
-    apiKeyEnv: "OPENROUTER_API_KEY",
     zdr: true,
   });
+  expect(saved.jev.apiKeyEnv).toBeUndefined();
   expect(await readFile(join(directory, ".env"), "utf8")).toBe(
     "OPENROUTER_API_KEY=router-key",
   );

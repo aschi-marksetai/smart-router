@@ -16,6 +16,7 @@ import { steerSupervisedSession, superviseSession } from "../src/supervisor.ts";
 const STATE_DIRECTORY_ENV = "SMART_ROUTER_STATE_DIR";
 const WAIT_PROMPT = "wait for steer";
 const SOCKET_POLL_INTERVAL_MS = 10;
+const CLOSED_INPUT_SETTLE_MS = 150;
 const FAKE_CLAUDE = `#!/usr/bin/env bun
 const emit = (event) => console.log(JSON.stringify(event));
 for await (const line of console) {
@@ -95,6 +96,25 @@ test("supervisor delivers the prompt and an interrupting steer, then closes stdi
   await expect(
     steerSupervisedSession(handle, { message: "late", interrupt: false }),
   ).rejects.toThrow();
+});
+
+test("supervisor survives claude closing its input before a steer arrives", async () => {
+  const { handle } = await supervisedSession();
+  const directory = process.env[STATE_DIRECTORY_ENV] ?? "";
+  const closedInputClaude = join(directory, "closed-input-claude");
+  await writeFile(closedInputClaude, "#!/bin/sh\nexec 0<&-\nsleep 0.5\n");
+  await chmod(closedInputClaude, 0o755);
+  const supervising = superviseSession(handle, WAIT_PROMPT, [
+    closedInputClaude,
+  ]);
+  await socketReady(handle);
+  await Bun.sleep(CLOSED_INPUT_SETTLE_MS);
+  await steerSupervisedSession(handle, {
+    message: "too late",
+    interrupt: false,
+  }).catch(() => undefined);
+  expect(typeof (await supervising)).toBe("number");
+  expect(existsSync(sessionSocketPath(handle))).toBe(false);
 });
 
 test("the hidden supervise command forwards stop to claude and removes its socket", async () => {

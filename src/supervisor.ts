@@ -66,9 +66,11 @@ export async function superviseSession(
   });
   let pendingMessages = 0;
   let stdinClosed = false;
-  claude.stdin.on("error", () => {
+  const markStdinClosed = () => {
     stdinClosed = true;
-  });
+  };
+  claude.stdin.on("error", markStdinClosed);
+  claude.once("exit", markStdinClosed);
   const writeUserMessage = (text: string) => {
     claude.stdin.write(streamUserMessage(text));
     pendingMessages += 1;

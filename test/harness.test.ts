@@ -263,3 +263,34 @@ test("builds Pi commands and parses assistant messages", () => {
     ).result,
   ).toBe("Pi reply");
 });
+
+test("builds stream-json Claude spawns and parses the stream-json log", () => {
+  const spawned = claude.buildSpawn("write code", {
+    cwd: "/project",
+    model: "haiku",
+    streamInput: true,
+  });
+  expect(spawned.argv.slice(0, 8)).toEqual([
+    "claude",
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--replay-user-messages",
+  ]);
+  expect(spawned.argv).not.toContain("write code");
+  const streamLog = [
+    '{"type":"system","subtype":"init","session_id":"stream-session"}',
+    '{"type":"user","message":{"role":"user","content":"count"},"isReplay":true}',
+    '{"type":"result","subtype":"error_during_execution","session_id":"stream-session"}',
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"steered"}]}}',
+    '{"type":"result","subtype":"success","result":"steered","session_id":"stream-session","usage":{"input_tokens":4,"output_tokens":1},"total_cost_usd":0.002}',
+  ].join("\n");
+  expect(claude.parseSpawnOutput(streamLog)).toEqual({
+    sessionId: "stream-session",
+    result: "steered",
+    usage: { inputTokens: 4, outputTokens: 1, costUsd: 0.002 },
+  });
+});

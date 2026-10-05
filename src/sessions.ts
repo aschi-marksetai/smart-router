@@ -25,6 +25,7 @@ const PROMPT_PREVIEW_LENGTH = 160;
 const SESSION_FILE_SUFFIX = ".json";
 const LOG_FILE_SUFFIX = ".log";
 const ERR_FILE_SUFFIX = ".err";
+const SOCKET_FILE_SUFFIX = ".sock";
 const STDERR_LINE_LIMIT = 20;
 const OWNER_ENVIRONMENT_VARIABLE = "SMART_ROUTER_OWNER";
 const CLAUDE_SESSION_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_SESSION_ID";
@@ -65,6 +66,7 @@ export type Session = {
   promptPreview: string;
   status: SessionStatus;
   pid?: number;
+  supervisorPid?: number;
   processStartTime?: string;
   depth?: number;
   logPath?: string;
@@ -97,6 +99,10 @@ export function sessionLogPath(handle: string): string {
 
 export function sessionErrPath(handle: string): string {
   return join(sessionsDir(), `${handle}${ERR_FILE_SUFFIX}`);
+}
+
+export function sessionSocketPath(handle: string): string {
+  return join(sessionsDir(), `${handle}${SOCKET_FILE_SUFFIX}`);
 }
 
 export function sessionOwner(): string {
@@ -179,9 +185,12 @@ export async function listSessions(owner?: string): Promise<Session[]> {
 export async function removeSession(handle: string): Promise<void> {
   await loadSession(handle);
   await Promise.all(
-    [sessionPath(handle), sessionLogPath(handle), sessionErrPath(handle)].map(
-      (path) => rm(path, { force: true }),
-    ),
+    [
+      sessionPath(handle),
+      sessionLogPath(handle),
+      sessionErrPath(handle),
+      sessionSocketPath(handle),
+    ].map((path) => rm(path, { force: true })),
   );
 }
 

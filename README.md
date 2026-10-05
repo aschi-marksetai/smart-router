@@ -23,15 +23,16 @@ smart-router spawn "implement the feature" --cwd "$PWD"
 smart-router send <handle> "run the tests and fix failures"
 ```
 
-| Command                   | Purpose                                             |
-| ------------------------- | --------------------------------------------------- |
-| `init`                    | Configure harnesses, models, rules, and preferences |
-| `install-skill`           | Install the Claude Code skill                       |
-| `doctor`                  | Show installed harnesses and candidates             |
-| `route <prompt>`          | Preview a routing decision                          |
-| `spawn <prompt>`          | Delegate a task                                     |
-| `send <handle> <message>` | Continue a session                                  |
-| `quota`                   | Show subscription quota                             |
+| Command                    | Purpose                                                                      |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| `init`                     | Configure harnesses, models, rules, and preferences                          |
+| `install-skill`            | Install the Claude Code skill                                                |
+| `doctor`                   | Show installed harnesses and candidates                                      |
+| `route <prompt>`           | Preview a routing decision                                                   |
+| `spawn <prompt>`           | Delegate a task                                                              |
+| `send <handle> <message>`  | Continue a session                                                           |
+| `steer <handle> <message>` | Redirect a running detached session (`--interrupt` to stop the current turn) |
+| `quota`                    | Show subscription quota                                                      |
 
 Config lives in `~/.config/smart-router` (override with `SMART_ROUTER_CONFIG_DIR`); sessions live in `~/.local/state/smart-router`. Jev can route through OpenRouter by setting `jev.provider` to `openrouter` and `jev.apiKeyEnv` to `OPENROUTER_API_KEY`. Set `jev.zdr` to require zero data retention for Jev routing calls.
 

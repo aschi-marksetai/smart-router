@@ -10,6 +10,7 @@ export type HarnessOptions = {
   allowedTools?: string;
   schema?: { path: string; content: string };
   binary?: string;
+  streamInput?: boolean;
 };
 
 export type Usage = {

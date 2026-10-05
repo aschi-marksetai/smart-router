@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DEFAULT_CLAUDE_PERMISSION_MODE } from "../config.ts";
 import { stateDir } from "../paths.ts";
 import {
+  parseJsonLines,
   record,
   usageFrom,
   type HarnessOptions,
@@ -15,6 +16,15 @@ const CLAUDE_BINARY = "claude";
 const PRINT_FLAG = "-p";
 const JSON_OUTPUT_FLAG = "--output-format";
 const JSON_OUTPUT_FORMAT = "json";
+const INPUT_FORMAT_FLAG = "--input-format";
+const STREAM_JSON_FORMAT = "stream-json";
+const VERBOSE_FLAG = "--verbose";
+const REPLAY_USER_MESSAGES_FLAG = "--replay-user-messages";
+const RESULT_EVENT_TYPE = "result";
+const USER_EVENT_TYPE = "user";
+const USER_ROLE = "user";
+const CONTROL_REQUEST_TYPE = "control_request";
+const INTERRUPT_SUBTYPE = "interrupt";
 const MODEL_FLAG = "--model";
 const SESSION_ID_FLAG = "--session-id";
 const PERMISSION_MODE_FLAG = "--permission-mode";
@@ -65,12 +75,20 @@ export function buildSpawn(
   options: HarnessOptions,
 ): SpawnCommand {
   const sessionId = randomUUID();
+  const outputArguments = options.streamInput
+    ? [
+        INPUT_FORMAT_FLAG,
+        STREAM_JSON_FORMAT,
+        JSON_OUTPUT_FLAG,
+        STREAM_JSON_FORMAT,
+        VERBOSE_FLAG,
+        REPLAY_USER_MESSAGES_FLAG,
+      ]
+    : [prompt, JSON_OUTPUT_FLAG, JSON_OUTPUT_FORMAT];
   const argv = [
     options.binary ?? CLAUDE_BINARY,
     PRINT_FLAG,
-    prompt,
-    JSON_OUTPUT_FLAG,
-    JSON_OUTPUT_FORMAT,
+    ...outputArguments,
     MODEL_FLAG,
     options.model,
     SESSION_ID_FLAG,
@@ -93,8 +111,35 @@ export function buildSpawn(
   return { argv, sessionId };
 }
 
+export function isResultEvent(event: unknown): boolean {
+  return record(event)?.type === RESULT_EVENT_TYPE;
+}
+
+export function isReplayedUserMessage(event: unknown): boolean {
+  const eventRecord = record(event);
+  return eventRecord?.type === USER_EVENT_TYPE && eventRecord.isReplay === true;
+}
+
+export function streamUserMessage(text: string): string {
+  return `${JSON.stringify({
+    type: USER_EVENT_TYPE,
+    message: { role: USER_ROLE, content: text },
+    parent_tool_use_id: null,
+  })}\n`;
+}
+
+export function streamInterruptRequest(): string {
+  return `${JSON.stringify({
+    type: CONTROL_REQUEST_TYPE,
+    request_id: randomUUID(),
+    request: { subtype: INTERRUPT_SUBTYPE },
+  })}\n`;
+}
+
 export function parseSpawnOutput(stdout: string): ParsedOutput {
-  const output = record(JSON.parse(stdout));
+  const output = record(
+    parseJsonLines(stdout).findLast(isResultEvent) ?? JSON.parse(stdout),
+  );
   const result = output?.result;
   const sessionId = output?.session_id;
   const costUsd = output?.total_cost_usd;

@@ -15,6 +15,7 @@ import {
 } from "./config.ts";
 import { doctor } from "./doctor.ts";
 import { loadDotEnv } from "./env.ts";
+import * as codex from "./harness/codex.ts";
 import { getAdapter } from "./harness/index.ts";
 import type { HarnessOptions } from "./harness/types.ts";
 import { runInit } from "./init.ts";
@@ -32,6 +33,13 @@ import {
   type RouteOptions,
 } from "./route.ts";
 import { runDetached, runForeground } from "./runner.ts";
+import {
+  notRunningError,
+  steerSupervisedSession,
+  SUPERVISE_COMMAND,
+  superviseSession,
+  supervisorCommand,
+} from "./supervisor.ts";
 import {
   addUsage,
   createSessionHandle,
@@ -398,7 +406,11 @@ async function spawnCommand(
       ? [CODEX_NETWORK_ACCESS_OVERRIDE]
       : undefined,
   });
-  const command = adapter.buildSpawn(spawnPrompt, harnessOptions);
+  const supervised = Boolean(options.detach) && selected.harness === "claude";
+  const command = adapter.buildSpawn(spawnPrompt, {
+    ...harnessOptions,
+    streamInput: supervised,
+  });
   const handle = createSessionHandle();
   const logPath = options.detach ? sessionLogPath(handle) : undefined;
   const reservation = await reserveSpawnSession(
@@ -432,14 +444,18 @@ async function spawnCommand(
   };
   if (options.detach) {
     const detachedLogPath = session.logPath ?? sessionLogPath(handle);
+    const detachedArgv = supervised
+      ? supervisorCommand(handle, spawnPrompt, command.argv)
+      : command.argv;
     try {
       const detached = await deps.runDetached(
-        command.argv,
+        detachedArgv,
         cwd,
         detachedLogPath,
         environment,
       );
       session.pid = detached.pid;
+      if (supervised) session.supervisorPid = detached.pid;
       session.processStartTime = processStartTime(detached.pid);
       session.errPath = detached.errPath;
       await saveSession(session);
@@ -600,6 +616,55 @@ async function sendCommand(
     },
     "Message sent",
   );
+}
+
+async function steerCommand(
+  handle: string,
+  message: string,
+  options: { interrupt?: boolean },
+  deps: CliDeps,
+): Promise<void> {
+  const session = await refreshSession(handle);
+  if (!session.pid)
+    throw new Error(
+      `session ${handle} ran in the foreground; steer works only on detached spawns`,
+    );
+  if (session.status !== SESSION_STATUS.running)
+    throw new Error(notRunningError(handle));
+  const interrupted = Boolean(options.interrupt);
+  if (session.harness === "codex")
+    return steerCodexSession(session, message, deps);
+  if (!session.supervisorPid)
+    throw new Error(
+      `session ${handle} cannot be steered; only detached codex sessions and claude sessions started under the supervisor support steer`,
+    );
+  await steerSupervisedSession(handle, { message, interrupt: interrupted });
+  return printResult(
+    deps,
+    { handle, steered: true, interrupted },
+    "Session steered",
+  );
+}
+
+// codex exec only reads a queued message after its current turn ends, so a
+// mid-run steer is always an interrupt: stop the run, then resume with the message.
+async function steerCodexSession(
+  session: Session,
+  message: string,
+  deps: CliDeps,
+): Promise<void> {
+  const log = await readFile(
+    session.logPath ?? sessionLogPath(session.handle),
+    "utf8",
+  );
+  const threadId = codex.parseResumeOutput(log).sessionId;
+  if (!threadId)
+    throw new Error(
+      `session ${session.handle} has not started a codex thread yet; retry shortly`,
+    );
+  session.sessionId = threadId;
+  await stopSession(session);
+  return sendCommand(session.handle, message, {}, deps);
 }
 
 async function harnessOptionsFor(
@@ -883,6 +948,19 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .option(RESULT_LIMIT_OPTION)
     .action((handle, message, options) =>
       sendCommand(handle, message, options, deps),
+    );
+  program
+    .command("steer <handle> <message>")
+    .option("--interrupt")
+    .action((handle, message, options) =>
+      steerCommand(handle, message, options, deps),
+    );
+  program
+    .command(`${SUPERVISE_COMMAND} <handle> <prompt> <argv...>`, {
+      hidden: true,
+    })
+    .action(async (handle, prompt, argv) =>
+      deps.exit(await superviseSession(handle, prompt, argv)),
     );
   program
     .command("status <handle>")

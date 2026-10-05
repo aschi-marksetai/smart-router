@@ -517,3 +517,68 @@ test("--version exits 0 without an error payload", async () => {
   expect(result.exitCode).toBe(0);
   expect(result.json).toBeUndefined();
 });
+
+const RESUME_PREFIX = ["codex", "exec", "resume", "codex-thread"];
+
+async function runningCodexSession(pid: number) {
+  const logPath = join(directory, "codex.log");
+  await writeFile(logPath, CODEX_OUTPUT.split("\n")[0]);
+  // prettier-ignore
+  return createSession({ harness: "codex", model: "terra", effort: "high", cwd: directory, prompt: "count", status: SESSION_STATUS.running, pid, logPath });
+}
+
+test("steer on codex always interrupts: stops the session, then resumes it with send", async () => {
+  const child = Bun.spawn(["sleep", "30"]);
+  const { handle } = await runningCodexSession(child.pid);
+  runnerOutput = CODEX_OUTPUT;
+  // prettier-ignore
+  expectJson(await cli(["steer", handle, "go"]), { handle, result: "codex done" });
+  expect(await child.exited).not.toBe(0);
+  expect((await loadSession(handle)).status).toBe("stopped");
+  expect(runnerArguments[0].slice(0, 4)).toEqual(RESUME_PREFIX);
+  expect(runnerArguments[0].at(-1)).toBe("go");
+});
+
+test("send resumes a stopped codex session", async () => {
+  // prettier-ignore
+  const { handle } = await createSession({ harness: "codex", model: "terra", effort: "high", cwd: directory, sessionId: "codex-thread", prompt: "count", status: SESSION_STATUS.stopped });
+  runnerOutput = CODEX_OUTPUT;
+  expectJson(await cli(["send", handle, "go"]), { result: "codex done" });
+  expect(runnerArguments[0].slice(0, 4)).toEqual(RESUME_PREFIX);
+});
+
+test("steer refuses foreground, finished, unsupervised, and threadless sessions", async () => {
+  // prettier-ignore
+  const options = { harness: "claude" as const, model: "opus", effort: "high", cwd: directory, prompt: "task", status: SESSION_STATUS.running };
+  const emptyLogPath = join(directory, "empty.log");
+  await writeFile(emptyLogPath, "");
+  // prettier-ignore
+  const refusals: [{ handle: string }, string][] = [
+    [await createSession(options), "ran in the foreground; steer works only on detached spawns"],
+    [await createSession({ ...options, status: SESSION_STATUS.done, pid: process.pid }), "is not running; use send"],
+    [await createSession({ ...options, pid: process.pid }), "cannot be steered"],
+    [await createSession({ ...options, harness: "codex", pid: process.pid, logPath: emptyLogPath }), "has not started a codex thread"],
+  ];
+  for (const [{ handle }, error] of refusals)
+    // prettier-ignore
+    expectJson(await cli(["steer", handle, "go"]), { error: expect.stringContaining(`session ${handle} ${error}`) }, 1);
+});
+
+test("detached claude spawns run under the supervisor", async () => {
+  let detachedArgv: string[] = [];
+  // prettier-ignore
+  const { json } = await cli(["spawn", "count", "--model", "claude:opus", "--detach", "--no-guardrails"], {
+    runDetached: async (argv, _cwd, logPath) => {
+      detachedArgv = argv;
+      return { pid: DETACHED_PID, errPath: logPath.replace(/\.log$/, ".err") };
+    },
+  });
+  expect(detachedArgv.slice(2, 6)).toEqual([
+    "__supervise",
+    "--",
+    json.handle,
+    "count",
+  ]);
+  expect(detachedArgv).toContain("--input-format");
+  expect((await loadSession(json.handle)).supervisorPid).toBe(DETACHED_PID);
+});

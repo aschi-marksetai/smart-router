@@ -245,6 +245,23 @@ One module per harness, all exposing `spawn(prompt, opts) → { sessionId, resul
 
 Session file: `{ handle, owner, depth?, parentHandle?, harness, model, effort, cwd, sessionId, createdAt, promptPreview, status, browser?, sandbox?, usesNetworkAccess?, pid?, supervisorPid?, processStartTime?, wrapperPid?, wrapperProcessStartTime?, logPath?, result?, lastResult?, error?, lastMessage?, lastAction?, usage? }`. `status` is `running`, `done`, `failed` or `stopped`; handle = 6 lowercase alphanumerics.
 
+## Event stream
+
+`spawn --events` and `send --events` replace final JSON stdout with JSONL; the routing stderr line and exit codes stay unchanged. Each line has `{ v: 1, type, handle, harness, ts }`, where `harness` is `claude|codex|pi` and `ts` is an ISO timestamp. The exact additional fields by type are:
+
+| type              | Fields                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| `session.started` | `{ model: string, effort: string, sessionId?: string }`                                 |
+| `text.delta`      | `{ text: string }`                                                                      |
+| `message`         | `{ role: "assistant", text: string }`                                                   |
+| `tool.started`    | `{ toolId: string, name: string, input: string }`                                       |
+| `tool.finished`   | `{ toolId: string, name: string, exitCode?: number, isError: boolean, output: string }` |
+| `usage`           | `{ inputTokens: number, outputTokens: number, costUsd: number                           | null }` |
+| `result`          | `{ text: string, usage: { inputTokens: number, outputTokens: number, costUsd: number    | null }  | null }` |
+| `error`           | `{ message: string, lastAction?: string }`                                              |
+
+Tool input is a command string or serialized JSON; input and output are truncated to `EVENT_TEXT_LIMIT` (2000 characters). Messages are complete assistant messages; deltas appear only when provided by the harness. Type strings are defined in `EVENT_TYPE`. Each adapter exports pure `translateEvents(rawLineOrEvent, state) → NormalizedEvent[]`; state supplies session metadata, timestamp, last assistant text and tool names. Unknown or malformed events are dropped. Claude maps init, assistant text/tool_use, user tool_result, stream text deltas and result; Codex maps thread.started, item.started/item.completed agent_message, command_execution, mcp_tool_call and file_change, turn.completed usage, turn.failed and error; pi maps the session, assistant content and usage already parsed by its adapter. Foreground Claude uses `--output-format stream-json --verbose` for events and retains JSON otherwise. Raw logs and final session bookkeeping (including cumulative usage and lastResult) remain unchanged. Foreground streams end with exactly one result or error after bookkeeping. `spawn --detach --events` starts a detached delegate and follows its log until completion. `logs <handle> --follow --events` reads the raw log from the start, or `--tail N` raw lines, and normalizes new lines as they arrive. It polls every `LOG_FOLLOW_INTERVAL_MS` (100 ms), tolerates a log that does not yet exist, and emits one terminal event after the session reaches terminal status. Without `--events`, `--follow` prints raw lines. A stopped or failed session supplies an error even if the harness never wrote one.
+
 ## Model enumeration (`src/enumerate.ts`)
 
 `enumerate(harness, config) → Array<{ id, model, name, efforts }>`:

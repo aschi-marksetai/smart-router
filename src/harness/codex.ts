@@ -1,3 +1,4 @@
+export { translateEvents } from "../events.ts";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_CODEX_SANDBOX } from "../config.ts";
@@ -166,3 +167,9 @@ export function buildResume(
 export function parseResumeOutput(stdout: string): ParsedOutput {
   return parseOutput(stdout, false);
 }
+
+const TOOL_ITEM_TYPES = new Set([
+  "command_execution",
+  "mcp_tool_call",
+  "file_change",
+]);

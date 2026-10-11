@@ -39,6 +39,7 @@ export async function runForeground(
   env: NodeJS.ProcessEnv = process.env,
   session?: Session,
   exit: (code: number) => void = process.exit,
+  onLine?: (line: string) => void,
 ): Promise<string> {
   const logFile = session
     ? openSync(session.logPath ?? sessionLogPath(session.handle), "a")
@@ -52,12 +53,17 @@ export async function runForeground(
     detached: true,
     stdio: [IGNORE, "pipe", "pipe"],
   });
+  let pendingLine = "";
   let stdout = "";
   let stderr = "";
   child.stdout?.setEncoding("utf8");
   child.stderr?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {
     stdout += chunk;
+    pendingLine += chunk;
+    const lines = pendingLine.split("\n");
+    pendingLine = lines.pop() ?? "";
+    for (const line of lines) onLine?.(line);
     if (logFile !== undefined) writeSync(logFile, chunk);
   });
   child.stderr?.on("data", (chunk: string) => {
@@ -89,6 +95,7 @@ export async function runForeground(
     await registration;
     exitCode = await completion;
     await stopping;
+    if (pendingLine) onLine?.(pendingLine);
   } finally {
     for (const { signal, handler } of handlers) process.off(signal, handler);
     if (logFile !== undefined) closeSync(logFile);

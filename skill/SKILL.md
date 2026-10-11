@@ -32,6 +32,8 @@ Optional flags:
 - `--no-guardrails` skips the appended operating rules when the prompt already carries its own.
 - `--result-limit <chars>` bounds returned result text while retaining the full result in the session.
 
+Use `spawn --events` or `send --events` for normalized JSONL progress ending in one result or error event. Use `logs <handle> --follow --events` to follow normalized progress from a detached session, optionally starting with `--tail N` raw lines.
+
 ## Continue
 
 ```sh

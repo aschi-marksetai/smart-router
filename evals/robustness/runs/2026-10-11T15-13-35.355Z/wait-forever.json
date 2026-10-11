@@ -247,11 +247,7 @@
   },
   "cleanup": [
     {
-      "argv": [
-        "smart-router",
-        "stop",
-        "50534b"
-      ],
+      "argv": ["smart-router", "stop", "50534b"],
       "pid": 1278,
       "exitCode": 0,
       "signal": null,

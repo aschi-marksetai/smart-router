@@ -1,3 +1,4 @@
+export { translateEvents } from "../events.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { DEFAULT_EFFORT } from "../config.ts";

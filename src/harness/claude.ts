@@ -1,3 +1,4 @@
+export { translateEvents } from "../events.ts";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -84,7 +85,13 @@ export function buildSpawn(
         VERBOSE_FLAG,
         REPLAY_USER_MESSAGES_FLAG,
       ]
-    : [prompt, JSON_OUTPUT_FLAG, JSON_OUTPUT_FORMAT];
+    : [
+        prompt,
+        JSON_OUTPUT_FLAG,
+        options.events ? STREAM_JSON_FORMAT : JSON_OUTPUT_FORMAT,
+      ];
+  if (options.events && !options.streamInput)
+    outputArguments.push(VERBOSE_FLAG);
   const argv = [
     options.binary ?? CLAUDE_BINARY,
     PRINT_FLAG,
@@ -174,10 +181,11 @@ export function buildResume(
     sessionId,
     message,
     JSON_OUTPUT_FLAG,
-    JSON_OUTPUT_FORMAT,
+    options.events ? STREAM_JSON_FORMAT : JSON_OUTPUT_FORMAT,
     PERMISSION_MODE_FLAG,
     options.claudePermissionMode ?? DEFAULT_CLAUDE_PERMISSION_MODE,
   ];
+  if (options.events) argv.push(VERBOSE_FLAG);
   if (options.browser)
     argv.push(
       CHROME_FLAG,

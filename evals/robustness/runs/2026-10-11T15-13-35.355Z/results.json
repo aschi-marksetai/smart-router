@@ -1365,11 +1365,7 @@
       "intervention": true,
       "actions": [
         {
-          "argv": [
-            "smart-router",
-            "stop",
-            "aa147a"
-          ],
+          "argv": ["smart-router", "stop", "aa147a"],
           "pid": 82034,
           "exitCode": 0,
           "signal": null,
@@ -2351,11 +2347,7 @@
       },
       "cleanup": [
         {
-          "argv": [
-            "smart-router",
-            "stop",
-            "50534b"
-          ],
+          "argv": ["smart-router", "stop", "50534b"],
           "pid": 1278,
           "exitCode": 0,
           "signal": null,

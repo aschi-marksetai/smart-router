@@ -739,3 +739,53 @@ test("detached claude spawns run under the supervisor", async () => {
   expect(detachedArgv).toContain("--input-format");
   expect((await loadSession(json.handle)).supervisorPid).toBe(DETACHED_PID);
 });
+
+const eventTypes = (stdout: string) =>
+  stdout
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line).type);
+const orderedEvents =
+  "session.started tool.started tool.finished message usage result".split(" ");
+const eventFixture = (harness: string) =>
+  Bun.file(`${import.meta.dir}/fixtures/events/${harness}.jsonl`).text();
+test("spawn --events streams ordered events and one terminal event", async () => {
+  const raw = await eventFixture("claude");
+  const result = await cli(
+    ["spawn", "list then done", "--model", "claude:opus", "--events"],
+    {
+      runForeground: async (_argv, _cwd, _env, _session, _exit, onLine) => {
+        for (const line of raw.trim().split("\n")) onLine?.(line);
+        return raw;
+      },
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr).toContain("Routed to claude:opus");
+  expect(eventTypes(result.stdout)).toEqual(orderedEvents);
+});
+test("logs --follow --events waits for an appended log and completion", async () => {
+  const session = await createSession({
+    harness: "codex",
+    model: "terra",
+    effort: "high",
+    cwd: directory,
+    prompt: "work",
+    status: "running",
+  });
+  const raw = await eventFixture("codex");
+  const following = cli(["logs", session.handle, "--follow", "--events"]);
+  await Bun.sleep(150);
+  await writeFile(
+    sessionLogPath(session.handle),
+    raw.split("\n").slice(0, 3).join("\n") + "\n",
+  );
+  await Bun.sleep(150);
+  await writeFile(sessionLogPath(session.handle), raw);
+  session.status = "done";
+  session.result = "done";
+  await saveSession(session);
+  const result = await following;
+  expect(result.exitCode).toBe(0);
+  expect(eventTypes(result.stdout)).toEqual(orderedEvents);
+});

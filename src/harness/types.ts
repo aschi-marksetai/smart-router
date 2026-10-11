@@ -11,6 +11,7 @@ export type HarnessOptions = {
   schema?: { path: string; content: string };
   binary?: string;
   streamInput?: boolean;
+  events?: boolean;
 };
 
 export type Usage = {

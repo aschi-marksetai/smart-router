@@ -1,4 +1,10 @@
 #!/usr/bin/env bun
+import {
+  EVENT_TYPE,
+  LOG_FOLLOW_INTERVAL_MS,
+  normalized,
+  type EventState,
+} from "./events.ts";
 import { Command, CommanderError } from "commander";
 import { readFile } from "node:fs/promises";
 import { version } from "./assets.ts";
@@ -84,8 +90,10 @@ type SpawnOptions = RouteOptions & {
   schema?: string;
   resultLimit?: string;
   waitForSlot?: string;
+  events?: boolean;
 };
 type PassthroughOptions = {
+  events?: boolean;
   permissionMode?: string;
   browser?: boolean;
   sandbox?: string;
@@ -337,12 +345,6 @@ function storeFailureActivity(session: Session, error: unknown): void {
     session.lastAction = details.lastAction;
 }
 
-function printLog(deps: CliDeps, output: string): void {
-  deps.stdout(output);
-  deps.stderr("Session log retrieved\n");
-  deps.exit(SUCCESS_EXIT_CODE);
-}
-
 function isHarness(value: string): value is HarnessName {
   return HARNESS_NAMES.some((harness) => harness === value);
 }
@@ -572,6 +574,8 @@ async function spawnCommand(
       await saveSession(session);
       throw new Error(message);
     }
+    if (options.events)
+      return logsCommand(handle, { follow: true, events: true }, deps);
     deps.stdout(
       `${JSON.stringify({
         handle,
@@ -586,10 +590,18 @@ async function spawnCommand(
     deps.exit(SUCCESS_EXIT_CODE);
     return;
   }
+  const stream = eventStream(session, deps);
   let parsed: ReturnType<typeof adapter.parseSpawnOutput>;
   try {
     parsed = parseForegroundOutput(
-      await deps.runForeground(command.argv, cwd, environment, session),
+      await deps.runForeground(
+        command.argv,
+        cwd,
+        environment,
+        session,
+        deps.exit,
+        options.events ? stream.line : undefined,
+      ),
       adapter.parseSpawnOutput,
     );
     session.sessionId = parsed.sessionId || command.sessionId;
@@ -605,8 +617,10 @@ async function spawnCommand(
     session.error = error instanceof Error ? error.message : String(error);
     storeFailureActivity(session, error);
     await saveSession(session);
+    if (options.events) return stream.finish(session);
     throw error;
   }
+  if (options.events) return stream.finish(session);
   deps.stdout(
     `${JSON.stringify({
       handle: session.handle,
@@ -722,10 +736,18 @@ async function sendCommand(
       `Capacity limit reached: ${reservation.limit}`,
       CAPACITY_EXIT_CODE,
     );
+  const stream = eventStream(session, deps);
   let parsed: ReturnType<typeof adapter.parseResumeOutput>;
   try {
     parsed = parseForegroundOutput(
-      await deps.runForeground(command.argv, session.cwd, process.env, session),
+      await deps.runForeground(
+        command.argv,
+        session.cwd,
+        process.env,
+        session,
+        deps.exit,
+        options.events ? stream.line : undefined,
+      ),
       adapter.parseResumeOutput,
     );
     session.status = SESSION_STATUS.done;
@@ -737,10 +759,12 @@ async function sendCommand(
     session.error = error instanceof Error ? error.message : String(error);
     storeFailureActivity(session, error);
     await saveSession(session);
+    if (options.events) return stream.finish(session);
     throw error;
   }
   if (options.browser && session.harness === "claude") session.browser = true;
   await saveSession(session);
+  if (options.events) return stream.finish(session, parsed.usage);
   return printResult(
     deps,
     {
@@ -817,6 +841,7 @@ async function harnessOptionsFor(
       : undefined;
   return {
     cwd,
+    events: options.events,
     model: selected.model,
     effort: selected.effort,
     worktree: options.worktree,
@@ -885,9 +910,105 @@ async function statusCommand(handle: string, deps: CliDeps): Promise<void> {
   );
 }
 
+function eventStream(session: Session, deps: CliDeps) {
+  const tools = new Map<string, string>();
+  const state: EventState = { ...session, ts: new Date().toISOString(), tools };
+  const emit = (event: ReturnType<typeof normalized>) =>
+    deps.stdout(`${JSON.stringify(event)}\n`);
+  return {
+    line(line: string) {
+      state.ts = new Date().toISOString();
+      for (const event of getAdapter(session.harness).translateEvents(
+        line,
+        state,
+      )) {
+        if (event.type === EVENT_TYPE.result || event.type === EVENT_TYPE.error)
+          continue;
+        if (event.type === EVENT_TYPE.message) state.text = event.text;
+        if (event.type === EVENT_TYPE.toolStarted)
+          tools.set(event.toolId, event.name);
+        emit(event);
+      }
+    },
+    finish(completed: Session, usage = completed.usage ?? null) {
+      state.ts = new Date().toISOString();
+      const payload =
+        completed.status === SESSION_STATUS.done
+          ? { type: EVENT_TYPE.result, text: completed.result ?? "", usage }
+          : {
+              type: EVENT_TYPE.error,
+              message: completed.error ?? completed.status,
+              lastAction: completed.lastAction,
+            };
+      emit(normalized(state, payload));
+      deps.exit(
+        completed.status === SESSION_STATUS.done
+          ? SUCCESS_EXIT_CODE
+          : ERROR_EXIT_CODE,
+      );
+    },
+  };
+}
+
+async function followLog(
+  session: Session,
+  logPath: string,
+  options: { tail?: string; follow?: boolean; events?: boolean },
+  deps: CliDeps,
+) {
+  const tail =
+    options.tail === undefined
+      ? undefined
+      : parseNonNegativeInteger(options.tail, "--tail");
+  const stream = eventStream(session, deps);
+  let offset = 0;
+  let pending = "";
+  let initial = true;
+  while (true) {
+    const completed = await refreshSession(session.handle);
+    const output = await readFile(logPath, "utf8").catch((error: unknown) => {
+      if (options.follow && record(error)?.code === "ENOENT") return "";
+      throw error;
+    });
+    const appended = output.slice(offset);
+    offset = output.length;
+    pending += appended;
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    const finalRead =
+      !options.follow || completed.status !== SESSION_STATUS.running;
+    if (pending && finalRead) lines.push(pending);
+    if (finalRead) pending = "";
+    const selected =
+      initial && tail !== undefined
+        ? lines.slice(Math.max(0, lines.length - tail))
+        : lines;
+    if (!options.follow && !options.events) {
+      deps.stdout(tail === undefined ? output : selected.join("\n"));
+      deps.stderr("Session log retrieved\n");
+      deps.exit(SUCCESS_EXIT_CODE);
+      return;
+    }
+    if (output) initial = false;
+    for (const line of selected) {
+      if (options.events) stream.line(line);
+      else deps.stdout(`${line}\n`);
+    }
+    if (completed.status !== SESSION_STATUS.running || !options.follow) {
+      if (pending && options.events) stream.line(pending);
+      if (pending && !options.events) deps.stdout(pending);
+      if (options.events && completed.status !== SESSION_STATUS.running)
+        stream.finish(completed);
+      deps.exit(SUCCESS_EXIT_CODE);
+      return;
+    }
+    await Bun.sleep(LOG_FOLLOW_INTERVAL_MS);
+  }
+}
+
 async function logsCommand(
   handle: string,
-  options: { tail?: string; err?: boolean },
+  options: { tail?: string; err?: boolean; follow?: boolean; events?: boolean },
   deps: CliDeps,
 ): Promise<void> {
   const session = await loadSession(handle);
@@ -895,18 +1016,7 @@ async function logsCommand(
     ? session.errPath
     : (session.logPath ?? sessionLogPath(handle));
   if (!logPath) throw new Error(`session ${handle} has no stderr log`);
-  const output = await readFile(logPath, "utf8");
-  const tail = options.tail ? Number(options.tail) : null;
-  if (tail !== null && (!Number.isSafeInteger(tail) || tail < 0))
-    throw new Error("--tail must be a non-negative integer");
-  let result = output;
-  if (tail === 0) result = "";
-  if (tail !== null && tail > 0) {
-    const lines = output.split("\n");
-    if (lines.at(-1) === "") lines.pop();
-    result = lines.slice(-tail).join("\n");
-  }
-  return printLog(deps, result);
+  return followLog(session, logPath, options, deps);
 }
 
 async function waitCommand(
@@ -1101,6 +1211,7 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .option("--effort <effort>")
     .option("--worktree")
     .option("--detach")
+    .option("--events")
     .option("--permission-mode <mode>")
     .option("--browser")
     .option("--sandbox <policy>")
@@ -1112,6 +1223,7 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .action((prompt, options) => spawnCommand(prompt, options, deps));
   program
     .command("send <handle> <message>")
+    .option("--events")
     .option("--permission-mode <mode>")
     .option("--browser")
     .option("--sandbox <policy>")
@@ -1139,6 +1251,8 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .action((handle) => statusCommand(handle, deps));
   program
     .command("logs <handle>")
+    .option("--follow")
+    .option("--events")
     .option("--tail <n>")
     .option("--err")
     .action((handle, options) => logsCommand(handle, options, deps));

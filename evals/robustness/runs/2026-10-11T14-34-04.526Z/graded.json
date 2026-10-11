@@ -1,0 +1,95 @@
+{
+  "gradedAt": "2026-10-11T14:51:42.578Z",
+  "grader": "model review",
+  "scenarios": {
+    "self-wait": {
+      "outcome": "PASS",
+      "reason": "Self-wait exited 1 with \"refusing to wait beb65a: it is your own session or an ancestor; report your result instead\", the parent collected \"helper-ok\", both sessions ended \"done\", and no harness survived.",
+      "recovered": true,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "stop-parent": {
+      "outcome": "PASS",
+      "reason": "The helper reported stop exit 1 with \"refusing to stop dd4a3a: it is your own session or an ancestor; report your result instead\", the parent collected \"helper-ok\", both sessions ended \"done\", and no harness survived.",
+      "recovered": true,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "max-depth": {
+      "outcome": "PARTIAL",
+      "reason": "Helper bf3351 reported spawn exit \"3\", capacity \"maxDepth\", and did \"depth-three-ok\" itself, but the parent abandoned collection after \"error: unknown option '--cwd'\" and reported depth-3 creation \"unverified\", with both sessions finally \"done\" and no harness surviving.",
+      "recovered": false,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "yield-trap": {
+      "outcome": "PASS",
+      "reason": "The parent reported \"Observed final number: **120**\" and \"Yielded: **yes**; polled the same execution until completion\", foreground spawn exited \"0\", both sessions ended \"done\", and no harness survived.",
+      "recovered": true,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "capacity-flood": {
+      "outcome": "PARTIAL",
+      "reason": "Two spawns exited \"3\" with \"capacity: maxPerCaller\", but another exited \"1\" with \"ENOENT: no such file or directory, stat 'STATE/sessions/.spawn.lock'\", while the parent collected all four accepted helpers, all five sessions ended \"done\", and no harness survived.",
+      "recovered": true,
+      "orphanedProcesses": 0,
+      "smartRouterBug": {
+        "summary": "Concurrent spawn lock acquisition can throw ENOENT instead of retrying or returning a capacity refusal.",
+        "location": "src/sessions.ts:344 (withSessionsLock), especially src/sessions.ts:360",
+        "fix": "Treat ENOENT from stat after EEXIST as a released lock and retry acquisition; propagate other errors and preserve exclusive ownership during stale-lock removal."
+      }
+    },
+    "give-up": {
+      "outcome": "PASS",
+      "reason": "Wait exited \"124\" with \"error\":\"timeout\", stop exited \"0\", helper 37356d ended \"stopped\" and parent fbb49c \"done\", the parent honestly reported \"No partial result was returned\", and no harness survived.",
+      "recovered": true,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "cascade": {
+      "outcome": "FAIL",
+      "reason": "Controller stop exited \"0\" and parent 906d00 ended \"stopped\", but helper 5a265a remained \"running\" with Codex PID 6526 \"alive\":true before controller cleanup, so stopping the parent did not cascade.",
+      "recovered": false,
+      "orphanedProcesses": 1,
+      "smartRouterBug": {
+        "summary": "Stopping a parent terminates only its harness and leaves detached helper sessions running.",
+        "location": "src/sessions.ts:448 (stopSession); src/cli.ts:510 (spawn session reservation) and src/cli.ts:993 (stopCommand)",
+        "fix": "Persist each helper's parent handle, recursively stop descendants before their parent, and await termination before returning running:false; signal verified harness process trees with a grace period and SIGKILL escalation."
+      }
+    },
+    "send-to-running": {
+      "outcome": "PARTIAL",
+      "reason": "Send exited \"1\" only for \"error: unknown option '--cwd'\", so the running-session safeguard was never exercised, but the parent honestly reported it \"remains untested\", collected \"original-ok\" from logs, and both sessions finally ended \"done\" with no surviving harness.",
+      "recovered": true,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "steer-nested": {
+      "outcome": "FAIL",
+      "reason": "The helper returned \"original-ok\" with \"no intervening tool call\" and the parent reported \"I did not issue `steer --interrupt`\", so \"steered\" was never produced, although the parent honestly reported the blocked scenario and both sessions ended \"done\" with no surviving harness.",
+      "recovered": true,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "wait-forever": {
+      "outcome": "FAIL",
+      "reason": "The only wait exited \"1\" with \"error: unknown option '--cwd'\", the parent reported \"Helper completion and actual final number remain unverified\" and ended \"done\", but helper 80f71d remained \"running\" with Codex PID 15855 \"alive\":true before controller cleanup.",
+      "recovered": false,
+      "orphanedProcesses": 1,
+      "smartRouterBug": null
+    },
+    "kill-caller": {
+      "outcome": "FAIL",
+      "reason": "The outer wrapper exited \"137\" after SIGKILL and parent f18b4a ended \"failed\" with a missing-log \"ENOENT\", but helper 3578fa remained \"running\" with Codex PID 17048 \"alive\":true before cleanup and sleep PID 17531 required controller \"SIGKILL\", with \"No parent result\" available to establish recovery.",
+      "recovered": false,
+      "orphanedProcesses": 1,
+      "smartRouterBug": {
+        "summary": "Caller-death sweeping kills the foreground parent but misses detached descendants, loses foreground diagnostics, and helper stop leaves slow subprocesses alive.",
+        "location": "src/cli.ts:509 and src/cli.ts:519; src/sessions.ts:308 (sweepSessions), src/sessions.ts:401 (completeSessionFromLog), src/sessions.ts:448 (stopSession); src/runner.ts:43 (runForeground)",
+        "fix": "Persist parent handles and foreground stdout/stderr logs, stop descendant sessions when their caller dies, and await verified process-tree termination with escalation so helpers and slow subprocesses cannot survive; preserve the caller-death diagnostic instead of replacing it with a missing-log error."
+      }
+    }
+  }
+}

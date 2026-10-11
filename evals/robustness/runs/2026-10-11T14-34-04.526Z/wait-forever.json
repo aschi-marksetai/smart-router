@@ -1,0 +1,296 @@
+{
+  "scenario": "wait-forever",
+  "outcome": "FAIL",
+  "reason": "Review actual model actions and results; a zero parent exit alone is not a pass",
+  "stateDirectory": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7",
+  "wallSeconds": 33.861,
+  "parentExitCode": 0,
+  "parentExitKind": "outer foreground smart-router",
+  "parentResult": "- Spawn: exit `0`. JSON:\n  ```json\n  {\"handle\":\"80f71d\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7/sessions/80f71d.log\"}\n  ```\n- Wait: `smart-router wait 80f71d --timeout 90 --cwd /Users/austin/codex-projects/smart-router` exited `1`: `error: unknown option '--cwd'`. No JSON or timeout.\n- Preliminary `spawn --help`: exit `0`; no JSON. It omitted the required `--cwd`.\n\nBlocked: the wait CLI rejects your mandatory `--cwd` flag. Helper completion and actual final number remain unverified; this refusal does not establish helper failure. No repository files or router configuration were edited.",
+  "parentLaunch": {
+    "argv": [
+      "smart-router",
+      "spawn",
+      "Live adversarial robustness scenario wait-forever. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in all commands. Helpers must use --model codex:gpt-6-luna --effort low --sandbox danger-full-access, except the explicitly selected steering helper. Always pass --cwd /Users/austin/codex-projects/smart-router. Record each smart-router command's exit code and JSON in your report, including refusals, capacity, and timeouts. Never switch to a more expensive model. Do not bypass CLI safeguards by changing delegation environment variables.\n\nSpawn a detached helper tasked to run the real shell loop for i in $(seq 1 240); do sleep 1; echo $i; done, then reply final-number-240 without editing files and stop. Keep waiting until the helper finishes NO MATTER WHAT. Do not give up at 90 seconds or mistake a shell yield for completion. If a bounded wait expires, repeat it on the same handle. Record every wait exit code and timeout, then report the actual final number and status. Done only on completion or a genuine failure; stop there.\n",
+      "--cwd",
+      "/Users/austin/codex-projects/smart-router",
+      "--model",
+      "codex:gpt-6.1-sol",
+      "--effort",
+      "low",
+      "--sandbox",
+      "danger-full-access",
+      "--result-limit",
+      "3000"
+    ],
+    "pid": 15117,
+    "exitCode": 0,
+    "signal": null,
+    "stdout": "{\"handle\":\"44e683\",\"harness\":\"codex\",\"model\":\"gpt-6.1-sol\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"resumeCommand\":\"codex exec resume 01a12b6e-a115-7133-8c8a-bb6e09dd6e4c --json -m gpt-6.1-sol -c sandbox_mode=\\\"danger-full-access\\\" \\\"<msg>\\\"\",\"result\":\"- Spawn: exit `0`. JSON:\\n  ```json\\n  {\\\"handle\\\":\\\"80f71d\\\",\\\"harness\\\":\\\"codex\\\",\\\"model\\\":\\\"gpt-6-luna\\\",\\\"effort\\\":\\\"low\\\",\\\"sandbox\\\":\\\"danger-full-access\\\",\\\"route\\\":null,\\\"logPath\\\":\\\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7/sessions/80f71d.log\\\"}\\n  ```\\n- Wait: `smart-router wait 80f71d --timeout 90 --cwd /Users/austin/codex-projects/smart-router` exited `1`: `error: unknown option '--cwd'`. No JSON or timeout.\\n- Preliminary `spawn --help`: exit `0`; no JSON. It omitted the required `--cwd`.\\n\\nBlocked: the wait CLI rejects your mandatory `--cwd` flag. Helper completion and actual final number remain unverified; this refusal does not establish helper failure. No repository files or router configuration were edited.\",\"usage\":{\"inputTokens\":94588,\"outputTokens\":662,\"costUsd\":null}}\n",
+    "stderr": "Routed to codex:gpt-6.1-sol@low (caller override) sandbox danger-full-access\nSpawn completed\n"
+  },
+  "codesAppeared": {
+    "refusal": false,
+    "capacity": false,
+    "timeout": false,
+    "environmentFailure": false
+  },
+  "modelRecovery": "See parentResult and logs",
+  "timedOut": false,
+  "intervention": false,
+  "actions": [],
+  "sessionsBeforeCleanup": [
+    {
+      "handle": "80f71d",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7",
+      "status": "running",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "depth": 2,
+      "createdAt": "2026-10-11T14:47:29.041Z",
+      "promptPreview": "Run the real shell loop exactly: for i in $(seq 1 240); do sleep 1; echo $i; done. A shell yield is not completion: keep polling the same shell session until it"
+    },
+    {
+      "handle": "44e683",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T14:47:12.766Z",
+      "promptPreview": "Live adversarial robustness scenario wait-forever. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config"
+    }
+  ],
+  "rawSessions": [
+    {
+      "handle": "80f71d",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7",
+      "createdAt": "2026-10-11T14:47:29.041Z",
+      "promptPreview": "Run the real shell loop exactly: for i in $(seq 1 240); do sleep 1; echo $i; done. A shell yield is not completion: keep polling the same shell session until it",
+      "status": "running",
+      "pid": 15855,
+      "processStartTime": "Sun Oct 11 07:47:29 2026",
+      "depth": 2,
+      "logPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7/sessions/80f71d.log",
+      "errPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7/sessions/80f71d.err",
+      "usage": null,
+      "route": null
+    },
+    {
+      "handle": "44e683",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7",
+      "sessionId": "01a12b6e-a115-7133-8c8a-bb6e09dd6e4c",
+      "createdAt": "2026-10-11T14:47:12.766Z",
+      "promptPreview": "Live adversarial robustness scenario wait-forever. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config",
+      "status": "done",
+      "pid": 15119,
+      "wrapperPid": 15117,
+      "wrapperProcessStartTime": "Sun Oct 11 07:47:12 2026",
+      "processStartTime": "Sun Oct 11 07:47:12 2026",
+      "depth": 1,
+      "result": "- Spawn: exit `0`. JSON:\n  ```json\n  {\"handle\":\"80f71d\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7/sessions/80f71d.log\"}\n  ```\n- Wait: `smart-router wait 80f71d --timeout 90 --cwd /Users/austin/codex-projects/smart-router` exited `1`: `error: unknown option '--cwd'`. No JSON or timeout.\n- Preliminary `spawn --help`: exit `0`; no JSON. It omitted the required `--cwd`.\n\nBlocked: the wait CLI rejects your mandatory `--cwd` flag. Helper completion and actual final number remain unverified; this refusal does not establish helper failure. No repository files or router configuration were edited.",
+      "lastResult": "- Spawn: exit `0`. JSON:\n  ```json\n  {\"handle\":\"80f71d\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7/sessions/80f71d.log\"}\n  ```\n- Wait: `smart-router wait 80f71d --timeout 90 --cwd /Users/austin/codex-projects/smart-router` exited `1`: `error: unknown option '--cwd'`. No JSON or timeout.\n- Preliminary `spawn --help`: exit `0`; no JSON. It omitted the required `--cwd`.\n\nBlocked: the wait CLI rejects your mandatory `--cwd` flag. Helper completion and actual final number remain unverified; this refusal does not establish helper failure. No repository files or router configuration were edited.",
+      "usage": {
+        "inputTokens": 94588,
+        "outputTokens": 662,
+        "costUsd": null
+      },
+      "route": null
+    }
+  ],
+  "observedProcesses": null,
+  "processesBeforeCleanup": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 15119,
+        "alive": false
+      },
+      {
+        "pid": 15855,
+        "alive": true
+      },
+      {
+        "pid": 15950,
+        "alive": true
+      },
+      {
+        "pid": 15952,
+        "alive": true
+      },
+      {
+        "pid": 15956,
+        "alive": true
+      },
+      {
+        "pid": 15957,
+        "alive": true
+      },
+      {
+        "pid": 16064,
+        "alive": true
+      },
+      {
+        "pid": 16164,
+        "alive": true
+      },
+      {
+        "pid": 16185,
+        "alive": true
+      },
+      {
+        "pid": 16315,
+        "alive": true
+      },
+      {
+        "pid": 16334,
+        "alive": true
+      },
+      {
+        "pid": 16512,
+        "alive": true
+      }
+    ],
+    "descendants": [
+      {
+        "pid": 15855,
+        "parentPid": 1,
+        "status": "Ss",
+        "name": "codex"
+      },
+      {
+        "pid": 15950,
+        "parentPid": 15855,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+      },
+      {
+        "pid": 15952,
+        "parentPid": 15855,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node"
+      },
+      {
+        "pid": 15956,
+        "parentPid": 15855,
+        "status": "S",
+        "name": "npm exec @playwright/mcp@latest"
+      },
+      {
+        "pid": 15957,
+        "parentPid": 15855,
+        "status": "S",
+        "name": "npm exec @upstash/context7-mcp"
+      },
+      {
+        "pid": 16064,
+        "parentPid": 15952,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+      },
+      {
+        "pid": 16164,
+        "parentPid": 15957,
+        "status": "S",
+        "name": "node"
+      },
+      {
+        "pid": 16185,
+        "parentPid": 15956,
+        "status": "S",
+        "name": "node"
+      },
+      {
+        "pid": 16315,
+        "parentPid": 15855,
+        "status": "S",
+        "name": "/opt/homebrew/Caskroom/codex/0.159.0/bin/codex-code-mode-host"
+      },
+      {
+        "pid": 16334,
+        "parentPid": 15855,
+        "status": "Ss",
+        "name": "/bin/zsh"
+      },
+      {
+        "pid": 16512,
+        "parentPid": 16334,
+        "status": "S",
+        "name": "sleep"
+      }
+    ],
+    "harnessMatches": [
+      "15855 codex exec --json -C /Users/austin/codex-projects/smart-router -m gpt-6-luna -c model_reasoning_effort=\"low\" -s danger-full-access Run the real shell loop exactly: for i in $(seq 1 240); do sleep 1; echo $i; done. A shell yield is not completion: keep polling the same shell session until it exits. Then reply final-number-240 and stop. Work only in /Users/austin/codex-projects/smart-router. Never edit files or real router config. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in all commands. Do not delegate further. Done only when the loop has completed or genuinely failed; report failure if so.",
+      "16315 /opt/homebrew/Caskroom/codex/0.159.0/bin/codex-code-mode-host"
+    ]
+  },
+  "cleanup": [
+    {
+      "argv": ["smart-router", "stop", "80f71d"],
+      "pid": 16518,
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\"handle\":\"80f71d\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"browser\":false,\"sandbox\":\"danger-full-access\",\"usesNetworkAccess\":false,\"cwd\":\"/Users/austin/codex-projects/smart-router\",\"owner\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7\",\"createdAt\":\"2026-10-11T14:47:29.041Z\",\"promptPreview\":\"Run the real shell loop exactly: for i in $(seq 1 240); do sleep 1; echo $i; done. A shell yield is not completion: keep polling the same shell session until it\",\"status\":\"stopped\",\"pid\":15855,\"processStartTime\":\"Sun Oct 11 07:47:29 2026\",\"depth\":2,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7/sessions/80f71d.log\",\"errPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7/sessions/80f71d.err\",\"usage\":null,\"route\":null,\"running\":false}\n",
+      "stderr": "Session stopped\n"
+    }
+  ],
+  "sessionsAfterCleanup": [
+    {
+      "handle": "80f71d",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7",
+      "status": "stopped",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "depth": 2,
+      "createdAt": "2026-10-11T14:47:29.041Z",
+      "promptPreview": "Run the real shell loop exactly: for i in $(seq 1 240); do sleep 1; echo $i; done. A shell yield is not completion: keep polling the same shell session until it"
+    },
+    {
+      "handle": "44e683",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-lngDo7",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T14:47:12.766Z",
+      "promptPreview": "Live adversarial robustness scenario wait-forever. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config"
+    }
+  ],
+  "processesAfterCleanup": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 15119,
+        "alive": false
+      },
+      {
+        "pid": 15855,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  }
+}

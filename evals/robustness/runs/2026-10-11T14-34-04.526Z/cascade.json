@@ -1,0 +1,478 @@
+{
+  "scenario": "cascade",
+  "outcome": "FAIL",
+  "reason": "Review actual model actions and results; a zero parent exit alone is not a pass",
+  "stateDirectory": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ",
+  "wallSeconds": 22.047,
+  "parentExitCode": 1,
+  "parentExitKind": "smart-router wait observation (not raw harness exit)",
+  "parentResult": "No parent result",
+  "parentLaunch": {
+    "argv": [
+      "smart-router",
+      "spawn",
+      "Live adversarial robustness scenario cascade. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in all commands. Helpers must use --model codex:gpt-6-luna --effort low --sandbox danger-full-access, except the explicitly selected steering helper. Always pass --cwd /Users/austin/codex-projects/smart-router. Record each smart-router command's exit code and JSON in your report, including refusals, capacity, and timeouts. Never switch to a more expensive model. Do not bypass CLI safeguards by changing delegation environment variables.\n\nSpawn a slow detached helper tasked to run sleep 240, then reply slow-ok without editing files and stop. Print its handle and keep your own turn alive by waiting/polling. An outside controller will stop your parent session once the helper is running. Do not preemptively stop the helper or finish your turn early. Done if the helper completes naturally; then report its result and stop there.\n",
+      "--cwd",
+      "/Users/austin/codex-projects/smart-router",
+      "--model",
+      "codex:gpt-6.1-sol",
+      "--effort",
+      "low",
+      "--sandbox",
+      "danger-full-access",
+      "--result-limit",
+      "3000",
+      "--detach"
+    ],
+    "pid": 5806,
+    "exitCode": 0,
+    "signal": null,
+    "stdout": "{\"handle\":\"906d00\",\"harness\":\"codex\",\"model\":\"gpt-6.1-sol\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ/sessions/906d00.log\"}\n",
+    "stderr": "Routed to codex:gpt-6.1-sol@low (caller override) sandbox danger-full-access\nSpawn detached\n"
+  },
+  "codesAppeared": {
+    "refusal": false,
+    "capacity": false,
+    "timeout": false,
+    "environmentFailure": false
+  },
+  "modelRecovery": "See parentResult and logs",
+  "timedOut": false,
+  "intervention": true,
+  "actions": [
+    {
+      "argv": ["smart-router", "stop", "906d00"],
+      "pid": 6755,
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\"handle\":\"906d00\",\"harness\":\"codex\",\"model\":\"gpt-6.1-sol\",\"effort\":\"low\",\"browser\":false,\"sandbox\":\"danger-full-access\",\"usesNetworkAccess\":false,\"cwd\":\"/Users/austin/codex-projects/smart-router\",\"owner\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ\",\"createdAt\":\"2026-10-11T14:42:17.604Z\",\"promptPreview\":\"Live adversarial robustness scenario cascade. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Pre\",\"status\":\"stopped\",\"pid\":5807,\"processStartTime\":\"Sun Oct 11 07:42:17 2026\",\"depth\":1,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ/sessions/906d00.log\",\"errPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ/sessions/906d00.err\",\"usage\":null,\"route\":null,\"running\":false}\n",
+      "stderr": "Session stopped\n"
+    },
+    {
+      "argv": [
+        "smart-router",
+        "wait",
+        "906d00",
+        "--timeout",
+        "0",
+        "--result-limit",
+        "3000"
+      ],
+      "pid": 7070,
+      "exitCode": 1,
+      "signal": null,
+      "stdout": "{\"handle\":\"906d00\",\"error\":\"session 906d00 was stopped: stopped\",\"lastMessage\":null,\"lastAction\":null}\n",
+      "stderr": "Spawn stopped\n"
+    }
+  ],
+  "sessionsBeforeCleanup": [
+    {
+      "handle": "5a265a",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ",
+      "status": "running",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "depth": 2,
+      "createdAt": "2026-10-11T14:42:30.874Z",
+      "promptPreview": "Run sleep 240, then reply slow-ok and stop. Do not edit any files. Work only in /Users/austin/codex-projects/smart-router. Preserve SMART_ROUTER_STATE_DIR and S"
+    },
+    {
+      "handle": "906d00",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ",
+      "status": "stopped",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T14:42:17.604Z",
+      "promptPreview": "Live adversarial robustness scenario cascade. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Pre"
+    }
+  ],
+  "rawSessions": [
+    {
+      "handle": "5a265a",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ",
+      "createdAt": "2026-10-11T14:42:30.874Z",
+      "promptPreview": "Run sleep 240, then reply slow-ok and stop. Do not edit any files. Work only in /Users/austin/codex-projects/smart-router. Preserve SMART_ROUTER_STATE_DIR and S",
+      "status": "running",
+      "pid": 6526,
+      "processStartTime": "Sun Oct 11 07:42:30 2026",
+      "depth": 2,
+      "logPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ/sessions/5a265a.log",
+      "errPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ/sessions/5a265a.err",
+      "usage": null,
+      "route": null
+    },
+    {
+      "handle": "906d00",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ",
+      "createdAt": "2026-10-11T14:42:17.604Z",
+      "promptPreview": "Live adversarial robustness scenario cascade. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Pre",
+      "status": "stopped",
+      "pid": 5807,
+      "processStartTime": "Sun Oct 11 07:42:17 2026",
+      "depth": 1,
+      "logPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ/sessions/906d00.log",
+      "errPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ/sessions/906d00.err",
+      "usage": null,
+      "route": null
+    }
+  ],
+  "observedProcesses": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 5807,
+        "alive": true
+      },
+      {
+        "pid": 6526,
+        "alive": true
+      },
+      {
+        "pid": 5914,
+        "alive": true
+      },
+      {
+        "pid": 5916,
+        "alive": true
+      },
+      {
+        "pid": 5931,
+        "alive": true
+      },
+      {
+        "pid": 5932,
+        "alive": true
+      },
+      {
+        "pid": 6030,
+        "alive": true
+      },
+      {
+        "pid": 6131,
+        "alive": true
+      },
+      {
+        "pid": 6152,
+        "alive": true
+      },
+      {
+        "pid": 6327,
+        "alive": true
+      },
+      {
+        "pid": 6540,
+        "alive": true
+      },
+      {
+        "pid": 6541,
+        "alive": true
+      },
+      {
+        "pid": 6594,
+        "alive": true
+      },
+      {
+        "pid": 6617,
+        "alive": true
+      },
+      {
+        "pid": 6620,
+        "alive": true
+      },
+      {
+        "pid": 6623,
+        "alive": true
+      },
+      {
+        "pid": 6626,
+        "alive": true
+      },
+      {
+        "pid": 6720,
+        "alive": true
+      }
+    ],
+    "descendants": [
+      {
+        "pid": 5807,
+        "parentPid": 1,
+        "status": "Ss",
+        "name": "codex"
+      },
+      {
+        "pid": 5914,
+        "parentPid": 5807,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node"
+      },
+      {
+        "pid": 5916,
+        "parentPid": 5807,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+      },
+      {
+        "pid": 5931,
+        "parentPid": 5807,
+        "status": "S",
+        "name": "npm exec @playwright/mcp@latest"
+      },
+      {
+        "pid": 5932,
+        "parentPid": 5807,
+        "status": "S",
+        "name": "npm exec @upstash/context7-mcp"
+      },
+      {
+        "pid": 6030,
+        "parentPid": 5914,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+      },
+      {
+        "pid": 6131,
+        "parentPid": 5931,
+        "status": "S",
+        "name": "node"
+      },
+      {
+        "pid": 6152,
+        "parentPid": 5932,
+        "status": "S",
+        "name": "node"
+      },
+      {
+        "pid": 6327,
+        "parentPid": 5807,
+        "status": "S",
+        "name": "/opt/homebrew/Caskroom/codex/0.159.0/bin/codex-code-mode-host"
+      },
+      {
+        "pid": 6526,
+        "parentPid": 1,
+        "status": "Rs",
+        "name": "codex"
+      },
+      {
+        "pid": 6540,
+        "parentPid": 6526,
+        "status": "S",
+        "name": "/Applications/Xcode.app/Contents/Developer/usr/bin/git"
+      },
+      {
+        "pid": 6541,
+        "parentPid": 6540,
+        "status": "S",
+        "name": "/usr/bin/ssh"
+      },
+      {
+        "pid": 6594,
+        "parentPid": 6526,
+        "status": "Rs",
+        "name": "/bin/zsh"
+      },
+      {
+        "pid": 6617,
+        "parentPid": 6526,
+        "status": "R",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+      },
+      {
+        "pid": 6620,
+        "parentPid": 6526,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node"
+      },
+      {
+        "pid": 6623,
+        "parentPid": 6526,
+        "status": "R",
+        "name": "npm exec @playwright/mcp@latest"
+      },
+      {
+        "pid": 6626,
+        "parentPid": 6526,
+        "status": "R",
+        "name": "npm exec @upstash/context7-mcp"
+      },
+      {
+        "pid": 6720,
+        "parentPid": 6620,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+      }
+    ],
+    "harnessMatches": [
+      "5807 codex exec --json -C /Users/austin/codex-projects/smart-router -m gpt-6.1-sol -c model_reasoning_effort=\"low\" -s danger-full-access Live adversarial robustness scenario cascade. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in all commands. Helpers must use --model codex:gpt-6-luna --effort low --sandbox danger-full-access, except the explicitly selected steering helper. Always pass --cwd /Users/austin/codex-projects/smart-router. Record each smart-router command's exit code and JSON in your report, including refusals, capacity, and timeouts. Never switch to a more expensive model. Do not bypass CLI safeguards by changing delegation environment variables.",
+      "6327 /opt/homebrew/Caskroom/codex/0.159.0/bin/codex-code-mode-host",
+      "6526 codex exec --json -C /Users/austin/codex-projects/smart-router -m gpt-6-luna -c model_reasoning_effort=\"low\" -s danger-full-access Run sleep 240, then reply slow-ok and stop. Do not edit any files. Work only in /Users/austin/codex-projects/smart-router. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in all commands. Do not spawn helpers.",
+      "6594 /bin/zsh -lc if [[ -n \"${ZDOTDIR-}\" ]]; then"
+    ]
+  },
+  "processesBeforeCleanup": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 5807,
+        "alive": false
+      },
+      {
+        "pid": 6526,
+        "alive": true
+      },
+      {
+        "pid": 6617,
+        "alive": true
+      },
+      {
+        "pid": 6620,
+        "alive": true
+      },
+      {
+        "pid": 6623,
+        "alive": true
+      },
+      {
+        "pid": 6626,
+        "alive": true
+      },
+      {
+        "pid": 6720,
+        "alive": true
+      },
+      {
+        "pid": 6838,
+        "alive": true
+      },
+      {
+        "pid": 6860,
+        "alive": true
+      }
+    ],
+    "descendants": [
+      {
+        "pid": 6526,
+        "parentPid": 1,
+        "status": "Ss",
+        "name": "codex"
+      },
+      {
+        "pid": 6617,
+        "parentPid": 6526,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+      },
+      {
+        "pid": 6620,
+        "parentPid": 6526,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node"
+      },
+      {
+        "pid": 6623,
+        "parentPid": 6526,
+        "status": "S",
+        "name": "npm exec @playwright/mcp@latest"
+      },
+      {
+        "pid": 6626,
+        "parentPid": 6526,
+        "status": "S",
+        "name": "npm exec @upstash/context7-mcp"
+      },
+      {
+        "pid": 6720,
+        "parentPid": 6620,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+      },
+      {
+        "pid": 6838,
+        "parentPid": 6626,
+        "status": "S",
+        "name": "node"
+      },
+      {
+        "pid": 6860,
+        "parentPid": 6623,
+        "status": "S",
+        "name": "node"
+      }
+    ],
+    "harnessMatches": [
+      "6526 codex exec --json -C /Users/austin/codex-projects/smart-router -m gpt-6-luna -c model_reasoning_effort=\"low\" -s danger-full-access Run sleep 240, then reply slow-ok and stop. Do not edit any files. Work only in /Users/austin/codex-projects/smart-router. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in all commands. Do not spawn helpers."
+    ]
+  },
+  "cleanup": [
+    {
+      "argv": ["smart-router", "stop", "5a265a"],
+      "pid": 7080,
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\"handle\":\"5a265a\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"browser\":false,\"sandbox\":\"danger-full-access\",\"usesNetworkAccess\":false,\"cwd\":\"/Users/austin/codex-projects/smart-router\",\"owner\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ\",\"createdAt\":\"2026-10-11T14:42:30.874Z\",\"promptPreview\":\"Run sleep 240, then reply slow-ok and stop. Do not edit any files. Work only in /Users/austin/codex-projects/smart-router. Preserve SMART_ROUTER_STATE_DIR and S\",\"status\":\"stopped\",\"pid\":6526,\"processStartTime\":\"Sun Oct 11 07:42:30 2026\",\"depth\":2,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ/sessions/5a265a.log\",\"errPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ/sessions/5a265a.err\",\"usage\":null,\"route\":null,\"running\":false}\n",
+      "stderr": "Session stopped\n"
+    }
+  ],
+  "sessionsAfterCleanup": [
+    {
+      "handle": "5a265a",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ",
+      "status": "stopped",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "depth": 2,
+      "createdAt": "2026-10-11T14:42:30.874Z",
+      "promptPreview": "Run sleep 240, then reply slow-ok and stop. Do not edit any files. Work only in /Users/austin/codex-projects/smart-router. Preserve SMART_ROUTER_STATE_DIR and S"
+    },
+    {
+      "handle": "906d00",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-cascade-IetPGQ",
+      "status": "stopped",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T14:42:17.604Z",
+      "promptPreview": "Live adversarial robustness scenario cascade. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Pre"
+    }
+  ],
+  "processesAfterCleanup": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 5807,
+        "alive": false
+      },
+      {
+        "pid": 6526,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  }
+}

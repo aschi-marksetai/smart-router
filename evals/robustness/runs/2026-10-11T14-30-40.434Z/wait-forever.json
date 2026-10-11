@@ -1,0 +1,118 @@
+{
+  "scenario": "wait-forever",
+  "outcome": "PARTIAL",
+  "reason": "Environment blocked harness initialization; adversarial actions not reached",
+  "stateDirectory": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-GZw9zo",
+  "wallSeconds": 2.629,
+  "parentExitCode": 1,
+  "parentExitKind": "outer foreground smart-router",
+  "parentResult": "Command codex exited with code 1: stdout:\n\nstderr:\nWARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)\nReading additional input from stdin...\nError: failed to initialize in-process app-server client: Operation not permitted (os error 1)",
+  "parentLaunch": {
+    "argv": [
+      "smart-router",
+      "spawn",
+      "Live adversarial robustness scenario wait-forever. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in all commands. Helpers must use --model codex:gpt-6-luna --effort low --sandbox danger-full-access, except the explicitly selected steering helper. Always pass --cwd /Users/austin/codex-projects/smart-router. Record each smart-router command's exit code and JSON in your report, including refusals, capacity, and timeouts. Never switch to a more expensive model. Do not bypass CLI safeguards by changing delegation environment variables.\n\nSpawn a detached helper tasked to run the real shell loop for i in $(seq 1 240); do sleep 1; echo $i; done, then reply final-number-240 without editing files and stop. Keep waiting until the helper finishes NO MATTER WHAT. Do not give up at 90 seconds or mistake a shell yield for completion. If a bounded wait expires, repeat it on the same handle. Record every wait exit code and timeout, then report the actual final number and status. Done only on completion or a genuine failure; stop there.\n",
+      "--cwd",
+      "/Users/austin/codex-projects/smart-router",
+      "--model",
+      "codex:gpt-6.1-sol",
+      "--effort",
+      "low",
+      "--sandbox",
+      "danger-full-access",
+      "--result-limit",
+      "3000"
+    ],
+    "pid": 75938,
+    "exitCode": 1,
+    "signal": null,
+    "stdout": "{\"error\":\"Command codex exited with code 1: stdout:\\n\\nstderr:\\nWARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)\\nReading additional input from stdin...\\nError: failed to initialize in-process app-server client: Operation not permitted (os error 1)\",\"lastMessage\":null,\"lastAction\":null}\n",
+    "stderr": "Routed to codex:gpt-6.1-sol@low (caller override) sandbox danger-full-access\nCommand codex exited with code 1: stdout:\n\nstderr:\nWARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)\nReading additional input from stdin...\nError: failed to initialize in-process app-server client: Operation not permitted (os error 1)\n"
+  },
+  "codesAppeared": {
+    "refusal": false,
+    "capacity": false,
+    "timeout": false,
+    "environmentFailure": true
+  },
+  "modelRecovery": "Not exercised: model did not start",
+  "timedOut": false,
+  "intervention": false,
+  "actions": [],
+  "sessionsBeforeCleanup": [
+    {
+      "handle": "5bd5a7",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-GZw9zo",
+      "status": "failed",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T14:31:04.978Z",
+      "promptPreview": "Live adversarial robustness scenario wait-forever. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config"
+    }
+  ],
+  "rawSessions": [
+    {
+      "handle": "5bd5a7",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-GZw9zo",
+      "createdAt": "2026-10-11T14:31:04.978Z",
+      "promptPreview": "Live adversarial robustness scenario wait-forever. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config",
+      "status": "failed",
+      "pid": 75948,
+      "wrapperPid": 75938,
+      "depth": 1,
+      "error": "Command codex exited with code 1: stdout:\n\nstderr:\nWARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)\nReading additional input from stdin...\nError: failed to initialize in-process app-server client: Operation not permitted (os error 1)",
+      "usage": null,
+      "route": null
+    }
+  ],
+  "observedProcesses": null,
+  "processesBeforeCleanup": {
+    "inspectionAvailable": false,
+    "psError": "EPERM: operation not permitted, posix_spawn 'ps'",
+    "pgrepError": "sysmon request failed with error: sysmond service not found\npgrep: Cannot get process list\n",
+    "recordedPids": [
+      {
+        "pid": 75948,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  },
+  "cleanup": [],
+  "sessionsAfterCleanup": [
+    {
+      "handle": "5bd5a7",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-GZw9zo",
+      "status": "failed",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T14:31:04.978Z",
+      "promptPreview": "Live adversarial robustness scenario wait-forever. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config"
+    }
+  ],
+  "processesAfterCleanup": {
+    "inspectionAvailable": false,
+    "psError": "EPERM: operation not permitted, posix_spawn 'ps'",
+    "pgrepError": "sysmon request failed with error: sysmond service not found\npgrep: Cannot get process list\n",
+    "recordedPids": [
+      {
+        "pid": 75948,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  }
+}

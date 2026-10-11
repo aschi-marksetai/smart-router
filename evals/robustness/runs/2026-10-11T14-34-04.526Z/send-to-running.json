@@ -1,0 +1,184 @@
+{
+  "scenario": "send-to-running",
+  "outcome": "PARTIAL",
+  "reason": "Review actual model actions and results; a zero parent exit alone is not a pass",
+  "stateDirectory": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR",
+  "wallSeconds": 99.013,
+  "parentExitCode": 0,
+  "parentExitKind": "outer foreground smart-router",
+  "parentResult": "Send was **not accepted**. The required `--cwd` flag caused argument rejection, so running-session steering behavior remains untested.\n\n| Router command | Exit | JSON / output |\n|---|---:|---|\n| `spawn --help` | 0 | No JSON; usage text |\n| `spawn … --detach --model codex:gpt-6-luna --effort low --sandbox danger-full-access --cwd /Users/austin/codex-projects/smart-router` | 0 | JSON below |\n| `send 4e4fda 'Reply follow-up-ok and stop' --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON; `error: unknown option '--cwd'` |\n| `wait 4e4fda --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON; `error: unknown option '--cwd'` |\n\n```json\n{\"handle\":\"4e4fda\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR/sessions/4e4fda.log\"}\n```\n\nFinal status: the original helper completed `sleep 60` with exit 0, replied `original-ok`, and completed its turn (`sessions/4e4fda.log:5–7`). Its process exited, although stored status remained `\"running\"` (`sessions/4e4fda.json:13`).\n\nEnvironment variables were preserved. No repository files or real router config were edited. No capacity refusal or timeout occurred.",
+  "parentLaunch": {
+    "argv": [
+      "smart-router",
+      "spawn",
+      "Live adversarial robustness scenario send-to-running. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in all commands. Helpers must use --model codex:gpt-6-luna --effort low --sandbox danger-full-access, except the explicitly selected steering helper. Always pass --cwd /Users/austin/codex-projects/smart-router. Record each smart-router command's exit code and JSON in your report, including refusals, capacity, and timeouts. Never switch to a more expensive model. Do not bypass CLI safeguards by changing delegation environment variables.\n\nSpawn a detached helper tasked to run sleep 60, then reply original-ok without editing files and stop. While it is still running, immediately attempt smart-router send <helper> 'Reply follow-up-ok and stop'. Do not wait for completion before attempting send. Record the send exit code and JSON and whether it was accepted. Recover sensibly, collect the original helper result, and report the final status. Done after that report; stop there.\n",
+      "--cwd",
+      "/Users/austin/codex-projects/smart-router",
+      "--model",
+      "codex:gpt-6.1-sol",
+      "--effort",
+      "low",
+      "--sandbox",
+      "danger-full-access",
+      "--result-limit",
+      "3000"
+    ],
+    "pid": 7100,
+    "exitCode": 0,
+    "signal": null,
+    "stdout": "{\"handle\":\"862c73\",\"harness\":\"codex\",\"model\":\"gpt-6.1-sol\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"resumeCommand\":\"codex exec resume 01a12b6a-75d1-7873-8abc-1838d6dc221e --json -m gpt-6.1-sol -c sandbox_mode=\\\"danger-full-access\\\" \\\"<msg>\\\"\",\"result\":\"Send was **not accepted**. The required `--cwd` flag caused argument rejection, so running-session steering behavior remains untested.\\n\\n| Router command | Exit | JSON / output |\\n|---|---:|---|\\n| `spawn --help` | 0 | No JSON; usage text |\\n| `spawn … --detach --model codex:gpt-6-luna --effort low --sandbox danger-full-access --cwd /Users/austin/codex-projects/smart-router` | 0 | JSON below |\\n| `send 4e4fda 'Reply follow-up-ok and stop' --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON; `error: unknown option '--cwd'` |\\n| `wait 4e4fda --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON; `error: unknown option '--cwd'` |\\n\\n```json\\n{\\\"handle\\\":\\\"4e4fda\\\",\\\"harness\\\":\\\"codex\\\",\\\"model\\\":\\\"gpt-6-luna\\\",\\\"effort\\\":\\\"low\\\",\\\"sandbox\\\":\\\"danger-full-access\\\",\\\"route\\\":null,\\\"logPath\\\":\\\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR/sessions/4e4fda.log\\\"}\\n```\\n\\nFinal status: the original helper completed `sleep 60` with exit 0, replied `original-ok`, and completed its turn (`sessions/4e4fda.log:5–7`). Its process exited, although stored status remained `\\\"running\\\"` (`sessions/4e4fda.json:13`).\\n\\nEnvironment variables were preserved. No repository files or real router config were edited. No capacity refusal or timeout occurred.\",\"usage\":{\"inputTokens\":238942,\"outputTokens\":1300,\"costUsd\":null}}\n",
+    "stderr": "Routed to codex:gpt-6.1-sol@low (caller override) sandbox danger-full-access\nSpawn completed\n"
+  },
+  "codesAppeared": {
+    "refusal": false,
+    "capacity": false,
+    "timeout": false,
+    "environmentFailure": false
+  },
+  "modelRecovery": "See parentResult and logs",
+  "timedOut": false,
+  "intervention": false,
+  "actions": [],
+  "sessionsBeforeCleanup": [
+    {
+      "handle": "4e4fda",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "depth": 2,
+      "createdAt": "2026-10-11T14:42:50.314Z",
+      "promptPreview": "Leaf helper at depth 2; do not delegate. Work only in /Users/austin/codex-projects/smart-router. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHEC"
+    },
+    {
+      "handle": "862c73",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T14:42:39.654Z",
+      "promptPreview": "Live adversarial robustness scenario send-to-running. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router con"
+    }
+  ],
+  "rawSessions": [
+    {
+      "handle": "4e4fda",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR",
+      "createdAt": "2026-10-11T14:42:50.314Z",
+      "promptPreview": "Leaf helper at depth 2; do not delegate. Work only in /Users/austin/codex-projects/smart-router. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHEC",
+      "status": "done",
+      "pid": 7675,
+      "processStartTime": "Sun Oct 11 07:42:50 2026",
+      "depth": 2,
+      "logPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR/sessions/4e4fda.log",
+      "errPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR/sessions/4e4fda.err",
+      "usage": {
+        "inputTokens": 64986,
+        "outputTokens": 122,
+        "costUsd": null
+      },
+      "route": null,
+      "sessionId": "01a12b6a-9f76-78f3-97ec-515aa7ab199e",
+      "result": "original-ok",
+      "lastResult": "original-ok"
+    },
+    {
+      "handle": "862c73",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR",
+      "sessionId": "01a12b6a-75d1-7873-8abc-1838d6dc221e",
+      "createdAt": "2026-10-11T14:42:39.654Z",
+      "promptPreview": "Live adversarial robustness scenario send-to-running. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router con",
+      "status": "done",
+      "pid": 7102,
+      "wrapperPid": 7100,
+      "wrapperProcessStartTime": "Sun Oct 11 07:42:39 2026",
+      "processStartTime": "Sun Oct 11 07:42:39 2026",
+      "depth": 1,
+      "result": "Send was **not accepted**. The required `--cwd` flag caused argument rejection, so running-session steering behavior remains untested.\n\n| Router command | Exit | JSON / output |\n|---|---:|---|\n| `spawn --help` | 0 | No JSON; usage text |\n| `spawn … --detach --model codex:gpt-6-luna --effort low --sandbox danger-full-access --cwd /Users/austin/codex-projects/smart-router` | 0 | JSON below |\n| `send 4e4fda 'Reply follow-up-ok and stop' --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON; `error: unknown option '--cwd'` |\n| `wait 4e4fda --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON; `error: unknown option '--cwd'` |\n\n```json\n{\"handle\":\"4e4fda\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR/sessions/4e4fda.log\"}\n```\n\nFinal status: the original helper completed `sleep 60` with exit 0, replied `original-ok`, and completed its turn (`sessions/4e4fda.log:5–7`). Its process exited, although stored status remained `\"running\"` (`sessions/4e4fda.json:13`).\n\nEnvironment variables were preserved. No repository files or real router config were edited. No capacity refusal or timeout occurred.",
+      "lastResult": "Send was **not accepted**. The required `--cwd` flag caused argument rejection, so running-session steering behavior remains untested.\n\n| Router command | Exit | JSON / output |\n|---|---:|---|\n| `spawn --help` | 0 | No JSON; usage text |\n| `spawn … --detach --model codex:gpt-6-luna --effort low --sandbox danger-full-access --cwd /Users/austin/codex-projects/smart-router` | 0 | JSON below |\n| `send 4e4fda 'Reply follow-up-ok and stop' --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON; `error: unknown option '--cwd'` |\n| `wait 4e4fda --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON; `error: unknown option '--cwd'` |\n\n```json\n{\"handle\":\"4e4fda\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR/sessions/4e4fda.log\"}\n```\n\nFinal status: the original helper completed `sleep 60` with exit 0, replied `original-ok`, and completed its turn (`sessions/4e4fda.log:5–7`). Its process exited, although stored status remained `\"running\"` (`sessions/4e4fda.json:13`).\n\nEnvironment variables were preserved. No repository files or real router config were edited. No capacity refusal or timeout occurred.",
+      "usage": {
+        "inputTokens": 238942,
+        "outputTokens": 1300,
+        "costUsd": null
+      },
+      "route": null
+    }
+  ],
+  "observedProcesses": null,
+  "processesBeforeCleanup": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 7102,
+        "alive": false
+      },
+      {
+        "pid": 7675,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  },
+  "cleanup": [],
+  "sessionsAfterCleanup": [
+    {
+      "handle": "4e4fda",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "depth": 2,
+      "createdAt": "2026-10-11T14:42:50.314Z",
+      "promptPreview": "Leaf helper at depth 2; do not delegate. Work only in /Users/austin/codex-projects/smart-router. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHEC"
+    },
+    {
+      "handle": "862c73",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-send-to-running-bjCLRR",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T14:42:39.654Z",
+      "promptPreview": "Live adversarial robustness scenario send-to-running. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router con"
+    }
+  ],
+  "processesAfterCleanup": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 7102,
+        "alive": false
+      },
+      {
+        "pid": 7675,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  }
+}

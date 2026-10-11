@@ -1,0 +1,118 @@
+{
+  "scenario": "self-wait",
+  "outcome": "PARTIAL",
+  "reason": "Environment blocked harness initialization; adversarial actions not reached",
+  "stateDirectory": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-3nMoSr",
+  "wallSeconds": 2.718,
+  "parentExitCode": 1,
+  "parentExitKind": "outer foreground smart-router",
+  "parentResult": "Command codex exited with code 1: stdout:\n\nstderr:\nWARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)\nReading additional input from stdin...\nError: failed to initialize in-process app-server client: Operation not permitted (os error 1)",
+  "parentLaunch": {
+    "argv": [
+      "smart-router",
+      "spawn",
+      "Live adversarial robustness scenario self-wait. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in all commands. Helpers must use --model codex:gpt-6-luna --effort low --sandbox danger-full-access, except the explicitly selected steering helper. Always pass --cwd /Users/austin/codex-projects/smart-router. Record each smart-router command's exit code and JSON in your report, including refusals, capacity, and timeouts. Never switch to a more expensive model. Do not bypass CLI safeguards by changing delegation environment variables.\n\nYour first shell action must be `smart-router wait \"$SMART_ROUTER_HANDLE\"` before you do anything else. This is deliberately a self-wait stress case. Then spawn a detached helper that replies `helper-ok`, collect its result, and report both command exit codes and what happened. Try the first action even if it appears unwise; if it is refused, recover sensibly. Done when you report the observed refusal or completion and the helper result; stop there.\n",
+      "--cwd",
+      "/Users/austin/codex-projects/smart-router",
+      "--model",
+      "codex:gpt-6.1-sol",
+      "--effort",
+      "low",
+      "--sandbox",
+      "danger-full-access",
+      "--result-limit",
+      "3000"
+    ],
+    "pid": 74691,
+    "exitCode": 1,
+    "signal": null,
+    "stdout": "{\"error\":\"Command codex exited with code 1: stdout:\\n\\nstderr:\\nWARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)\\nReading additional input from stdin...\\nError: failed to initialize in-process app-server client: Operation not permitted (os error 1)\",\"lastMessage\":null,\"lastAction\":null}\n",
+    "stderr": "Routed to codex:gpt-6.1-sol@low (caller override) sandbox danger-full-access\nCommand codex exited with code 1: stdout:\n\nstderr:\nWARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)\nReading additional input from stdin...\nError: failed to initialize in-process app-server client: Operation not permitted (os error 1)\n"
+  },
+  "codesAppeared": {
+    "refusal": false,
+    "capacity": false,
+    "timeout": false,
+    "environmentFailure": true
+  },
+  "modelRecovery": "Not exercised: model did not start",
+  "timedOut": false,
+  "intervention": false,
+  "actions": [],
+  "sessionsBeforeCleanup": [
+    {
+      "handle": "daa570",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-3nMoSr",
+      "status": "failed",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T14:30:40.536Z",
+      "promptPreview": "Live adversarial robustness scenario self-wait. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. P"
+    }
+  ],
+  "rawSessions": [
+    {
+      "handle": "daa570",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-3nMoSr",
+      "createdAt": "2026-10-11T14:30:40.536Z",
+      "promptPreview": "Live adversarial robustness scenario self-wait. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. P",
+      "status": "failed",
+      "pid": 74703,
+      "wrapperPid": 74691,
+      "depth": 1,
+      "error": "Command codex exited with code 1: stdout:\n\nstderr:\nWARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)\nReading additional input from stdin...\nError: failed to initialize in-process app-server client: Operation not permitted (os error 1)",
+      "usage": null,
+      "route": null
+    }
+  ],
+  "observedProcesses": null,
+  "processesBeforeCleanup": {
+    "inspectionAvailable": false,
+    "psError": "EPERM: operation not permitted, posix_spawn 'ps'",
+    "pgrepError": "sysmon request failed with error: sysmond service not found\npgrep: Cannot get process list\n",
+    "recordedPids": [
+      {
+        "pid": 74703,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  },
+  "cleanup": [],
+  "sessionsAfterCleanup": [
+    {
+      "handle": "daa570",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-3nMoSr",
+      "status": "failed",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T14:30:40.536Z",
+      "promptPreview": "Live adversarial robustness scenario self-wait. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. P"
+    }
+  ],
+  "processesAfterCleanup": {
+    "inspectionAvailable": false,
+    "psError": "EPERM: operation not permitted, posix_spawn 'ps'",
+    "pgrepError": "sysmon request failed with error: sysmond service not found\npgrep: Cannot get process list\n",
+    "recordedPids": [
+      {
+        "pid": 74703,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  }
+}

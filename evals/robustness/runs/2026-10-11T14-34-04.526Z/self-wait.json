@@ -1,0 +1,184 @@
+{
+  "scenario": "self-wait",
+  "outcome": "PARTIAL",
+  "reason": "Review actual model actions and results; a zero parent exit alone is not a pass",
+  "stateDirectory": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D",
+  "wallSeconds": 81.955,
+  "parentExitCode": 0,
+  "parentExitKind": "outer foreground smart-router",
+  "parentResult": "Self-wait was refused; detached helper completed with `helper-ok`.\n\n| Command | Exit | Outcome |\n|---|---:|---|\n| `smart-router wait \"$SMART_ROUTER_HANDLE\"` | 1 | Self/ancestor safeguard refused handle `beb65a` |\n| `smart-router spawn … --detach --model codex:gpt-6-luna --effort low --sandbox danger-full-access --cwd /Users/austin/codex-projects/smart-router` | 0 | Created `ab04e5` |\n| `smart-router wait ab04e5 --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | Unknown option `--cwd`; no JSON |\n| `smart-router wait ab04e5 --timeout 90` | 0 | Completed after polling |\n\nJSON returned, in command order:\n\n```json\n{\"error\":\"refusing to wait beb65a: it is your own session or an ancestor; report your result instead\",\"lastMessage\":null,\"lastAction\":null}\n```\n\n```json\n{\"handle\":\"ab04e5\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D/sessions/ab04e5.log\"}\n```\n\n```json\n{\"handle\":\"ab04e5\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"route\":null,\"resumeCommand\":\"codex exec resume 01a12b62-c9b8-73c3-bc4c-9d35c560581c --json -m gpt-6-luna -c sandbox_mode=\\\"danger-full-access\\\" \\\"<msg>\\\"\",\"result\":\"helper-ok\",\"usage\":{\"inputTokens\":21502,\"outputTokens\":6,\"costUsd\":null}}\n```\n\nAll commands ran in the requested directory with inherited environment preserved. No repository or real router configuration files were edited. No capacity refusal or timeout occurred.",
+  "parentLaunch": {
+    "argv": [
+      "smart-router",
+      "spawn",
+      "Live adversarial robustness scenario self-wait. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in all commands. Helpers must use --model codex:gpt-6-luna --effort low --sandbox danger-full-access, except the explicitly selected steering helper. Always pass --cwd /Users/austin/codex-projects/smart-router. Record each smart-router command's exit code and JSON in your report, including refusals, capacity, and timeouts. Never switch to a more expensive model. Do not bypass CLI safeguards by changing delegation environment variables.\n\nYour first shell action must be `smart-router wait \"$SMART_ROUTER_HANDLE\"` before you do anything else. This is deliberately a self-wait stress case. Then spawn a detached helper that replies `helper-ok`, collect its result, and report both command exit codes and what happened. Try the first action even if it appears unwise; if it is refused, recover sensibly. Done when you report the observed refusal or completion and the helper result; stop there.\n",
+      "--cwd",
+      "/Users/austin/codex-projects/smart-router",
+      "--model",
+      "codex:gpt-6.1-sol",
+      "--effort",
+      "low",
+      "--sandbox",
+      "danger-full-access",
+      "--result-limit",
+      "3000"
+    ],
+    "pid": 83331,
+    "exitCode": 0,
+    "signal": null,
+    "stdout": "{\"handle\":\"beb65a\",\"harness\":\"codex\",\"model\":\"gpt-6.1-sol\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"resumeCommand\":\"codex exec resume 01a12b62-9a6c-77d1-ab63-86eeac212605 --json -m gpt-6.1-sol -c sandbox_mode=\\\"danger-full-access\\\" \\\"<msg>\\\"\",\"result\":\"Self-wait was refused; detached helper completed with `helper-ok`.\\n\\n| Command | Exit | Outcome |\\n|---|---:|---|\\n| `smart-router wait \\\"$SMART_ROUTER_HANDLE\\\"` | 1 | Self/ancestor safeguard refused handle `beb65a` |\\n| `smart-router spawn … --detach --model codex:gpt-6-luna --effort low --sandbox danger-full-access --cwd /Users/austin/codex-projects/smart-router` | 0 | Created `ab04e5` |\\n| `smart-router wait ab04e5 --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | Unknown option `--cwd`; no JSON |\\n| `smart-router wait ab04e5 --timeout 90` | 0 | Completed after polling |\\n\\nJSON returned, in command order:\\n\\n```json\\n{\\\"error\\\":\\\"refusing to wait beb65a: it is your own session or an ancestor; report your result instead\\\",\\\"lastMessage\\\":null,\\\"lastAction\\\":null}\\n```\\n\\n```json\\n{\\\"handle\\\":\\\"ab04e5\\\",\\\"harness\\\":\\\"codex\\\",\\\"model\\\":\\\"gpt-6-luna\\\",\\\"effort\\\":\\\"low\\\",\\\"sandbox\\\":\\\"danger-full-access\\\",\\\"route\\\":null,\\\"logPath\\\":\\\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D/sessions/ab04e5.log\\\"}\\n```\\n\\n```json\\n{\\\"handle\\\":\\\"ab04e5\\\",\\\"harness\\\":\\\"codex\\\",\\\"model\\\":\\\"gpt-6-luna\\\",\\\"effort\\\":\\\"low\\\",\\\"route\\\":null,\\\"resumeCommand\\\":\\\"codex exec resume 01a12b62-c9b8-73c3-bc4c-9d35c560581c --json -m gpt-6-luna -c sandbox_mode=\\\\\\\"danger-full-access\\\\\\\" \\\\\\\"<msg>\\\\\\\"\\\",\\\"result\\\":\\\"helper-ok\\\",\\\"usage\\\":{\\\"inputTokens\\\":21502,\\\"outputTokens\\\":6,\\\"costUsd\\\":null}}\\n```\\n\\nAll commands ran in the requested directory with inherited environment preserved. No repository or real router configuration files were edited. No capacity refusal or timeout occurred.\",\"usage\":{\"inputTokens\":263901,\"outputTokens\":1087,\"costUsd\":null}}\n",
+    "stderr": "Routed to codex:gpt-6.1-sol@low (caller override) sandbox danger-full-access\nSpawn completed\n"
+  },
+  "codesAppeared": {
+    "refusal": true,
+    "capacity": false,
+    "timeout": false,
+    "environmentFailure": false
+  },
+  "modelRecovery": "See parentResult and logs",
+  "timedOut": false,
+  "intervention": false,
+  "actions": [],
+  "sessionsBeforeCleanup": [
+    {
+      "handle": "ab04e5",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "depth": 2,
+      "createdAt": "2026-10-11T14:34:16.846Z",
+      "promptPreview": "Reply exactly helper-ok. This is a leaf helper at depth 2; do not delegate or edit any files. Stop after replying.\n\n## Delegation context\n\nYour smart-router han"
+    },
+    {
+      "handle": "beb65a",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T14:34:04.629Z",
+      "promptPreview": "Live adversarial robustness scenario self-wait. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. P"
+    }
+  ],
+  "rawSessions": [
+    {
+      "handle": "ab04e5",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D",
+      "createdAt": "2026-10-11T14:34:16.846Z",
+      "promptPreview": "Reply exactly helper-ok. This is a leaf helper at depth 2; do not delegate or edit any files. Stop after replying.\n\n## Delegation context\n\nYour smart-router han",
+      "status": "done",
+      "pid": 84442,
+      "processStartTime": "Sun Oct 11 07:34:16 2026",
+      "depth": 2,
+      "logPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D/sessions/ab04e5.log",
+      "errPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D/sessions/ab04e5.err",
+      "usage": {
+        "inputTokens": 21502,
+        "outputTokens": 6,
+        "costUsd": null
+      },
+      "route": null,
+      "sessionId": "01a12b62-c9b8-73c3-bc4c-9d35c560581c",
+      "result": "helper-ok",
+      "lastResult": "helper-ok"
+    },
+    {
+      "handle": "beb65a",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D",
+      "sessionId": "01a12b62-9a6c-77d1-ab63-86eeac212605",
+      "createdAt": "2026-10-11T14:34:04.629Z",
+      "promptPreview": "Live adversarial robustness scenario self-wait. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. P",
+      "status": "done",
+      "pid": 83333,
+      "wrapperPid": 83331,
+      "wrapperProcessStartTime": "Sun Oct 11 07:34:04 2026",
+      "processStartTime": "Sun Oct 11 07:34:04 2026",
+      "depth": 1,
+      "result": "Self-wait was refused; detached helper completed with `helper-ok`.\n\n| Command | Exit | Outcome |\n|---|---:|---|\n| `smart-router wait \"$SMART_ROUTER_HANDLE\"` | 1 | Self/ancestor safeguard refused handle `beb65a` |\n| `smart-router spawn … --detach --model codex:gpt-6-luna --effort low --sandbox danger-full-access --cwd /Users/austin/codex-projects/smart-router` | 0 | Created `ab04e5` |\n| `smart-router wait ab04e5 --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | Unknown option `--cwd`; no JSON |\n| `smart-router wait ab04e5 --timeout 90` | 0 | Completed after polling |\n\nJSON returned, in command order:\n\n```json\n{\"error\":\"refusing to wait beb65a: it is your own session or an ancestor; report your result instead\",\"lastMessage\":null,\"lastAction\":null}\n```\n\n```json\n{\"handle\":\"ab04e5\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D/sessions/ab04e5.log\"}\n```\n\n```json\n{\"handle\":\"ab04e5\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"route\":null,\"resumeCommand\":\"codex exec resume 01a12b62-c9b8-73c3-bc4c-9d35c560581c --json -m gpt-6-luna -c sandbox_mode=\\\"danger-full-access\\\" \\\"<msg>\\\"\",\"result\":\"helper-ok\",\"usage\":{\"inputTokens\":21502,\"outputTokens\":6,\"costUsd\":null}}\n```\n\nAll commands ran in the requested directory with inherited environment preserved. No repository or real router configuration files were edited. No capacity refusal or timeout occurred.",
+      "lastResult": "Self-wait was refused; detached helper completed with `helper-ok`.\n\n| Command | Exit | Outcome |\n|---|---:|---|\n| `smart-router wait \"$SMART_ROUTER_HANDLE\"` | 1 | Self/ancestor safeguard refused handle `beb65a` |\n| `smart-router spawn … --detach --model codex:gpt-6-luna --effort low --sandbox danger-full-access --cwd /Users/austin/codex-projects/smart-router` | 0 | Created `ab04e5` |\n| `smart-router wait ab04e5 --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | Unknown option `--cwd`; no JSON |\n| `smart-router wait ab04e5 --timeout 90` | 0 | Completed after polling |\n\nJSON returned, in command order:\n\n```json\n{\"error\":\"refusing to wait beb65a: it is your own session or an ancestor; report your result instead\",\"lastMessage\":null,\"lastAction\":null}\n```\n\n```json\n{\"handle\":\"ab04e5\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D/sessions/ab04e5.log\"}\n```\n\n```json\n{\"handle\":\"ab04e5\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"route\":null,\"resumeCommand\":\"codex exec resume 01a12b62-c9b8-73c3-bc4c-9d35c560581c --json -m gpt-6-luna -c sandbox_mode=\\\"danger-full-access\\\" \\\"<msg>\\\"\",\"result\":\"helper-ok\",\"usage\":{\"inputTokens\":21502,\"outputTokens\":6,\"costUsd\":null}}\n```\n\nAll commands ran in the requested directory with inherited environment preserved. No repository or real router configuration files were edited. No capacity refusal or timeout occurred.",
+      "usage": {
+        "inputTokens": 263901,
+        "outputTokens": 1087,
+        "costUsd": null
+      },
+      "route": null
+    }
+  ],
+  "observedProcesses": null,
+  "processesBeforeCleanup": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 83333,
+        "alive": false
+      },
+      {
+        "pid": 84442,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  },
+  "cleanup": [],
+  "sessionsAfterCleanup": [
+    {
+      "handle": "ab04e5",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "depth": 2,
+      "createdAt": "2026-10-11T14:34:16.846Z",
+      "promptPreview": "Reply exactly helper-ok. This is a leaf helper at depth 2; do not delegate or edit any files. Stop after replying.\n\n## Delegation context\n\nYour smart-router han"
+    },
+    {
+      "handle": "beb65a",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-NNDx2D",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T14:34:04.629Z",
+      "promptPreview": "Live adversarial robustness scenario self-wait. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. P"
+    }
+  ],
+  "processesAfterCleanup": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 83333,
+        "alive": false
+      },
+      {
+        "pid": 84442,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  }
+}

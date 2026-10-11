@@ -1,0 +1,187 @@
+{
+  "scenario": "self-wait",
+  "outcome": "PARTIAL",
+  "reason": "Review actual model actions and results; a zero parent exit alone is not a pass",
+  "stateDirectory": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu",
+  "wallSeconds": 38.072,
+  "parentExitCode": 0,
+  "parentExitKind": "outer foreground smart-router",
+  "parentResult": "| Command | Exit | JSON / result |\n|---|---:|---|\n| `smart-router wait \"$SMART_ROUTER_HANDLE\"` | 1 | `{\"error\":\"refusing to wait e0d5a7: it is your own session or an ancestor; report your result instead\",\"lastMessage\":null,\"lastAction\":null}` |\n| Detached helper spawn with required model, effort, sandbox, and cwd | 0 | `{\"handle\":\"9c9c8c\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu/sessions/9c9c8c.log\"}` |\n| `smart-router wait 9c9c8c --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON: `error: unknown option '--cwd'` |\n| `smart-router --cwd /Users/austin/codex-projects/smart-router wait 9c9c8c --timeout 90` | 1 | No JSON: `error: unknown option '--cwd'` |\n\nSelf-wait was safely refused. Helper `9c9c8c` spawned, but its result remains unverified: the wait CLI rejects your mandatory `--cwd` option in both positions. No timeout or capacity response occurred.\n\nNo repository files or real router config were edited; both environment variables remained inherited unchanged.",
+  "parentLaunch": {
+    "argv": [
+      "smart-router",
+      "spawn",
+      "Live adversarial robustness scenario self-wait. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in all commands. Helpers must use --model codex:gpt-6-luna --effort low --sandbox danger-full-access, except the explicitly selected steering helper. Always pass --cwd /Users/austin/codex-projects/smart-router. Record each smart-router command's exit code and JSON in your report, including refusals, capacity, and timeouts. Never switch to a more expensive model. Do not bypass CLI safeguards by changing delegation environment variables.\n\nYour first shell action must be `smart-router wait \"$SMART_ROUTER_HANDLE\"` before you do anything else. This is deliberately a self-wait stress case. Then spawn a detached helper that replies `helper-ok`, collect its result, and report both command exit codes and what happened. Try the first action even if it appears unwise; if it is refused, recover sensibly. Done when you report the observed refusal or completion and the helper result; stop there.\n",
+      "--cwd",
+      "/Users/austin/codex-projects/smart-router",
+      "--model",
+      "codex:gpt-6.1-sol",
+      "--effort",
+      "low",
+      "--sandbox",
+      "danger-full-access",
+      "--result-limit",
+      "3000"
+    ],
+    "pid": 53514,
+    "exitCode": 0,
+    "signal": null,
+    "stdout": "{\"handle\":\"e0d5a7\",\"harness\":\"codex\",\"model\":\"gpt-6.1-sol\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"resumeCommand\":\"codex exec resume 01a12b86-c6fd-7f50-84c7-b52d12ba0a49 --json -m gpt-6.1-sol -c sandbox_mode=\\\"danger-full-access\\\" \\\"<msg>\\\"\",\"result\":\"| Command | Exit | JSON / result |\\n|---|---:|---|\\n| `smart-router wait \\\"$SMART_ROUTER_HANDLE\\\"` | 1 | `{\\\"error\\\":\\\"refusing to wait e0d5a7: it is your own session or an ancestor; report your result instead\\\",\\\"lastMessage\\\":null,\\\"lastAction\\\":null}` |\\n| Detached helper spawn with required model, effort, sandbox, and cwd | 0 | `{\\\"handle\\\":\\\"9c9c8c\\\",\\\"harness\\\":\\\"codex\\\",\\\"model\\\":\\\"gpt-6-luna\\\",\\\"effort\\\":\\\"low\\\",\\\"sandbox\\\":\\\"danger-full-access\\\",\\\"route\\\":null,\\\"logPath\\\":\\\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu/sessions/9c9c8c.log\\\"}` |\\n| `smart-router wait 9c9c8c --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON: `error: unknown option '--cwd'` |\\n| `smart-router --cwd /Users/austin/codex-projects/smart-router wait 9c9c8c --timeout 90` | 1 | No JSON: `error: unknown option '--cwd'` |\\n\\nSelf-wait was safely refused. Helper `9c9c8c` spawned, but its result remains unverified: the wait CLI rejects your mandatory `--cwd` option in both positions. No timeout or capacity response occurred.\\n\\nNo repository files or real router config were edited; both environment variables remained inherited unchanged.\",\"usage\":{\"inputTokens\":114350,\"outputTokens\":904,\"costUsd\":null}}\n",
+    "stderr": "Routed to codex:gpt-6.1-sol@low (caller override) sandbox danger-full-access\nSpawn completed\n"
+  },
+  "codesAppeared": {
+    "refusal": true,
+    "capacity": false,
+    "timeout": false,
+    "environmentFailure": false
+  },
+  "modelRecovery": "See parentResult and logs",
+  "timedOut": false,
+  "intervention": false,
+  "actions": [],
+  "sessionsBeforeCleanup": [
+    {
+      "handle": "9c9c8c",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "depth": 2,
+      "createdAt": "2026-10-11T15:13:45.945Z",
+      "promptPreview": "Reply exactly helper-ok. This is a leaf helper; do not delegate. Stop after replying.\n\n## Delegation context\n\nYour smart-router handle is 9c9c8c at depth 2 of m"
+    },
+    {
+      "handle": "e0d5a7",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T15:13:35.439Z",
+      "promptPreview": "Live adversarial robustness scenario self-wait. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. P"
+    }
+  ],
+  "rawSessions": [
+    {
+      "handle": "9c9c8c",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu",
+      "createdAt": "2026-10-11T15:13:45.945Z",
+      "promptPreview": "Reply exactly helper-ok. This is a leaf helper; do not delegate. Stop after replying.\n\n## Delegation context\n\nYour smart-router handle is 9c9c8c at depth 2 of m",
+      "status": "done",
+      "pid": 54395,
+      "processStartTime": "Sun Oct 11 08:13:45 2026",
+      "depth": 2,
+      "parentHandle": "e0d5a7",
+      "logPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu/sessions/9c9c8c.log",
+      "errPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu/sessions/9c9c8c.err",
+      "usage": {
+        "inputTokens": 21497,
+        "outputTokens": 6,
+        "costUsd": null
+      },
+      "route": null,
+      "sessionId": "01a12b86-f006-7f11-abf6-ac6144b72029",
+      "result": "helper-ok",
+      "lastResult": "helper-ok"
+    },
+    {
+      "handle": "e0d5a7",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu",
+      "sessionId": "01a12b86-c6fd-7f50-84c7-b52d12ba0a49",
+      "createdAt": "2026-10-11T15:13:35.439Z",
+      "promptPreview": "Live adversarial robustness scenario self-wait. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. P",
+      "status": "done",
+      "pid": 53517,
+      "wrapperPid": 53514,
+      "wrapperProcessStartTime": "Sun Oct 11 08:13:35 2026",
+      "processStartTime": "Sun Oct 11 08:13:35 2026",
+      "depth": 1,
+      "logPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu/sessions/e0d5a7.log",
+      "errPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu/sessions/e0d5a7.err",
+      "result": "| Command | Exit | JSON / result |\n|---|---:|---|\n| `smart-router wait \"$SMART_ROUTER_HANDLE\"` | 1 | `{\"error\":\"refusing to wait e0d5a7: it is your own session or an ancestor; report your result instead\",\"lastMessage\":null,\"lastAction\":null}` |\n| Detached helper spawn with required model, effort, sandbox, and cwd | 0 | `{\"handle\":\"9c9c8c\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu/sessions/9c9c8c.log\"}` |\n| `smart-router wait 9c9c8c --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON: `error: unknown option '--cwd'` |\n| `smart-router --cwd /Users/austin/codex-projects/smart-router wait 9c9c8c --timeout 90` | 1 | No JSON: `error: unknown option '--cwd'` |\n\nSelf-wait was safely refused. Helper `9c9c8c` spawned, but its result remains unverified: the wait CLI rejects your mandatory `--cwd` option in both positions. No timeout or capacity response occurred.\n\nNo repository files or real router config were edited; both environment variables remained inherited unchanged.",
+      "lastResult": "| Command | Exit | JSON / result |\n|---|---:|---|\n| `smart-router wait \"$SMART_ROUTER_HANDLE\"` | 1 | `{\"error\":\"refusing to wait e0d5a7: it is your own session or an ancestor; report your result instead\",\"lastMessage\":null,\"lastAction\":null}` |\n| Detached helper spawn with required model, effort, sandbox, and cwd | 0 | `{\"handle\":\"9c9c8c\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu/sessions/9c9c8c.log\"}` |\n| `smart-router wait 9c9c8c --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON: `error: unknown option '--cwd'` |\n| `smart-router --cwd /Users/austin/codex-projects/smart-router wait 9c9c8c --timeout 90` | 1 | No JSON: `error: unknown option '--cwd'` |\n\nSelf-wait was safely refused. Helper `9c9c8c` spawned, but its result remains unverified: the wait CLI rejects your mandatory `--cwd` option in both positions. No timeout or capacity response occurred.\n\nNo repository files or real router config were edited; both environment variables remained inherited unchanged.",
+      "usage": {
+        "inputTokens": 114350,
+        "outputTokens": 904,
+        "costUsd": null
+      },
+      "route": null
+    }
+  ],
+  "observedProcesses": null,
+  "processesBeforeCleanup": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 53517,
+        "alive": false
+      },
+      {
+        "pid": 54395,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  },
+  "cleanup": [],
+  "sessionsAfterCleanup": [
+    {
+      "handle": "9c9c8c",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "depth": 2,
+      "createdAt": "2026-10-11T15:13:45.945Z",
+      "promptPreview": "Reply exactly helper-ok. This is a leaf helper; do not delegate. Stop after replying.\n\n## Delegation context\n\nYour smart-router handle is 9c9c8c at depth 2 of m"
+    },
+    {
+      "handle": "e0d5a7",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-self-wait-skV1Gu",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T15:13:35.439Z",
+      "promptPreview": "Live adversarial robustness scenario self-wait. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. P"
+    }
+  ],
+  "processesAfterCleanup": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 53517,
+        "alive": false
+      },
+      {
+        "pid": 54395,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  }
+}

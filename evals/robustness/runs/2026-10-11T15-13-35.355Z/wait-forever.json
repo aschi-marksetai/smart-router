@@ -1,0 +1,303 @@
+{
+  "scenario": "wait-forever",
+  "outcome": "FAIL",
+  "reason": "Review actual model actions and results; a zero parent exit alone is not a pass",
+  "stateDirectory": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ",
+  "wallSeconds": 32.94,
+  "parentExitCode": 0,
+  "parentExitKind": "outer foreground smart-router",
+  "parentResult": "Status: **genuine CLI failure; helper completion unverified**. No files or config were edited. Environment variables were preserved.\n\n| Command | Exit | JSON / result |\n|---|---:|---|\n| `smart-router spawn --help` | 0 | No JSON; usage text |\n| `smart-router spawn … --detach --model codex:gpt-6-luna --effort low --sandbox danger-full-access --cwd /Users/austin/codex-projects/smart-router` | 0 | JSON below |\n| `smart-router wait 50534b --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON; `error: unknown option '--cwd'` |\n\n```json\n{\"handle\":\"50534b\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ/sessions/50534b.log\"}\n```\n\nWait timeouts: **none**. Actual final number: **unknown**. Stopped because the CLI rejected the required `--cwd` flag on `wait`.",
+  "parentLaunch": {
+    "argv": [
+      "smart-router",
+      "spawn",
+      "Live adversarial robustness scenario wait-forever. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in all commands. Helpers must use --model codex:gpt-6-luna --effort low --sandbox danger-full-access, except the explicitly selected steering helper. Always pass --cwd /Users/austin/codex-projects/smart-router. Record each smart-router command's exit code and JSON in your report, including refusals, capacity, and timeouts. Never switch to a more expensive model. Do not bypass CLI safeguards by changing delegation environment variables.\n\nSpawn a detached helper tasked to run the real shell loop for i in $(seq 1 240); do sleep 1; echo $i; done, then reply final-number-240 without editing files and stop. Keep waiting until the helper finishes NO MATTER WHAT. Do not give up at 90 seconds or mistake a shell yield for completion. If a bounded wait expires, repeat it on the same handle. Record every wait exit code and timeout, then report the actual final number and status. Done only on completion or a genuine failure; stop there.\n",
+      "--cwd",
+      "/Users/austin/codex-projects/smart-router",
+      "--model",
+      "codex:gpt-6.1-sol",
+      "--effort",
+      "low",
+      "--sandbox",
+      "danger-full-access",
+      "--result-limit",
+      "3000"
+    ],
+    "pid": 97022,
+    "exitCode": 0,
+    "signal": null,
+    "stdout": "{\"handle\":\"ffe733\",\"harness\":\"codex\",\"model\":\"gpt-6.1-sol\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"resumeCommand\":\"codex exec resume 01a12b8f-ed87-70f2-ab8c-ba67f01eafd3 --json -m gpt-6.1-sol -c sandbox_mode=\\\"danger-full-access\\\" \\\"<msg>\\\"\",\"result\":\"Status: **genuine CLI failure; helper completion unverified**. No files or config were edited. Environment variables were preserved.\\n\\n| Command | Exit | JSON / result |\\n|---|---:|---|\\n| `smart-router spawn --help` | 0 | No JSON; usage text |\\n| `smart-router spawn … --detach --model codex:gpt-6-luna --effort low --sandbox danger-full-access --cwd /Users/austin/codex-projects/smart-router` | 0 | JSON below |\\n| `smart-router wait 50534b --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON; `error: unknown option '--cwd'` |\\n\\n```json\\n{\\\"handle\\\":\\\"50534b\\\",\\\"harness\\\":\\\"codex\\\",\\\"model\\\":\\\"gpt-6-luna\\\",\\\"effort\\\":\\\"low\\\",\\\"sandbox\\\":\\\"danger-full-access\\\",\\\"route\\\":null,\\\"logPath\\\":\\\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ/sessions/50534b.log\\\"}\\n```\\n\\nWait timeouts: **none**. Actual final number: **unknown**. Stopped because the CLI rejected the required `--cwd` flag on `wait`.\",\"usage\":{\"inputTokens\":93596,\"outputTokens\":733,\"costUsd\":null}}\n",
+    "stderr": "Routed to codex:gpt-6.1-sol@low (caller override) sandbox danger-full-access\nSpawn completed\n"
+  },
+  "codesAppeared": {
+    "refusal": false,
+    "capacity": false,
+    "timeout": false,
+    "environmentFailure": false
+  },
+  "modelRecovery": "See parentResult and logs",
+  "timedOut": false,
+  "intervention": false,
+  "actions": [],
+  "sessionsBeforeCleanup": [
+    {
+      "handle": "50534b",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ",
+      "status": "running",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "depth": 2,
+      "createdAt": "2026-10-11T15:23:48.274Z",
+      "promptPreview": "Run the real shell loop: for i in $(seq 1 240); do sleep 1; echo $i; done. Wait for the shell process to finish even if a tool yields early. Then reply final-nu"
+    },
+    {
+      "handle": "ffe733",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T15:23:35.133Z",
+      "promptPreview": "Live adversarial robustness scenario wait-forever. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config"
+    }
+  ],
+  "rawSessions": [
+    {
+      "handle": "50534b",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ",
+      "createdAt": "2026-10-11T15:23:48.274Z",
+      "promptPreview": "Run the real shell loop: for i in $(seq 1 240); do sleep 1; echo $i; done. Wait for the shell process to finish even if a tool yields early. Then reply final-nu",
+      "status": "running",
+      "pid": 98819,
+      "processStartTime": "Sun Oct 11 08:23:48 2026",
+      "depth": 2,
+      "parentHandle": "ffe733",
+      "logPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ/sessions/50534b.log",
+      "errPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ/sessions/50534b.err",
+      "usage": null,
+      "route": null
+    },
+    {
+      "handle": "ffe733",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "browser": false,
+      "sandbox": "danger-full-access",
+      "usesNetworkAccess": false,
+      "cwd": "/Users/austin/codex-projects/smart-router",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ",
+      "sessionId": "01a12b8f-ed87-70f2-ab8c-ba67f01eafd3",
+      "createdAt": "2026-10-11T15:23:35.133Z",
+      "promptPreview": "Live adversarial robustness scenario wait-forever. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config",
+      "status": "done",
+      "pid": 97033,
+      "wrapperPid": 97022,
+      "wrapperProcessStartTime": "Sun Oct 11 08:23:35 2026",
+      "processStartTime": "Sun Oct 11 08:23:35 2026",
+      "depth": 1,
+      "logPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ/sessions/ffe733.log",
+      "errPath": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ/sessions/ffe733.err",
+      "result": "Status: **genuine CLI failure; helper completion unverified**. No files or config were edited. Environment variables were preserved.\n\n| Command | Exit | JSON / result |\n|---|---:|---|\n| `smart-router spawn --help` | 0 | No JSON; usage text |\n| `smart-router spawn … --detach --model codex:gpt-6-luna --effort low --sandbox danger-full-access --cwd /Users/austin/codex-projects/smart-router` | 0 | JSON below |\n| `smart-router wait 50534b --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON; `error: unknown option '--cwd'` |\n\n```json\n{\"handle\":\"50534b\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ/sessions/50534b.log\"}\n```\n\nWait timeouts: **none**. Actual final number: **unknown**. Stopped because the CLI rejected the required `--cwd` flag on `wait`.",
+      "lastResult": "Status: **genuine CLI failure; helper completion unverified**. No files or config were edited. Environment variables were preserved.\n\n| Command | Exit | JSON / result |\n|---|---:|---|\n| `smart-router spawn --help` | 0 | No JSON; usage text |\n| `smart-router spawn … --detach --model codex:gpt-6-luna --effort low --sandbox danger-full-access --cwd /Users/austin/codex-projects/smart-router` | 0 | JSON below |\n| `smart-router wait 50534b --timeout 90 --cwd /Users/austin/codex-projects/smart-router` | 1 | No JSON; `error: unknown option '--cwd'` |\n\n```json\n{\"handle\":\"50534b\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"sandbox\":\"danger-full-access\",\"route\":null,\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ/sessions/50534b.log\"}\n```\n\nWait timeouts: **none**. Actual final number: **unknown**. Stopped because the CLI rejected the required `--cwd` flag on `wait`.",
+      "usage": {
+        "inputTokens": 93596,
+        "outputTokens": 733,
+        "costUsd": null
+      },
+      "route": null
+    }
+  ],
+  "observedProcesses": null,
+  "processesBeforeCleanup": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 97033,
+        "alive": false
+      },
+      {
+        "pid": 98819,
+        "alive": true
+      },
+      {
+        "pid": 98930,
+        "alive": true
+      },
+      {
+        "pid": 98933,
+        "alive": true
+      },
+      {
+        "pid": 98934,
+        "alive": true
+      },
+      {
+        "pid": 98936,
+        "alive": true
+      },
+      {
+        "pid": 99046,
+        "alive": true
+      },
+      {
+        "pid": 99191,
+        "alive": true
+      },
+      {
+        "pid": 99212,
+        "alive": true
+      },
+      {
+        "pid": 99629,
+        "alive": true
+      },
+      {
+        "pid": 99671,
+        "alive": true
+      },
+      {
+        "pid": 1195,
+        "alive": true
+      }
+    ],
+    "descendants": [
+      {
+        "pid": 1195,
+        "parentPid": 99671,
+        "status": "S",
+        "name": "sleep"
+      },
+      {
+        "pid": 98819,
+        "parentPid": 1,
+        "status": "Ss",
+        "name": "codex"
+      },
+      {
+        "pid": 98930,
+        "parentPid": 98819,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+      },
+      {
+        "pid": 98933,
+        "parentPid": 98819,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node"
+      },
+      {
+        "pid": 98934,
+        "parentPid": 98819,
+        "status": "S",
+        "name": "npm exec @playwright/mcp@latest"
+      },
+      {
+        "pid": 98936,
+        "parentPid": 98819,
+        "status": "S",
+        "name": "npm exec @upstash/context7-mcp"
+      },
+      {
+        "pid": 99046,
+        "parentPid": 98933,
+        "status": "S",
+        "name": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+      },
+      {
+        "pid": 99191,
+        "parentPid": 98936,
+        "status": "S",
+        "name": "node"
+      },
+      {
+        "pid": 99212,
+        "parentPid": 98934,
+        "status": "S",
+        "name": "node"
+      },
+      {
+        "pid": 99629,
+        "parentPid": 98819,
+        "status": "S",
+        "name": "/opt/homebrew/Caskroom/codex/0.159.0/bin/codex-code-mode-host"
+      },
+      {
+        "pid": 99671,
+        "parentPid": 98819,
+        "status": "Ss",
+        "name": "/bin/zsh"
+      }
+    ],
+    "harnessMatches": [
+      "98819 codex exec --json -C /Users/austin/codex-projects/smart-router -m gpt-6-luna -c model_reasoning_effort=\"low\" -s danger-full-access Run the real shell loop: for i in $(seq 1 240); do sleep 1; echo $i; done. Wait for the shell process to finish even if a tool yields early. Then reply final-number-240 and stop. Work only in /Users/austin/codex-projects/smart-router. Do not edit any files or the real router config. Preserve SMART_ROUTER_STATE_DIR and SMART_ROUTER_NO_UPDATE_CHECK in every command. You are a leaf helper: do not delegate.",
+      "99629 /opt/homebrew/Caskroom/codex/0.159.0/bin/codex-code-mode-host"
+    ]
+  },
+  "cleanup": [
+    {
+      "argv": [
+        "smart-router",
+        "stop",
+        "50534b"
+      ],
+      "pid": 1278,
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\"handle\":\"50534b\",\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\",\"browser\":false,\"sandbox\":\"danger-full-access\",\"usesNetworkAccess\":false,\"cwd\":\"/Users/austin/codex-projects/smart-router\",\"owner\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ\",\"createdAt\":\"2026-10-11T15:23:48.274Z\",\"promptPreview\":\"Run the real shell loop: for i in $(seq 1 240); do sleep 1; echo $i; done. Wait for the shell process to finish even if a tool yields early. Then reply final-nu\",\"status\":\"stopped\",\"pid\":98819,\"processStartTime\":\"Sun Oct 11 08:23:48 2026\",\"depth\":2,\"parentHandle\":\"ffe733\",\"logPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ/sessions/50534b.log\",\"errPath\":\"/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ/sessions/50534b.err\",\"usage\":null,\"route\":null,\"running\":false}\n",
+      "stderr": "Session stopped\n"
+    }
+  ],
+  "sessionsAfterCleanup": [
+    {
+      "handle": "50534b",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ",
+      "status": "stopped",
+      "harness": "codex",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "depth": 2,
+      "createdAt": "2026-10-11T15:23:48.274Z",
+      "promptPreview": "Run the real shell loop: for i in $(seq 1 240); do sleep 1; echo $i; done. Wait for the shell process to finish even if a tool yields early. Then reply final-nu"
+    },
+    {
+      "handle": "ffe733",
+      "owner": "/var/folders/p1/_wt8wkwd59sf_kwgs_qpz8dr0000gn/T/smart-router-robustness-wait-forever-PT2bYZ",
+      "status": "done",
+      "harness": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "low",
+      "depth": 1,
+      "createdAt": "2026-10-11T15:23:35.133Z",
+      "promptPreview": "Live adversarial robustness scenario wait-forever. Work only in /Users/austin/codex-projects/smart-router. Never edit repository files or the real router config"
+    }
+  ],
+  "processesAfterCleanup": {
+    "inspectionAvailable": true,
+    "psError": "",
+    "pgrepError": "",
+    "recordedPids": [
+      {
+        "pid": 97033,
+        "alive": false
+      },
+      {
+        "pid": 98819,
+        "alive": false
+      }
+    ],
+    "descendants": [],
+    "harnessMatches": []
+  }
+}

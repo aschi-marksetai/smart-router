@@ -407,7 +407,10 @@ const runDirectory = join(
 );
 await mkdir(runDirectory, { recursive: true });
 const version = await command(["smart-router", "--version"], process.env);
-assert.equal(version.stdout.trim(), "0.5.0");
+const packageVersion = JSON.parse(
+  await readFile(join(cwd, "package.json"), "utf8"),
+).version;
+assert.equal(version.stdout.trim(), packageVersion);
 const deadline = Date.now() + totalBudgetMs;
 const results = [];
 for (const [name, seconds] of scenarios) {

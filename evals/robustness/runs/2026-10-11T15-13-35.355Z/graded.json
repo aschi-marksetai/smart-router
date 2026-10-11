@@ -1,0 +1,87 @@
+{
+  "gradedAt": "2026-10-11T15:28:09.590Z",
+  "grader": "model review",
+  "scenarios": {
+    "self-wait": {
+      "outcome": "PARTIAL",
+      "reason": "Self-wait exited 1 with \"refusing to wait e0d5a7: it is your own session or an ancestor; report your result instead\", but collection failed on \"error: unknown option '--cwd'\" and the parent reported the helper result \"remains unverified\", although helper 9c9c8c actually returned \"helper-ok\", both sessions ended \"done\", and no tracked harness survived.",
+      "recovered": false,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "stop-parent": {
+      "outcome": "PARTIAL",
+      "reason": "The helper's stop attempt exited 1 only with \"error: unknown option '--cwd'\", leaving the ancestor safeguard untested, but the parent retried collection without the unsupported flag, collected \"helper-ok\", honestly reported \"the parent-stop safeguard was not tested\", and both sessions ended \"done\" with no tracked harness surviving.",
+      "recovered": true,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "max-depth": {
+      "outcome": "PARTIAL",
+      "reason": "Helper 311222's depth-3 spawn exited 1 only with \"error: unknown option '--json'\", so no \"maxDepth\" refusal or \"depth-three-ok\" fallback was observed, and the parent abandoned collection on \"error: unknown option '--cwd'\" and reported depth-3 creation \"unverified\", although both sessions ended \"done\" and no tracked harness survived.",
+      "recovered": false,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "yield-trap": {
+      "outcome": "PASS",
+      "reason": "The helper log records the real loop completing with exit 0 and output ending \"119\\n120\", the parent reported \"final observed number: **120**\" and \"Foreground execution yielded: **yes**; polled the same execution until completion\", foreground spawn exited 0, both sessions ended \"done\", and no tracked harness survived.",
+      "recovered": true,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "capacity-flood": {
+      "outcome": "PASS",
+      "reason": "Seven concurrent spawn records show four exits 0 and three exits 3 with \"error\":\"capacity\" and \"limit\":\"maxPerCaller\", with no lock ENOENT, and the parent recovered from unsupported \"--cwd\" waits by collecting \"helper-1-ok\" through \"helper-4-ok\", all five sessions ended \"done\", and no tracked harness survived.",
+      "recovered": true,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "give-up": {
+      "outcome": "PARTIAL",
+      "reason": "Wait and stop both exited 1 only with \"error: unknown option '--cwd'\", the parent reported \"stopping it was not confirmed\", and helper 77db04's log contains \"slow-ok\" without any sleep command, so deadline cancellation was untested despite both sessions ending \"done\" and no tracked harness surviving.",
+      "recovered": false,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "cascade": {
+      "outcome": "PASS",
+      "reason": "Controller stop exited 0 with parent aa147a \"stopped\" and \"running\":false, helper f97fe6 also ended \"stopped\" with \"stopped because ancestor aa147a stopped\", both tracked harness PIDs were \"alive\":false before cleanup, and no controller cleanup was required, although \"No parent result\" prevented establishing model recovery.",
+      "recovered": false,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "send-to-running": {
+      "outcome": "PASS",
+      "reason": "After an unsupported \"--cwd\" attempt, send was retried while the helper was running and exited 1 with \"session 92a333 is still running; wait or stop it first\", wait exited 0 with \"original-ok\", both sessions ended \"done\", and no tracked harness survived.",
+      "recovered": true,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    },
+    "steer-nested": {
+      "outcome": "FAIL",
+      "reason": "The helper log records \"sleep 120\" starting before steer, steer and wait both exited 0 with \"steered\" and the helper ended \"done\", but the parent's subsequent process check returned \"91136     1 sleep 120\", proving slow work survived the interrupt as an orphan even though the controller's tracked-harness snapshot missed it.",
+      "recovered": true,
+      "orphanedProcesses": 1,
+      "smartRouterBug": {
+        "summary": "Codex steering resumes successfully after stop but leaves the interrupted command alive when it runs outside the harness process group.",
+        "location": "src/sessions.ts:450 (terminateSessionProcess), especially src/sessions.ts:461-478; src/cli.ts:801 (steerCodexSession)",
+        "fix": "Capture and verify the harness's descendant processes before signalling, terminate command descendants and their separate process groups with a grace period and SIGKILL escalation, and await their termination before marking stopped or resuming."
+      }
+    },
+    "wait-forever": {
+      "outcome": "FAIL",
+      "reason": "The only wait exited 1 with \"error: unknown option '--cwd'\", the parent reported \"Actual final number: **unknown**\" and ended \"done\", but helper 50534b remained \"running\" with Codex PID 98819 \"alive\":true before cleanup, requiring controller stop (exit 0); the orphan count follows the previous grade's one surviving session harness convention rather than counting its ten supporting descendants separately.",
+      "recovered": false,
+      "orphanedProcesses": 1,
+      "smartRouterBug": null
+    },
+    "kill-caller": {
+      "outcome": "PASS",
+      "reason": "The outer wrapper exited 137 after SIGKILL, parent 92d541 ended \"stopped\" with \"stopped: its calling smart-router process exited (likely killed by the caller)\", helper dcd7f7 ended \"stopped\" with \"stopped because ancestor 92d541 stopped\", both tracked harness PIDs were \"alive\":false before cleanup and no cleanup was required, while \"No parent result\" precluded model recovery.",
+      "recovered": false,
+      "orphanedProcesses": 0,
+      "smartRouterBug": null
+    }
+  }
+}

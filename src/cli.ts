@@ -506,7 +506,7 @@ async function spawnCommand(
     ...harnessOptions,
     streamInput: supervised,
   });
-  const logPath = options.detach ? sessionLogPath(handle) : undefined;
+  const logPath = sessionLogPath(handle);
   const reservation = await reserveSpawnSession(
     {
       ...selected,
@@ -515,6 +515,7 @@ async function spawnCommand(
       sessionId: command.sessionId,
       prompt: spawnPrompt,
       handle,
+      parentHandle: process.env[HANDLE_ENVIRONMENT_VARIABLE],
       logPath,
       wrapperPid: options.detach ? undefined : process.pid,
       wrapperProcessStartTime: options.detach

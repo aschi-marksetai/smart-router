@@ -73,6 +73,7 @@ export type Session = {
   wrapperProcessStartTime?: string;
   processStartTime?: string;
   depth?: number;
+  parentHandle?: string;
   logPath?: string;
   errPath?: string;
   result?: string;
@@ -141,6 +142,7 @@ export async function createSession(
     wrapperProcessStartTime: options.wrapperProcessStartTime,
     processStartTime: options.processStartTime,
     depth: options.depth,
+    parentHandle: options.parentHandle,
     logPath: options.logPath,
     errPath: options.errPath,
     result: options.result,
@@ -323,26 +325,34 @@ export async function sweepSessions(
         session.wrapperProcessStartTime,
         getProcessStartTime,
       );
-    if (orphaned && childRunning) {
-      await terminateSessionProcess(session);
-      session.status = SESSION_STATUS.stopped;
+    if (orphaned) {
+      await stopSession(session, "SIGTERM", sessions);
       session.error =
         "stopped: its calling smart-router process exited (likely killed by the caller)";
+      const output = await readFile(
+        session.logPath ?? sessionLogPath(session.handle),
+        "utf8",
+      ).catch(() => "");
+      Object.assign(session, logActivity(output));
       await saveSession(session);
       continue;
     }
-    if (!childRunning)
-      await completeSessionFromLog(
-        session,
-        getAdapter(session.harness).parseSpawnOutput,
-        true,
-      );
+    if (childRunning) continue;
+    if (!isProcessRunning(session.pid)) await terminateSessionProcess(session);
+    const completed = await completeSessionFromLog(
+      session,
+      getAdapter(session.harness).parseSpawnOutput,
+      true,
+    );
+    if (completed.status === SESSION_STATUS.failed)
+      await stopDescendants(session.handle, sessions);
   }
   return sessions;
 }
 
 export async function withSessionsLock<T>(
   action: () => Promise<T>,
+  getLockStat: (path: string) => Promise<{ mtimeMs: number }> = stat,
 ): Promise<T> {
   await mkdir(sessionsDir(), { recursive: true });
   const lockPath = join(sessionsDir(), SPAWN_LOCK_DIRECTORY);
@@ -357,7 +367,19 @@ export async function withSessionsLock<T>(
         error.code === "EEXIST"
       ))
         throw error;
-      const lockAge = Date.now() - (await stat(lockPath)).mtimeMs;
+      const lockStat = await getLockStat(lockPath).catch(
+        (statError: unknown) => {
+          if (
+            statError instanceof Error &&
+            "code" in statError &&
+            statError.code === "ENOENT"
+          )
+            return undefined;
+          throw statError;
+        },
+      );
+      if (!lockStat) continue;
+      const lockAge = Date.now() - lockStat.mtimeMs;
       if (lockAge > LOCK_STALE_TIMEOUT_MS)
         await rm(lockPath, { recursive: true });
       await Bun.sleep(LOCK_RETRY_INTERVAL_MS);
@@ -429,25 +451,69 @@ export async function terminateSessionProcess(
   session: Session,
   signal: NodeJS.Signals = "SIGTERM",
 ): Promise<void> {
+  if (!session.pid) return;
+  const processRunning = isProcessRunning(session.pid);
   if (
-    !session.pid ||
+    processRunning &&
     !isTrackedProcessRunning(session.pid, session.processStartTime)
   )
     return;
-  process.kill(session.pid, signal);
-  const deadline = Date.now() + PROCESS_STOP_GRACE_PERIOD_MS;
-  while (isTrackedProcessRunning(session.pid, session.processStartTime)) {
-    if (Date.now() >= deadline) {
-      process.kill(session.pid, "SIGKILL");
-      return;
+  let target = -session.pid;
+  if (!isProcessRunning(target)) target = session.pid;
+  if (!isProcessRunning(target)) return;
+  const sendSignal = (nextSignal: NodeJS.Signals) => {
+    try {
+      process.kill(target, nextSignal);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ESRCH")
+        return;
+      throw error;
     }
+  };
+  sendSignal(signal);
+  const deadline = Date.now() + PROCESS_STOP_GRACE_PERIOD_MS;
+  while (isProcessRunning(target)) {
+    if (Date.now() >= deadline) sendSignal("SIGKILL");
     await Bun.sleep(PROCESS_STOP_POLL_INTERVAL_MS);
   }
 }
 
-export async function stopSession(session: Session): Promise<Session> {
-  if (session.pid && isProcessRunning(session.pid))
-    process.kill(session.pid, "SIGTERM");
+async function stopDescendants(
+  handle: string,
+  knownSessions?: Session[],
+): Promise<void> {
+  const sessions = knownSessions ?? (await listSessions());
+  const visited = new Set([handle]);
+  const ancestorHandles = [handle];
+  const descendants: Session[] = [];
+  for (const parentHandle of ancestorHandles) {
+    for (const descendant of sessions) {
+      if (
+        descendant.parentHandle !== parentHandle ||
+        visited.has(descendant.handle)
+      )
+        continue;
+      visited.add(descendant.handle);
+      ancestorHandles.push(descendant.handle);
+      descendants.push(descendant);
+    }
+  }
+  for (const descendant of descendants.reverse()) {
+    if (descendant.status !== SESSION_STATUS.running) continue;
+    await terminateSessionProcess(descendant);
+    descendant.status = SESSION_STATUS.stopped;
+    descendant.error = `stopped because ancestor ${handle} stopped`;
+    await saveSession(descendant);
+  }
+}
+
+export async function stopSession(
+  session: Session,
+  signal: NodeJS.Signals = "SIGTERM",
+  knownSessions?: Session[],
+): Promise<Session> {
+  await stopDescendants(session.handle, knownSessions);
+  await terminateSessionProcess(session, signal);
   session.status = SESSION_STATUS.stopped;
   await saveSession(session);
   return session;

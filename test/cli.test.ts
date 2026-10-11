@@ -12,6 +12,7 @@ import {
   loadSession,
   processStartTime,
   saveSession,
+  sessionLogPath,
   SESSION_STATUS,
 } from "../src/sessions.ts";
 import type { DoctorResult } from "../src/doctor.ts";
@@ -246,7 +247,11 @@ test("spawn parses Claude and Codex output, flags, and stopping-point refusal", 
     SMART_ROUTER_ANCESTORS: "root-handle,parent-handle",
   });
   expect(runnerEnvironments[0].SMART_ROUTER_HANDLE).toBe(claude.json.handle);
-  expect((await loadSession(claude.json.handle)).depth).toBe(2);
+  expect(await loadSession(claude.json.handle)).toMatchObject({
+    depth: 2,
+    parentHandle: "parent-handle",
+    logPath: sessionLogPath(claude.json.handle),
+  });
   delete process.env.SMART_ROUTER_DEPTH;
   delete process.env.SMART_ROUTER_HANDLE;
   delete process.env.SMART_ROUTER_ANCESTORS;

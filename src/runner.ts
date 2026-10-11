@@ -2,13 +2,14 @@ import { constants } from "node:os";
 import {
   processStartTime,
   saveSession,
-  SESSION_STATUS,
-  terminateSessionProcess,
+  stopSession,
+  sessionLogPath,
+  sessionErrPath,
   logActivity,
   type Session,
 } from "./sessions.ts";
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 
 const IGNORE = "ignore";
@@ -22,8 +23,7 @@ export async function forwardForegroundSignal(
   signal: (typeof FOREGROUND_SIGNALS)[number],
   exit: (code: number) => void = process.exit,
 ): Promise<void> {
-  session.status = SESSION_STATUS.stopped;
-  await terminateSessionProcess(session, signal);
+  await stopSession(session, signal);
   session.error = `stopped because the calling smart-router process received ${signal}`;
   await saveSession(session);
   exit(SIGNAL_EXIT_CODE_OFFSET + constants.signals[signal]);
@@ -40,9 +40,16 @@ export async function runForeground(
   session?: Session,
   exit: (code: number) => void = process.exit,
 ): Promise<string> {
+  const logFile = session
+    ? openSync(session.logPath ?? sessionLogPath(session.handle), "a")
+    : undefined;
+  if (session)
+    session.errPath = session.errPath ?? sessionErrPath(session.handle);
+  const errFile = session?.errPath ? openSync(session.errPath, "a") : undefined;
   const child = spawn(argv[0], argv.slice(1), {
     cwd,
     env,
+    detached: true,
     stdio: [IGNORE, "pipe", "pipe"],
   });
   let stdout = "";
@@ -51,9 +58,11 @@ export async function runForeground(
   child.stderr?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {
     stdout += chunk;
+    if (logFile !== undefined) writeSync(logFile, chunk);
   });
   child.stderr?.on("data", (chunk: string) => {
     stderr += chunk;
+    if (errFile !== undefined) writeSync(errFile, chunk);
   });
   const completion = new Promise<number | null>((resolve, reject) => {
     child.on("error", reject);
@@ -82,6 +91,8 @@ export async function runForeground(
     await stopping;
   } finally {
     for (const { signal, handler } of handlers) process.off(signal, handler);
+    if (logFile !== undefined) closeSync(logFile);
+    if (errFile !== undefined) closeSync(errFile);
   }
   if (exitCode !== 0) {
     const stdoutTail = lastLines(stdout);

@@ -1,6 +1,6 @@
 {
   "name": "smart-router",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "type": "module",
   "bin": {
     "smart-router": "src/cli.ts"

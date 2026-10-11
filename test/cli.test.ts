@@ -332,7 +332,8 @@ test("each concurrency limit exits 3 with capacity JSON", async () => {
 });
 
 test("foreground spawn and send register children and count toward both caps", async () => {
-  const sleepSeconds = "0.4";
+  const releaseFlag = join(directory, "release-foreground-child");
+  const waitForRelease = `while [ ! -e '${releaseFlag}' ]; do sleep 0.05; done`;
   const spawned = await cli(["spawn", "task", "--model", "claude:opus"]);
   // prettier-ignore
   const commands = [["spawn", "task", "--model", "claude:opus"], ["send", spawned.json.handle, "again"]];
@@ -343,7 +344,8 @@ test("foreground spawn and send register children and count toward both caps", a
     // prettier-ignore
     const foregroundRunner: CliDeps["runForeground"] = async (_argv, cwd, env, session) => {
       if (!session) throw new Error("missing foreground session");
-      const running = runForeground(["sleep", sleepSeconds], cwd, env, session);
+      await rm(releaseFlag, { force: true });
+      const running = runForeground(["sh", "-c", waitForRelease], cwd, env, session);
       while (!(await loadSession(session.handle)).pid) await Bun.sleep(5);
       const active = await loadSession(session.handle);
       expect(active.status).toBe(SESSION_STATUS.running);
@@ -352,6 +354,7 @@ test("foreground spawn and send register children and count toward both caps", a
       expect(active.processStartTime).toBe(processStartTime(session.pid!));
       const blockedCommand = index === 0 ? commands[1] : commands[0];
       expectJson(await cli(blockedCommand), { error: "capacity", limit }, 3);
+      await writeFile(releaseFlag, "");
       await running;
       return CLAUDE_OUTPUT;
     };

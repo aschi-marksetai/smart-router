@@ -2,4 +2,4 @@
 {"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"ls /tmp","aggregated_output":"","exit_code":null,"status":"in_progress"}}
 {"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"ls /tmp","aggregated_output":"file.txt","exit_code":0,"status":"completed"}}
 {"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"done"}}
-{"type":"turn.completed","usage":{"input_tokens":7,"cached_input_tokens":0,"output_tokens":9}}
+{"type":"turn.completed","usage":{"input_tokens":7,"cached_input_tokens":4,"output_tokens":9,"cache_write_input_tokens":2}}

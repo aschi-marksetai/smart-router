@@ -25,7 +25,8 @@ const OTHER_OWNER = "someone-else";
 const CLAUDE_OUTPUT = JSON.stringify({
   session_id: "claude-session",
   result: "finished work",
-  usage: { input_tokens: 3, output_tokens: 5 },
+  // prettier-ignore
+  usage: { input_tokens: 3, output_tokens: 5, cache_read_input_tokens: 6, cache_creation_input_tokens: 2 },
   total_cost_usd: 0.02,
 });
 const CODEX_OUTPUT = [
@@ -569,6 +570,8 @@ test("detached spawn supports status, logs, wait, stop, and send refusal", async
   });
   const waited = await cli(["wait", handle, "--result-limit", "6"]);
   expectJson(waited, { result: "finish", resultTruncated: true });
+  expectJson(waited, { usage: { cachedInputTokens: 6, cacheWriteTokens: 2 } });
+  expectJson(status, { usage: { cachedInputTokens: 6, cacheWriteTokens: 2 } });
   const stopped = await cli(["stop", handle]);
   expectJson(stopped, { status: "stopped", running: false });
 });
@@ -583,6 +586,9 @@ test("send updates done sessions; sessions, rm, and prune honor ownership", asyn
   });
   const sent = await cli(["send", handle, "follow up", "--result-limit", "6"]);
   expectJson(sent, { handle, result: "follow", resultTruncated: true });
+  expectJson(sent, {
+    usage: { cachedInputTokens: null, cacheWriteTokens: null },
+  });
   expect((await loadSession(handle)).lastResult).toBe("follow-up answer");
   const sessionOptions = {
     harness: "claude" as const,

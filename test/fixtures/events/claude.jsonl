@@ -2,4 +2,4 @@
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"Bash","input":{"command":"ls /tmp"}}]}}
 {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"file.txt","is_error":false}]}}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}
-{"type":"result","subtype":"success","result":"done","session_id":"claude-session","usage":{"input_tokens":3,"output_tokens":5},"total_cost_usd":0.02}
+{"type":"result","subtype":"success","result":"done","session_id":"claude-session","usage":{"input_tokens":3,"output_tokens":5,"cache_read_input_tokens":6,"cache_creation_input_tokens":2},"total_cost_usd":0.02}

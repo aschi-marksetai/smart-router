@@ -488,14 +488,24 @@ test("handles missing state, empty results, and unreadable logs", async () => {
 });
 
 test("accumulates session usage and detects a missing process", () => {
-  const first = { inputTokens: 2, outputTokens: 3, costUsd: 0.1 };
-  const second = { inputTokens: 4, outputTokens: 5, costUsd: 0.2 };
+  // prettier-ignore
+  const first = { inputTokens: 2, outputTokens: 3, costUsd: 0.1, cachedInputTokens: 6, cacheWriteTokens: 2 };
+  // prettier-ignore
+  const second = { inputTokens: 4, outputTokens: 5, costUsd: 0.2, cachedInputTokens: 8, cacheWriteTokens: 3 };
   expect(addUsage(first, second)).toEqual({
     inputTokens: 6,
     outputTokens: 8,
+    cachedInputTokens: 14,
+    cacheWriteTokens: 5,
     costUsd: 0.30000000000000004,
   });
   expect(addUsage(first, { ...second, costUsd: null })?.costUsd).toBeNull();
+  // prettier-ignore
+  expect(addUsage(first, { ...second, cachedInputTokens: null, cacheWriteTokens: null })).toMatchObject({ cachedInputTokens: null, cacheWriteTokens: null });
+  // prettier-ignore
+  expect(addUsage({ ...first, cachedInputTokens: null, cacheWriteTokens: null }, second)).toMatchObject({ cachedInputTokens: null, cacheWriteTokens: null });
+  expect(addUsage(null, first)).toEqual(first);
+  expect(addUsage(first, null)).toEqual(first);
   expect(isProcessRunning(999999999)).toBe(false);
 });
 

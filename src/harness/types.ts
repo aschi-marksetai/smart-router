@@ -17,6 +17,8 @@ export type HarnessOptions = {
 export type Usage = {
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens: number | null;
+  cacheWriteTokens: number | null;
   costUsd: number | null;
 };
 
@@ -49,9 +51,25 @@ export function usageFrom(
 ): Usage | null {
   const usage = record(value);
   if (!usage) return null;
-  const inputTokens = usage.input_tokens;
-  const outputTokens = usage.output_tokens;
+  const inputTokens = usage.input_tokens ?? usage.input;
+  const outputTokens = usage.output_tokens ?? usage.output;
   if (typeof inputTokens !== "number" || typeof outputTokens !== "number")
     return null;
-  return { inputTokens, outputTokens, costUsd };
+  const cachedInputTokens =
+    usage.cached_input_tokens ??
+    usage.cache_read_input_tokens ??
+    usage.cacheRead;
+  const cacheWriteTokens =
+    usage.cache_write_input_tokens ??
+    usage.cache_creation_input_tokens ??
+    usage.cacheWrite;
+  return {
+    inputTokens,
+    outputTokens,
+    costUsd,
+    cachedInputTokens:
+      typeof cachedInputTokens === "number" ? cachedInputTokens : null,
+    cacheWriteTokens:
+      typeof cacheWriteTokens === "number" ? cacheWriteTokens : null,
+  };
 }

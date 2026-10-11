@@ -29,5 +29,24 @@ test.each([...fixtures])("translates %s", async (name) => {
     pi: "session.started message usage",
     "codex-failed": "session.started error",
   };
+  const usage = events.find((event) => event.type === "usage");
+  const result = events.find((event) => event.type === "result");
+  // prettier-ignore
+  const cacheFigures = { claude: { cachedInputTokens: 6, cacheWriteTokens: 2, cacheHitRatio: 6 / 11 }, codex: { cachedInputTokens: 4, cacheWriteTokens: 2, cacheHitRatio: 4 / 7 }, pi: { cachedInputTokens: null, cacheWriteTokens: null }, "codex-failed": {} };
+  if (usage) expect(usage).toMatchObject(cacheFigures[name]);
+  if (result?.type === "result") {
+    expect(result.usage).toEqual(
+      getAdapter(harness).parseSpawnOutput(log).usage,
+    );
+    expect(result.usage).not.toHaveProperty("cacheHitRatio");
+  }
+  if (name === "pi") expect(usage).not.toHaveProperty("cacheHitRatio");
   expect(events.map((event) => event.type).join(" ")).toBe(expectedTypes[name]);
+});
+
+// prettier-ignore
+test.each([0, null, "unknown"])("omits undefined ratio: %s", (cachedInputTokens) => {
+  const state: EventState = { handle: "abcdef", harness: "codex", model: "model", effort: "low", ts: "now" };
+  const [usage] = getAdapter("codex").translateEvents({ type: "turn.completed", usage: { input_tokens: 0, output_tokens: 1, cached_input_tokens: cachedInputTokens } }, state);
+  expect(usage).not.toHaveProperty("cacheHitRatio");
 });

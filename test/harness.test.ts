@@ -68,11 +68,12 @@ test("builds Claude commands and parses result usage", () => {
   );
   expect(
     claude.parseSpawnOutput(
-      '{"result":"Claude reply","usage":{"input_tokens":2,"output_tokens":3},"total_cost_usd":0.1}',
+      '{"result":"Claude reply","usage":{"input_tokens":2,"output_tokens":3,"cache_read_input_tokens":6,"cache_creation_input_tokens":2},"total_cost_usd":0.1}',
     ),
   ).toMatchObject({
     result: "Claude reply",
-    usage: { inputTokens: 2, outputTokens: 3, costUsd: 0.1 },
+    // prettier-ignore
+    usage: { inputTokens: 2, outputTokens: 3, costUsd: 0.1, cachedInputTokens: 6, cacheWriteTokens: 2 },
   });
   expect(claude.buildResume("session", "continue", options).argv).toEqual([
     "claude",
@@ -164,12 +165,13 @@ test("builds Codex commands and parses result usage", async () => {
   const output = [
     '{"type":"thread.started","thread_id":"thread-123"}',
     '{"type":"item.completed","item":{"type":"agent_message","text":"Final"}}',
-    '{"type":"turn.completed","usage":{"input_tokens":4,"output_tokens":5}}',
+    '{"type":"turn.completed","usage":{"input_tokens":4,"output_tokens":5,"cached_input_tokens":3,"cache_write_input_tokens":1}}',
   ].join("\n");
   expect(codex.parseSpawnOutput(output)).toEqual({
     sessionId: "thread-123",
     result: "Final",
-    usage: { inputTokens: 4, outputTokens: 5, costUsd: null },
+    // prettier-ignore
+    usage: { inputTokens: 4, outputTokens: 5, costUsd: null, cachedInputTokens: 3, cacheWriteTokens: 1 },
   });
   expect(codex.buildResume("thread-123", "continue", options).argv).toEqual([
     "codex",
@@ -263,6 +265,10 @@ test("builds Pi commands and parses assistant messages", () => {
       '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Pi reply"}]}}',
     ).result,
   ).toBe("Pi reply");
+  // prettier-ignore
+  const nativePiUsage = pi.parseSpawnOutput('{"type":"message_end","message":{"role":"assistant","content":[],"usage":{"input":2,"output":3,"cacheRead":4,"cacheWrite":1}}}').usage;
+  // prettier-ignore
+  expect(nativePiUsage).toEqual({ inputTokens: 2, outputTokens: 3, cachedInputTokens: 4, cacheWriteTokens: 1, costUsd: null });
   expect(
     pi.buildResume("session.json", "continue", {
       cwd: "/project",
@@ -303,7 +309,8 @@ test("builds stream-json Claude spawns and parses the stream-json log", () => {
   expect(claude.parseSpawnOutput(streamLog)).toEqual({
     sessionId: "stream-session",
     result: "steered",
-    usage: { inputTokens: 4, outputTokens: 1, costUsd: 0.002 },
+    // prettier-ignore
+    usage: { inputTokens: 4, outputTokens: 1, costUsd: 0.002, cachedInputTokens: null, cacheWriteTokens: null },
   });
 });
 

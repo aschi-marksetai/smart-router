@@ -29,7 +29,7 @@ type Payloads = {
     isError: boolean;
     output: string;
   };
-  usage: Usage;
+  usage: Usage & { cacheHitRatio?: number };
   result: { text: string; usage: Usage | null };
   error: { message: string; lastAction?: string };
 };
@@ -182,11 +182,25 @@ export function translateEvents(
   }
   const terminal = event.type === "result" || event.type === "turn.completed";
   const usage = usageFrom(
-    event.usage,
+    event.usage ?? message?.usage,
     typeof event.total_cost_usd === "number" ? event.total_cost_usd : null,
   );
-  if (usage && (terminal || state.harness === "pi"))
-    emit({ type: EVENT_TYPE.usage, ...usage });
+  if (usage && (terminal || state.harness === "pi")) {
+    // Codex input_tokens already includes cached tokens; Claude and pi report
+    // uncached input, cache reads and cache writes as separate counts.
+    const totalInputTokens =
+      state.harness === "codex"
+        ? usage.inputTokens
+        : usage.inputTokens +
+          (usage.cachedInputTokens ?? 0) +
+          (usage.cacheWriteTokens ?? 0);
+    const hasCacheHitRatio =
+      typeof usage.cachedInputTokens === "number" && totalInputTokens > 0;
+    const cacheHitRatio = hasCacheHitRatio
+      ? { cacheHitRatio: (usage.cachedInputTokens ?? 0) / totalInputTokens }
+      : {};
+    emit({ type: EVENT_TYPE.usage, ...usage, ...cacheHitRatio });
+  }
   if (terminal)
     emit({
       type: EVENT_TYPE.result,

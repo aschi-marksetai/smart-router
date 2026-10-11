@@ -220,6 +220,14 @@ export async function pruneSessions(olderThanDays: number): Promise<string[]> {
   return removed;
 }
 
+function addNullableTokens(
+  current: number | null,
+  next: number | null,
+): number | null {
+  if (typeof current !== "number" || typeof next !== "number") return null;
+  return current + next;
+}
+
 export function addUsage(
   current: Usage | null | undefined,
   next: Usage | null,
@@ -233,6 +241,14 @@ export function addUsage(
   return {
     inputTokens: current.inputTokens + next.inputTokens,
     outputTokens: current.outputTokens + next.outputTokens,
+    cachedInputTokens: addNullableTokens(
+      current.cachedInputTokens,
+      next.cachedInputTokens,
+    ),
+    cacheWriteTokens: addNullableTokens(
+      current.cacheWriteTokens,
+      next.cacheWriteTokens,
+    ),
     costUsd,
   };
 }

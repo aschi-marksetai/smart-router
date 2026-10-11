@@ -91,7 +91,8 @@ test("supervisor delivers the prompt and an interrupting steer, then closes stdi
   expect(claude.parseSpawnOutput(log)).toEqual({
     sessionId: "fake-session",
     result: "steered",
-    usage: { inputTokens: 1, outputTokens: 2, costUsd: 0.01 },
+    // prettier-ignore
+    usage: { inputTokens: 1, outputTokens: 2, costUsd: 0.01, cachedInputTokens: null, cacheWriteTokens: null },
   });
   await expect(
     steerSupervisedSession(handle, { message: "late", interrupt: false }),

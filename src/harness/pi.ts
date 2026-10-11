@@ -31,7 +31,7 @@ function parseOutput(output: string, sessionId: string): ParsedOutput {
     const message = record(eventRecord?.message);
     if (typeof eventRecord?.session_id === "string")
       outputSessionId = eventRecord.session_id;
-    if (eventRecord?.usage) usage = usageFrom(eventRecord.usage);
+    usage = usageFrom(eventRecord?.usage ?? message?.usage) ?? usage;
     if (
       !message ||
       message.role !== "assistant" ||

@@ -213,7 +213,7 @@ Sends a message to a running detached session. It sweeps first. A session withou
 
 ### Usage accounting
 
-Spawn, send, wait and status include `usage: { inputTokens, outputTokens, costUsd | null }` parsed from the harness output: claude's result object `usage` and `total_cost_usd`; codex's `turn.completed` event `usage` (`input_tokens`, `output_tokens`; cost null); pi's final event usage when present, else null. The session file keeps a cumulative `usage` across spawn and every send.
+Spawn, send, wait and status include `usage: { inputTokens, outputTokens, cachedInputTokens: number | null, cacheWriteTokens: number | null, costUsd: number | null }`. `inputTokens` stays as reported by the provider. Claude result usage (including stream-json results) maps `cache_read_input_tokens` and `cache_creation_input_tokens`; Codex `turn.completed` usage maps `cached_input_tokens` and `cache_write_input_tokens`; pi maps `cacheRead` and `cacheWrite` when present, otherwise null. Cache counts mean tokens served from and written to the prompt cache, respectively. Cost comes from Claude's `total_cost_usd`, otherwise null. The session file accumulates usage across spawn and every send; a cache count stays null if either operand is unknown, including older sessions without those fields.
 
 ### Result limits
 
@@ -249,16 +249,18 @@ Session file: `{ handle, owner, depth?, parentHandle?, harness, model, effort, c
 
 `spawn --events` and `send --events` replace final JSON stdout with JSONL; the routing stderr line and exit codes stay unchanged. Each line has `{ v: 1, type, handle, harness, ts }`, where `harness` is `claude|codex|pi` and `ts` is an ISO timestamp. The exact additional fields by type are:
 
-| type              | Fields                                                                                  |
-| ----------------- | --------------------------------------------------------------------------------------- |
-| `session.started` | `{ model: string, effort: string, sessionId?: string }`                                 |
-| `text.delta`      | `{ text: string }`                                                                      |
-| `message`         | `{ role: "assistant", text: string }`                                                   |
-| `tool.started`    | `{ toolId: string, name: string, input: string }`                                       |
-| `tool.finished`   | `{ toolId: string, name: string, exitCode?: number, isError: boolean, output: string }` |
-| `usage`           | `{ inputTokens: number, outputTokens: number, costUsd: number                           | null }` |
-| `result`          | `{ text: string, usage: { inputTokens: number, outputTokens: number, costUsd: number    | null }  | null }` |
-| `error`           | `{ message: string, lastAction?: string }`                                              |
+| type              | Fields                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------- |
+| `session.started` | `{ model: string, effort: string, sessionId?: string }`                                         |
+| `text.delta`      | `{ text: string }`                                                                              |
+| `message`         | `{ role: "assistant", text: string }`                                                           |
+| `tool.started`    | `{ toolId: string, name: string, input: string }`                                               |
+| `tool.finished`   | `{ toolId: string, name: string, exitCode?: number, isError: boolean, output: string }`         |
+| `usage`           | Usage accounting fields above, plus optional `cacheHitRatio: number`                            |
+| `result`          | `{ text: string, usage: Usage or null }`; same Usage accounting fields, without `cacheHitRatio` |
+| `error`           | `{ message: string, lastAction?: string }`                                                      |
+
+`cacheHitRatio` appears only on usage events when both input and cached counts are numbers and the denominator is positive. Claude and pi use `cachedInputTokens / (inputTokens + cachedInputTokens + cacheWriteTokens)`, because they report uncached input, cache reads and cache writes as separate counts. Codex uses `cachedInputTokens / inputTokens` because its input count includes cache reads; Claude's input count excludes them. Cache writes are not included in this denominator. The fixtures exercise nonzero cache reads for both Claude and Codex. Zero denominators omit the ratio.
 
 Tool input is a command string or serialized JSON; input and output are truncated to `EVENT_TEXT_LIMIT` (2000 characters). Messages are complete assistant messages; deltas appear only when provided by the harness. Type strings are defined in `EVENT_TYPE`. Each adapter exports pure `translateEvents(rawLineOrEvent, state) → NormalizedEvent[]`; state supplies session metadata, timestamp, last assistant text and tool names. Unknown or malformed events are dropped. Claude maps init, assistant text/tool_use, user tool_result, stream text deltas and result; Codex maps thread.started, item.started/item.completed agent_message, command_execution, mcp_tool_call and file_change, turn.completed usage, turn.failed and error; pi maps the session, assistant content and usage already parsed by its adapter. Foreground Claude uses `--output-format stream-json --verbose` for events and retains JSON otherwise. Raw logs and final session bookkeeping (including cumulative usage and lastResult) remain unchanged. Foreground streams end with exactly one result or error after bookkeeping. `spawn --detach --events` starts a detached delegate and follows its log until completion. `logs <handle> --follow --events` reads the raw log from the start, or `--tail N` raw lines, and normalizes new lines as they arrive. It polls every `LOG_FOLLOW_INTERVAL_MS` (100 ms), tolerates a log that does not yet exist, and emits one terminal event after the session reaches terminal status. Without `--events`, `--follow` prints raw lines. A stopped or failed session supplies an error even if the harness never wrote one.
 

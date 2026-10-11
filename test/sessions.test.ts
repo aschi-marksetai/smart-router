@@ -225,7 +225,7 @@ test("wait returns the result of a real detached child", async () => {
   const binary = join(directory, "slow-codex");
   await writeFile(
     binary,
-    `#!/bin/sh\nsleep ${SLOW_DELEGATE_DELAY_SECONDS}\nprintf '%s\\n' '{"type":"thread.started","thread_id":"fake-thread"}' '{"type":"item.completed","item":{"type":"agent_message","text":"fake result"}}'\n`,
+    `#!/bin/sh\nsleep ${SLOW_DELEGATE_DELAY_SECONDS}\nprintf '%s\\n' '{"type":"thread.started","thread_id":"fake-thread"}' '{"type":"item.completed","item":{"type":"agent_message","text":"fake result"}}' '{"type":"turn.completed"}'\n`,
   );
   await chmod(binary, 0o755);
   const logPath = join(directory, "delegate.log");
@@ -262,6 +262,7 @@ test("marks a completed detached session done from its fixture log", async () =>
     [
       '{"type":"thread.started","thread_id":"thread-123"}',
       '{"type":"item.completed","item":{"type":"agent_message","text":"Finished"}}',
+      '{"type":"turn.completed"}',
     ].join("\n"),
   );
   const session = await createSession({
@@ -307,8 +308,7 @@ test("sweeps dead delegates to done or failed with their last activity", async (
   await sweepSessions();
   expect(await loadSession(failed.handle)).toMatchObject({
     status: SESSION_STATUS.failed,
-    error:
-      "delegate process exited without reporting (killed; likely out of memory or the pids limit)",
+    error: "Codex turn did not complete successfully",
     lastMessage: "Still working",
     lastAction: "bun test",
   });

@@ -4,6 +4,7 @@ import {
   saveSession,
   SESSION_STATUS,
   terminateSessionProcess,
+  logActivity,
   type Session,
 } from "./sessions.ts";
 import { spawn } from "node:child_process";
@@ -85,8 +86,11 @@ export async function runForeground(
   if (exitCode !== 0) {
     const stdoutTail = lastLines(stdout);
     const stderrTail = lastLines(stderr);
-    throw new Error(
-      `Command ${argv[0]} exited with code ${exitCode}: stdout:\n${stdoutTail}\nstderr:\n${stderrTail}`,
+    throw Object.assign(
+      new Error(
+        `Command ${argv[0]} exited with code ${exitCode}: stdout:\n${stdoutTail}\nstderr:\n${stderrTail}`,
+      ),
+      logActivity(stdout),
     );
   }
   return stdout;

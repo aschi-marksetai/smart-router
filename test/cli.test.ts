@@ -8,6 +8,7 @@ import { buildProgram, runCli, type CliDeps } from "../src/cli.ts";
 import { DEFAULT_CONFIG, saveConfig, type Config } from "../src/config.ts";
 import {
   createSession,
+  listSessions,
   loadSession,
   processStartTime,
   saveSession,
@@ -36,6 +37,12 @@ const CODEX_OUTPUT = [
     type: "turn.completed",
     usage: { input_tokens: 7, output_tokens: 9 },
   }),
+].join("\n");
+const CODEX_FAILED_OUTPUT = [
+  '{"type":"thread.started","thread_id":"codex-thread"}',
+  '{"type":"item.completed","item":{"type":"command_execution","command":"bun test"}}',
+  '{"type":"item.completed","item":{"type":"agent_message","text":"Still working"}}',
+  '{"type":"turn.failed"}',
 ].join("\n");
 const RELEASE_VERSION = "99.0.0";
 const RELEASE_ASSET = `smart-router-${process.platform}-${process.arch === "arm64" ? "arm64" : "x64"}`;
@@ -167,7 +174,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
   // prettier-ignore
-  for (const name of ["SMART_ROUTER_CONFIG_DIR", "SMART_ROUTER_STATE_DIR", "CLAUDE_CONFIG_DIR", "SMART_ROUTER_OWNER", "SMART_ROUTER_DEPTH", "SMART_ROUTER_NO_UPDATE_CHECK"])
+  for (const name of ["SMART_ROUTER_CONFIG_DIR", "SMART_ROUTER_STATE_DIR", "CLAUDE_CONFIG_DIR", "SMART_ROUTER_OWNER", "SMART_ROUTER_DEPTH", "SMART_ROUTER_HANDLE", "SMART_ROUTER_ANCESTORS", "SMART_ROUTER_NO_UPDATE_CHECK"])
     delete process.env[name];
 });
 
@@ -217,6 +224,8 @@ test("route selects, dry-runs, and falls back after a Jev failure", async () => 
 
 test("spawn parses Claude and Codex output, flags, and stopping-point refusal", async () => {
   process.env.SMART_ROUTER_DEPTH = "1";
+  process.env.SMART_ROUTER_HANDLE = "parent-handle";
+  process.env.SMART_ROUTER_ANCESTORS = "root-handle";
   // prettier-ignore
   const claude = await cli(["spawn", "finish task", "--model", "claude:opus", "--no-guardrails", "--result-limit", "4"]);
   expectJson(claude, {
@@ -230,12 +239,17 @@ test("spawn parses Claude and Codex output, flags, and stopping-point refusal", 
   );
   expect(runnerArguments[0]).toContain("finish task");
   expect(runnerArguments[0].join(" ")).not.toContain("## Operating rules");
+  expect(runnerArguments[0].join(" ")).not.toContain("## Delegation context");
   expect(runnerEnvironments[0]).toMatchObject({
     SMART_ROUTER_OWNER: OWNER,
     SMART_ROUTER_DEPTH: "2",
+    SMART_ROUTER_ANCESTORS: "root-handle,parent-handle",
   });
+  expect(runnerEnvironments[0].SMART_ROUTER_HANDLE).toBe(claude.json.handle);
   expect((await loadSession(claude.json.handle)).depth).toBe(2);
   delete process.env.SMART_ROUTER_DEPTH;
+  delete process.env.SMART_ROUTER_HANDLE;
+  delete process.env.SMART_ROUTER_ANCESTORS;
   runnerOutput = CODEX_OUTPUT;
   const schemaPath = join(directory, "schema.json");
   await writeFile(schemaPath, '{"type":"object"}');
@@ -248,6 +262,9 @@ test("spawn parses Claude and Codex output, flags, and stopping-point refusal", 
   });
   expect(codex.json.resumeCommand).toContain("codex-thread");
   expect(runnerArguments[1]).toContain(schemaPath);
+  expect(runnerArguments[1].at(-1)).toContain(
+    `## Delegation context\n\nYour smart-router handle is ${codex.json.handle} at depth 1 of max 2`,
+  );
   routeResponse = "stopping";
   const refused = await cli(["spawn", "task"]);
   expectJson(
@@ -392,7 +409,12 @@ test("records detached launch failures and reports failed waits", async () => {
   expect(sessions[0].status).toBe("failed");
   expectJson(
     await cli(["wait", sessions[0].handle]),
-    { error: "launch denied" },
+    {
+      handle: sessions[0].handle,
+      error: `session ${sessions[0].handle} was failed: launch denied`,
+      lastMessage: null,
+      lastAction: null,
+    },
     1,
   );
 });
@@ -419,6 +441,97 @@ test("wait polls a running session until it completes", async () => {
   );
   expectJson(await cli(["wait", session.handle]), { result: "done" });
   await changed;
+});
+
+test("wait reports stopped and failed sessions and times out while running", async () => {
+  for (const status of [SESSION_STATUS.stopped, SESSION_STATUS.failed]) {
+    const session = await createSession({
+      harness: "claude",
+      model: "opus",
+      effort: "high",
+      cwd: directory,
+      prompt: "task",
+      status,
+      error: "delegate ended",
+      lastMessage: "progress",
+      lastAction: "bun test",
+    });
+    expectJson(
+      await cli(["wait", session.handle]),
+      {
+        handle: session.handle,
+        error: `session ${session.handle} was ${status}: delegate ended`,
+        lastMessage: "progress",
+        lastAction: "bun test",
+      },
+      1,
+    );
+    expectJson(await cli(["status", session.handle]), {
+      outcome: status,
+      error: `session ${session.handle} was ${status}: delegate ended`,
+    });
+  }
+  const running = await createSession({
+    harness: "claude",
+    model: "opus",
+    effort: "high",
+    cwd: directory,
+    prompt: "task",
+    status: SESSION_STATUS.running,
+    pid: process.pid,
+  });
+  expectJson(
+    await cli(["wait", running.handle, "--timeout", "0.01"]),
+    {
+      handle: running.handle,
+      error: "timeout",
+      status: "running",
+      next: `poll with smart-router status ${running.handle} or wait again; do not start another wait in parallel`,
+    },
+    124,
+  );
+});
+
+test("foreground Codex failures report and persist their last activity", async () => {
+  const activity = { lastMessage: "Still working", lastAction: "bun test" };
+  runnerOutput = CODEX_FAILED_OUTPUT;
+  const failedSpawn = await cli(["spawn", "task", "--model", "codex:terra"]);
+  // prettier-ignore
+  expectJson(failedSpawn, { error: "Codex turn did not complete successfully", ...activity }, 1);
+  // prettier-ignore
+  const failed = (await listSessions(OWNER)).find(({ status }) => status === "failed");
+  if (!failed) throw new Error("failed spawn session was not saved");
+  // prettier-ignore
+  expect(await loadSession(failed.handle)).toMatchObject({ status: "failed", ...activity });
+
+  runnerOutput = CODEX_OUTPUT;
+  const spawned = await cli(["spawn", "task", "--model", "codex:terra"]);
+  runnerOutput = CODEX_FAILED_OUTPUT;
+  // prettier-ignore
+  expectJson(await cli(["send", spawned.json.handle, "again"]), { error: "Codex turn did not complete successfully", ...activity }, 1);
+  // prettier-ignore
+  expect(await loadSession(spawned.json.handle)).toMatchObject({ status: "failed", ...activity });
+});
+
+test("wait, stop, send and steer refuse own and ancestor handles", async () => {
+  process.env.SMART_ROUTER_HANDLE = "self-handle";
+  process.env.SMART_ROUTER_ANCESTORS = "ancestor-handle";
+  const commands = ["wait", "stop", "send", "steer"];
+  for (const command of commands) {
+    for (const handle of ["self-handle", "ancestor-handle"]) {
+      const args =
+        command === "wait" || command === "stop"
+          ? [command, handle]
+          : [command, handle, "message"];
+      expectJson(
+        await cli(args),
+        {
+          error: `refusing to ${command} ${handle}: it is your own session or an ancestor; report your result instead`,
+        },
+        1,
+      );
+    }
+  }
 });
 
 test("detached spawn supports status, logs, wait, stop, and send refusal", async () => {

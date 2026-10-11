@@ -274,7 +274,7 @@ function isTrackedProcessRunning(
   return startTime === currentStartTime;
 }
 
-function logActivity(
+export function logActivity(
   output: string,
 ): Pick<Session, "lastMessage" | "lastAction"> {
   let lastMessage: string | undefined;
@@ -415,10 +415,11 @@ export async function completeSessionFromLog(
     parseError = error;
   }
   if (session.status === SESSION_STATUS.failed) {
-    session.error = delegateExited
-      ? DELEGATE_EXIT_ERROR
-      : await failureMessage(session, parseError);
-    if (delegateExited) Object.assign(session, logActivity(output));
+    session.error =
+      delegateExited && !parseError
+        ? DELEGATE_EXIT_ERROR
+        : await failureMessage(session, parseError);
+    Object.assign(session, logActivity(output));
   }
   await saveSession(session);
   return session;

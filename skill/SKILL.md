@@ -19,6 +19,10 @@ For Codex, the sandbox is chosen from the task; pass `--sandbox <policy>` to ove
 
 Every prompt states what done looks like and where to stop, for example "Done when `bun test` passes and the endpoint returns paginated results; stop there, do not refactor callers." Some models are configured to refuse a prompt without one, and the refusal tells you to add it and call again. Task-independent operating rules for the chosen model are appended automatically from the user's guardrails file, so do not repeat those.
 
+Unless `--no-guardrails` is set, the delegate also receives a context section with its handle and depth, the maximum-depth rule, and guidance to avoid commands on itself or an ancestor. It explains that a shell yield is not completion and recommends detached helpers with `smart-router wait <child> --timeout 90`.
+
+Codex results require a completed final turn; Claude error result events fail the session. `wait --timeout` exits 124 while the delegate is running, and `status` reports `outcome` while remaining informational for failed or stopped sessions.
+
 Optional flags:
 
 - `--hint "<text>"` adds context for the routing decision, such as "needs a browser" or "bulk mechanical work".
@@ -40,7 +44,7 @@ Resumes the same session with its full context. Stdout is JSON with `result`.
 
 Killing your own wait, status or shell never stops a detached delegate; use `smart-router stop <handle>` (or steer) and run `smart-router sessions` to find ones you no longer need. Foreground spawns stop when you interrupt them.
 
-Use `smart-router spawn "<task>" --cwd <repo path> --detach` for work that should outlive this command. Then use `smart-router wait <handle>` or `smart-router status <handle>` and `smart-router logs <handle> --tail 50`; use `smart-router stop <handle>` to end it.
+Use `smart-router spawn "<task>" --cwd <repo path> --detach` for work that should outlive this command. Then use `smart-router wait <handle> --timeout 90` in a loop, checking status between waits; a timeout means the delegate is still running. Do not wait on, stop, send to or steer your own handle or an ancestor. A shell command returning early is a yield, not completion. Stopped or failed waits exit 1 with the last message and action when available. Use `smart-router logs <handle> --tail 50`; use `smart-router stop <handle>` to end a child delegate.
 Use `smart-router steer <handle> "<message>"` to redirect a running detached delegate. Claude delegates take the message mid-turn, or with `--interrupt` stop the current step first. Codex delegates are always interrupted: the run is stopped and resumed with the message, so any step in progress is lost, and the output is the resumed turn's result.
 Exit code 3 with `error: "capacity"` means the configured concurrency or depth cap was reached. Add `--wait-for-slot <seconds>` to opt into waiting for a running slot; depth-limited delegates must do the work themselves.
 

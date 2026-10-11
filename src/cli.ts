@@ -17,7 +17,11 @@ import { doctor } from "./doctor.ts";
 import { loadDotEnv } from "./env.ts";
 import * as codex from "./harness/codex.ts";
 import { getAdapter } from "./harness/index.ts";
-import type { HarnessOptions } from "./harness/types.ts";
+import {
+  record,
+  type HarnessOptions,
+  type ParsedOutput,
+} from "./harness/types.ts";
 import { runInit } from "./init.ts";
 import { getQuota } from "./quota.ts";
 import { configDir } from "./paths.ts";
@@ -45,6 +49,7 @@ import {
   createSessionHandle,
   createSession,
   isProcessRunning,
+  logActivity,
   listSessions,
   loadSession,
   pruneSessions,
@@ -63,6 +68,7 @@ import {
 const ERROR_EXIT_CODE = 1;
 const CAPACITY_EXIT_CODE = 3;
 const SUCCESS_EXIT_CODE = 0;
+const TIMEOUT_EXIT_CODE = 124;
 const HARNESS_NAMES: HarnessName[] = ["claude", "codex", "pi"];
 
 type SpawnOptions = RouteOptions & {
@@ -102,6 +108,10 @@ const NEW_MODELS_NOTICE = "New models available:";
 const SLOT_POLL_INTERVAL_MS = 50;
 const OWNER_ENVIRONMENT_VARIABLE = "SMART_ROUTER_OWNER";
 const DEPTH_ENVIRONMENT_VARIABLE = "SMART_ROUTER_DEPTH";
+const HANDLE_ENVIRONMENT_VARIABLE = "SMART_ROUTER_HANDLE";
+const ANCESTORS_ENVIRONMENT_VARIABLE = "SMART_ROUTER_ANCESTORS";
+const WAIT_TIMEOUT_OPTION = "--timeout <seconds>";
+const DELEGATE_WAIT_TIMEOUT_SECONDS = 90;
 
 type CapacityLimit = "maxRunning" | "maxPerCaller" | "maxDepth";
 
@@ -269,6 +279,64 @@ function printResult(
   deps.exit(exitCode);
 }
 
+function rejectOwnOrAncestor(command: string, handle: string): void {
+  const ancestors = (process.env[ANCESTORS_ENVIRONMENT_VARIABLE] ?? "")
+    .split(",")
+    .filter(Boolean);
+  if (
+    handle === process.env[HANDLE_ENVIRONMENT_VARIABLE] ||
+    ancestors.includes(handle)
+  )
+    throw new Error(
+      `refusing to ${command} ${handle}: it is your own session or an ancestor; report your result instead`,
+    );
+}
+
+function errorFields(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) return { error: String(error) };
+  const details = record(error);
+  return {
+    error: error.message,
+    lastMessage:
+      typeof details?.lastMessage === "string" ? details.lastMessage : null,
+    lastAction:
+      typeof details?.lastAction === "string" ? details.lastAction : null,
+  };
+}
+
+function parseForegroundOutput(
+  output: string,
+  parseOutput: (output: string) => ParsedOutput,
+): ParsedOutput {
+  try {
+    return parseOutput(output);
+  } catch (error) {
+    const existingDetails = record(error);
+    const activity = logActivity(output);
+    throw Object.assign(
+      error instanceof Error ? error : new Error(String(error)),
+      {
+        lastMessage:
+          (typeof existingDetails?.lastMessage === "string" &&
+            existingDetails.lastMessage) ||
+          activity.lastMessage,
+        lastAction:
+          (typeof existingDetails?.lastAction === "string" &&
+            existingDetails.lastAction) ||
+          activity.lastAction,
+      },
+    );
+  }
+}
+
+function storeFailureActivity(session: Session, error: unknown): void {
+  const details = record(error);
+  if (typeof details?.lastMessage === "string")
+    session.lastMessage = details.lastMessage;
+  if (typeof details?.lastAction === "string")
+    session.lastAction = details.lastAction;
+}
+
 function printLog(deps: CliDeps, output: string): void {
   deps.stdout(output);
   deps.stderr("Session log retrieved\n");
@@ -379,9 +447,16 @@ async function spawnCommand(
           await loadGuardrails(),
           `${selected.harness}:${selected.model}`,
         );
+  const handle = createSessionHandle();
+  const depth = currentDepth() + 1;
+  const context =
+    options.guardrails === false
+      ? ""
+      : `## Delegation context\n\nYour smart-router handle is ${handle} at depth ${depth} of max ${config.rules.concurrency?.maxDepth ?? DEFAULT_MAX_DEPTH}; if that depth equals the maximum you cannot spawn and must do the work yourself. Never wait on, stop, send to or steer your own handle or an ancestor. If you spawn a helper, use --detach and then \`smart-router wait <child> --timeout ${DELEGATE_WAIT_TIMEOUT_SECONDS}\` in a loop, polling, and report what you have if it is still running. A shell command returning early (a yield) is not completion; check status instead.`;
+  const promptWithContext = context ? `${prompt}\n\n${context}` : prompt;
   const spawnPrompt = guardrails
-    ? `${prompt}\n\n## Operating rules\n\n${guardrails}`
-    : prompt;
+    ? `${promptWithContext}\n\n## Operating rules\n\n${guardrails}`
+    : promptWithContext;
   const confidenceNote = routeResult
     ? ` (confidence ${routeResult.confidence})`
     : " (caller override)";
@@ -431,7 +506,6 @@ async function spawnCommand(
     ...harnessOptions,
     streamInput: supervised,
   });
-  const handle = createSessionHandle();
   const logPath = options.detach ? sessionLogPath(handle) : undefined;
   const reservation = await reserveSpawnSession(
     {
@@ -465,6 +539,13 @@ async function spawnCommand(
     ...process.env,
     [OWNER_ENVIRONMENT_VARIABLE]: session.owner,
     [DEPTH_ENVIRONMENT_VARIABLE]: String(session.depth ?? 1),
+    [HANDLE_ENVIRONMENT_VARIABLE]: handle,
+    [ANCESTORS_ENVIRONMENT_VARIABLE]: [
+      ...(process.env[ANCESTORS_ENVIRONMENT_VARIABLE]?.split(",") ?? []),
+      process.env[HANDLE_ENVIRONMENT_VARIABLE],
+    ]
+      .filter((ancestor): ancestor is string => Boolean(ancestor))
+      .join(","),
   };
   if (options.detach) {
     const detachedLogPath = session.logPath ?? sessionLogPath(handle);
@@ -506,8 +587,9 @@ async function spawnCommand(
   }
   let parsed: ReturnType<typeof adapter.parseSpawnOutput>;
   try {
-    parsed = adapter.parseSpawnOutput(
+    parsed = parseForegroundOutput(
       await deps.runForeground(command.argv, cwd, environment, session),
+      adapter.parseSpawnOutput,
     );
     session.sessionId = parsed.sessionId || command.sessionId;
     if (!session.sessionId)
@@ -520,6 +602,7 @@ async function spawnCommand(
   } catch (error) {
     session.status = SESSION_STATUS.failed;
     session.error = error instanceof Error ? error.message : String(error);
+    storeFailureActivity(session, error);
     await saveSession(session);
     throw error;
   }
@@ -602,6 +685,7 @@ async function sendCommand(
   options: PassthroughOptions,
   deps: CliDeps,
 ): Promise<void> {
+  rejectOwnOrAncestor("send", handle);
   const [config, session] = await Promise.all([
     loadConfig(),
     loadSession(handle),
@@ -639,8 +723,9 @@ async function sendCommand(
     );
   let parsed: ReturnType<typeof adapter.parseResumeOutput>;
   try {
-    parsed = adapter.parseResumeOutput(
+    parsed = parseForegroundOutput(
       await deps.runForeground(command.argv, session.cwd, process.env, session),
+      adapter.parseResumeOutput,
     );
     session.status = SESSION_STATUS.done;
     session.result = parsed.result;
@@ -649,6 +734,7 @@ async function sendCommand(
   } catch (error) {
     session.status = SESSION_STATUS.failed;
     session.error = error instanceof Error ? error.message : String(error);
+    storeFailureActivity(session, error);
     await saveSession(session);
     throw error;
   }
@@ -671,6 +757,7 @@ async function steerCommand(
   options: { interrupt?: boolean },
   deps: CliDeps,
 ): Promise<void> {
+  rejectOwnOrAncestor("steer", handle);
   const session = await refreshSession(handle);
   if (!session.pid || session.wrapperPid)
     throw new Error(
@@ -704,7 +791,7 @@ async function steerCodexSession(
     session.logPath ?? sessionLogPath(session.handle),
     "utf8",
   );
-  const threadId = codex.parseResumeOutput(log).sessionId;
+  const threadId = codex.parseThreadId(log);
   if (!threadId)
     throw new Error(
       `session ${session.handle} has not started a codex thread yet; retry shortly`,
@@ -777,13 +864,6 @@ async function refreshSession(handle: string): Promise<Session> {
 
 async function statusCommand(handle: string, deps: CliDeps): Promise<void> {
   const session = await refreshSession(handle);
-  if (session.status === SESSION_STATUS.failed)
-    return printResult(
-      deps,
-      { error: session.error ?? "Detached spawn failed" },
-      "Spawn failed",
-      ERROR_EXIT_CODE,
-    );
   return printResult(
     deps,
     {
@@ -792,6 +872,13 @@ async function statusCommand(handle: string, deps: CliDeps): Promise<void> {
         session.status === SESSION_STATUS.running &&
         !!session.pid &&
         isProcessRunning(session.pid),
+      outcome: session.status,
+      ...(session.status === SESSION_STATUS.stopped ||
+      session.status === SESSION_STATUS.failed
+        ? {
+            error: `session ${handle} was ${session.status}: ${session.error ?? session.status}`,
+          }
+        : {}),
     },
     "Session status retrieved",
   );
@@ -823,19 +910,55 @@ async function logsCommand(
 
 async function waitCommand(
   handle: string,
-  options: { resultLimit?: string },
+  options: { resultLimit?: string; timeout?: string },
   deps: CliDeps,
 ): Promise<void> {
+  rejectOwnOrAncestor("wait", handle);
+  const timeoutSeconds =
+    options.timeout === undefined ? undefined : Number(options.timeout);
+  if (
+    timeoutSeconds !== undefined &&
+    (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 0)
+  )
+    throw new Error("--timeout must be a non-negative number");
+  const deadline =
+    timeoutSeconds === undefined
+      ? undefined
+      : Date.now() + timeoutSeconds * 1_000;
   let session = await refreshSession(handle);
   while (session.status === SESSION_STATUS.running) {
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    const remaining =
+      deadline === undefined ? POLL_INTERVAL_MS : deadline - Date.now();
+    if (remaining <= 0)
+      return printResult(
+        deps,
+        {
+          handle,
+          error: "timeout",
+          status: "running",
+          next: `poll with smart-router status ${handle} or wait again; do not start another wait in parallel`,
+        },
+        "Wait timed out",
+        TIMEOUT_EXIT_CODE,
+      );
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(POLL_INTERVAL_MS, remaining)),
+    );
     session = await refreshSession(handle);
   }
-  if (session.status === SESSION_STATUS.failed)
+  if (
+    session.status === SESSION_STATUS.failed ||
+    session.status === SESSION_STATUS.stopped
+  )
     return printResult(
       deps,
-      { error: session.error ?? "Detached spawn failed" },
-      "Spawn failed",
+      {
+        handle,
+        error: `session ${handle} was ${session.status}: ${session.error ?? session.status}`,
+        lastMessage: session.lastMessage ?? null,
+        lastAction: session.lastAction ?? null,
+      },
+      `Spawn ${session.status}`,
       ERROR_EXIT_CODE,
     );
   const config = await loadConfig();
@@ -868,6 +991,7 @@ async function waitCommand(
 }
 
 async function stopCommand(handle: string, deps: CliDeps): Promise<void> {
+  rejectOwnOrAncestor("stop", handle);
   const session = await loadSession(handle);
   return printResult(
     deps,
@@ -1019,6 +1143,7 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .action((handle, options) => logsCommand(handle, options, deps));
   program
     .command("wait <handle>")
+    .option(WAIT_TIMEOUT_OPTION)
     .option(RESULT_LIMIT_OPTION)
     .action((handle, options) => waitCommand(handle, options, deps));
   program
@@ -1063,7 +1188,7 @@ export async function runCli(
       return;
     }
     const message = error instanceof Error ? error.message : String(error);
-    printResult(deps, { error: message }, message, ERROR_EXIT_CODE);
+    printResult(deps, errorFields(error), message, ERROR_EXIT_CODE);
   }
 }
 

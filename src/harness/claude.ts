@@ -141,6 +141,15 @@ export function parseSpawnOutput(stdout: string): ParsedOutput {
     parseJsonLines(stdout).findLast(isResultEvent) ?? JSON.parse(stdout),
   );
   const result = output?.result;
+  if (
+    output?.type === RESULT_EVENT_TYPE &&
+    (output.is_error === true ||
+      (output.subtype !== undefined && output.subtype !== "success"))
+  )
+    throw Object.assign(
+      new Error(typeof result === "string" ? result : "Claude turn failed"),
+      { lastMessage: typeof result === "string" ? result : undefined },
+    );
   const sessionId = output?.session_id;
   const costUsd = output?.total_cost_usd;
   return {

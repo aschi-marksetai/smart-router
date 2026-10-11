@@ -24,8 +24,10 @@ const OUTPUT_SCHEMA_FLAG = "--output-schema";
 const THREAD_STARTED_EVENT_TYPE = "thread.started";
 const ITEM_COMPLETED_EVENT_TYPE = "item.completed";
 const TURN_COMPLETED_EVENT_TYPE = "turn.completed";
+const TURN_STARTED_EVENT_TYPE = "turn.started";
 const ERROR_EVENT_TYPE = "error";
 const AGENT_MESSAGE_ITEM_TYPE = "agent_message";
+const TURN_FAILED_EVENT_TYPE = "turn.failed";
 
 function isInsideGitRepository(cwd: string): boolean {
   let directory = resolve(cwd);
@@ -42,31 +44,66 @@ function parseOutput(output: string, requireSessionId: boolean): ParsedOutput {
   let result = "";
   let usage = null;
   let errorMessage = "";
+  let currentTurnResult = "";
+  let finalTurnResult = "";
+  let completedFinalTurn = false;
   for (const event of parseJsonLines(output)) {
     const eventRecord = record(event);
     if (!eventRecord) continue;
     const type = eventRecord.type;
     const item = record(eventRecord.item);
+    if (type === TURN_STARTED_EVENT_TYPE) {
+      currentTurnResult = "";
+      completedFinalTurn = false;
+    }
     if (
       type === THREAD_STARTED_EVENT_TYPE &&
       typeof eventRecord.thread_id === "string"
     )
       sessionId = eventRecord.thread_id;
-    if (type === TURN_COMPLETED_EVENT_TYPE)
+    if (type === TURN_COMPLETED_EVENT_TYPE) {
       usage = usageFrom(eventRecord.usage);
-    if (type === ERROR_EVENT_TYPE && typeof eventRecord.message === "string")
-      errorMessage = eventRecord.message;
+      finalTurnResult = currentTurnResult;
+      currentTurnResult = "";
+      completedFinalTurn = true;
+    }
+    if (type === TURN_FAILED_EVENT_TYPE || type === ERROR_EVENT_TYPE)
+      completedFinalTurn = false;
+    if (type === ERROR_EVENT_TYPE)
+      errorMessage =
+        typeof eventRecord.message === "string" && eventRecord.message
+          ? eventRecord.message
+          : "Codex reported an error";
     if (
       type === ITEM_COMPLETED_EVENT_TYPE &&
       item?.type === AGENT_MESSAGE_ITEM_TYPE &&
       typeof item.text === "string"
-    )
+    ) {
       result = item.text;
+      currentTurnResult = item.text;
+      completedFinalTurn = false;
+    }
   }
-  if (errorMessage) throw new Error(errorMessage);
+  if (errorMessage || !completedFinalTurn)
+    throw Object.assign(
+      new Error(errorMessage || "Codex turn did not complete successfully"),
+      { lastMessage: result || undefined },
+    );
   if (requireSessionId && !sessionId)
     throw new Error("Codex output did not contain a thread id");
-  return { sessionId, result, usage };
+  return { sessionId, result: finalTurnResult, usage };
+}
+
+export function parseThreadId(output: string): string {
+  for (const event of parseJsonLines(output)) {
+    const eventRecord = record(event);
+    if (
+      eventRecord?.type === THREAD_STARTED_EVENT_TYPE &&
+      typeof eventRecord.thread_id === "string"
+    )
+      return eventRecord.thread_id;
+  }
+  return "";
 }
 
 export function buildSpawn(

@@ -193,9 +193,21 @@ test("builds Codex commands and parses result usage", async () => {
       '{"type":"thread.started","thread_id":"thread-123"}\n{"type":"error","message":"Codex failed"}',
     ),
   ).toThrow("Codex failed");
+  expect(() =>
+    codex.parseSpawnOutput(
+      output.replace('"type":"turn.completed"', '"type":"turn.failed"'),
+    ),
+  ).toThrow("did not complete");
+  expect(() =>
+    codex.parseSpawnOutput(output.split("\n").slice(0, 2).join("\n")),
+  ).toThrow("did not complete");
+  // prettier-ignore
+  expect(() => codex.parseSpawnOutput(`${output}\n{"type":"turn.started"}\n{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}`)).toThrow("did not complete");
+  // prettier-ignore
+  expect(codex.parseSpawnOutput(`${output}\n{"type":"turn.started"}\n{"type":"item.completed","item":{"type":"agent_message","text":"Last"}}\n{"type":"turn.completed"}`).result).toBe("Last");
   expect(
     codex.parseResumeOutput(
-      '1\n{"type":"item.completed","item":{"type":"agent_message","text":"continued"}}',
+      '1\n{"type":"item.completed","item":{"type":"agent_message","text":"continued"}}\n{"type":"turn.completed"}',
     ),
   ).toEqual({
     sessionId: "",
@@ -293,4 +305,12 @@ test("builds stream-json Claude spawns and parses the stream-json log", () => {
     result: "steered",
     usage: { inputTokens: 4, outputTokens: 1, costUsd: 0.002 },
   });
+});
+
+test("treats Claude error result events as failures", () => {
+  expect(() =>
+    claude.parseSpawnOutput(
+      '{"type":"result","subtype":"error","is_error":true,"result":"failed"}',
+    ),
+  ).toThrow("failed");
 });

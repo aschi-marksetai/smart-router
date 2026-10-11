@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as codex from "../src/harness/codex.ts";
 import { DEFAULT_CONFIG, saveConfig } from "../src/config.ts";
-import { runDetached } from "../src/runner.ts";
+import { runForeground, runDetached } from "../src/runner.ts";
 import {
   addUsage,
   completeSessionFromLog,
@@ -20,6 +20,7 @@ import {
   isProcessRunning,
   loadSession,
   pruneSessions,
+  processStartTime,
   removeSession,
   saveSession,
   sessionErrPath,
@@ -318,6 +319,48 @@ test("sweeps dead delegates to done or failed with their last activity", async (
   });
   await sweepSessions(() => "reused");
   expect((await loadSession(reused.handle)).status).toBe(SESSION_STATUS.failed);
+});
+
+test("forwards SIGTERM and sweeps orphans while preserving detached children", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-orphan-"));
+  temporaryDirectories.push(directory);
+  process.env[STATE_DIRECTORY_ENV] = directory;
+  const stoppedErrors = [
+    "stopped because the calling smart-router process received SIGTERM",
+    "stopped: its calling smart-router process exited (likely killed by the caller)",
+  ];
+  for (const mode of ["signal", "orphan", "detached"]) {
+    const child = Bun.spawn(["sleep", "30"]);
+    // prettier-ignore
+    const session = await createSession({
+      harness: "claude", model: "opus", effort: "high", cwd: directory,
+      prompt: "task", status: SESSION_STATUS.running, pid: child.pid,
+      processStartTime: processStartTime(child.pid),
+      wrapperPid: mode === "detached" ? undefined : 999_999_999,
+    });
+    try {
+      if (mode === "signal") {
+        // prettier-ignore
+        const running = runForeground(["sleep", "30"], directory, process.env, session, (code) => expect(code).toBe(143));
+        process.emit("SIGTERM");
+        await expect(running).rejects.toThrow("exited with code null");
+      } else await sweepSessions();
+      const saved = await loadSession(session.handle);
+      if (mode === "detached") {
+        expect(saved.status).toBe(SESSION_STATUS.running);
+        expect(isProcessRunning(child.pid)).toBe(true);
+        continue;
+      }
+      expect(isProcessRunning(session.pid!)).toBe(false);
+      expect(saved).toMatchObject({
+        status: SESSION_STATUS.stopped,
+        error: mode === "signal" ? stoppedErrors[0] : stoppedErrors[1],
+      });
+    } finally {
+      child.kill();
+      await child.exited;
+    }
+  }
 });
 
 test("records a failed session when a detached process cannot launch", async () => {

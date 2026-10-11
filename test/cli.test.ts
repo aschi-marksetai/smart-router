@@ -9,11 +9,13 @@ import { DEFAULT_CONFIG, saveConfig, type Config } from "../src/config.ts";
 import {
   createSession,
   loadSession,
+  processStartTime,
   saveSession,
   SESSION_STATUS,
 } from "../src/sessions.ts";
 import type { DoctorResult } from "../src/doctor.ts";
 import type { RouteDeps } from "../src/route.ts";
+import { runForeground } from "../src/runner.ts";
 import { getQuota, runCodexbar } from "../src/quota.ts";
 
 const OWNER = "cli-test-owner";
@@ -312,6 +314,40 @@ test("each concurrency limit exits 3 with capacity JSON", async () => {
   delete process.env.SMART_ROUTER_DEPTH;
 });
 
+test("foreground spawn and send register children and count toward both caps", async () => {
+  const sleepSeconds = "0.4";
+  const spawned = await cli(["spawn", "task", "--model", "claude:opus"]);
+  // prettier-ignore
+  const commands = [["spawn", "task", "--model", "claude:opus"], ["send", spawned.json.handle, "again"]];
+  for (const [index, limit] of ["maxRunning", "maxPerCaller"].entries()) {
+    // prettier-ignore
+    config.rules.concurrency = { maxRunning: 6, maxPerCaller: 3, maxDepth: 2, [limit]: 1 };
+    await saveConfig(config);
+    // prettier-ignore
+    const foregroundRunner: CliDeps["runForeground"] = async (_argv, cwd, env, session) => {
+      if (!session) throw new Error("missing foreground session");
+      const running = runForeground(["sleep", sleepSeconds], cwd, env, session);
+      while (!(await loadSession(session.handle)).pid) await Bun.sleep(5);
+      const active = await loadSession(session.handle);
+      expect(active.status).toBe(SESSION_STATUS.running);
+      expect(active.wrapperPid).toBe(process.pid);
+      expect(active.wrapperProcessStartTime).toBe(processStartTime(process.pid));
+      expect(active.processStartTime).toBe(processStartTime(session.pid!));
+      const blockedCommand = index === 0 ? commands[1] : commands[0];
+      expectJson(await cli(blockedCommand), { error: "capacity", limit }, 3);
+      await running;
+      return CLAUDE_OUTPUT;
+    };
+    const completed = await cli(commands[index], {
+      runForeground: foregroundRunner,
+    });
+    expect(completed.exitCode).toBe(0);
+    expect((await loadSession(completed.json.handle)).status).toBe(
+      SESSION_STATUS.done,
+    );
+  }
+});
+
 test("spawn lock enforces maxRunning and wait-for-slot polls", async () => {
   config.rules.concurrency = { maxRunning: 1, maxPerCaller: 3, maxDepth: 2 };
   await saveConfig(config);
@@ -534,7 +570,7 @@ test("steer on codex always interrupts: stops the session, then resumes it with 
   // prettier-ignore
   expectJson(await cli(["steer", handle, "go"]), { handle, result: "codex done" });
   expect(await child.exited).not.toBe(0);
-  expect((await loadSession(handle)).status).toBe("stopped");
+  expect((await loadSession(handle)).status).toBe("done");
   expect(runnerArguments[0].slice(0, 4)).toEqual(RESUME_PREFIX);
   expect(runnerArguments[0].at(-1)).toBe("go");
 });

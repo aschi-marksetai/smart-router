@@ -181,9 +181,10 @@ async function reserveSpawnSession(
   config: Config,
   waitForSlot: string | undefined,
   deps: CliDeps,
+  existingSession?: Session,
 ): Promise<Session | ReturnType<typeof capacityOutput>> {
-  const owner = sessionOwner();
-  const depth = currentDepth() + 1;
+  const owner = existingSession?.owner ?? sessionOwner();
+  const depth = existingSession?.depth ?? currentDepth() + 1;
   const limits = config.rules.concurrency ?? {
     maxRunning: DEFAULT_MAX_RUNNING,
     maxPerCaller: DEFAULT_MAX_PER_CALLER,
@@ -201,6 +202,14 @@ async function reserveSpawnSession(
     let capacity: ReturnType<typeof capacityOutput> | undefined;
     const session = await withSessionsLock(async () => {
       await sweepSessions();
+      if (
+        existingSession &&
+        (await loadSession(existingSession.handle)).status ===
+          SESSION_STATUS.running
+      )
+        throw new Error(
+          `session ${existingSession.handle} ${RUNNING_SESSION_ERROR}`,
+        );
       const running = (await listSessions()).filter(
         ({ status }) => status === SESSION_STATUS.running,
       );
@@ -215,6 +224,17 @@ async function reserveSpawnSession(
       if (limit) {
         capacity = capacityOutput(limit, callerSessions);
         return undefined;
+      }
+      if (existingSession) {
+        existingSession.status = SESSION_STATUS.running;
+        existingSession.error = undefined;
+        existingSession.pid = undefined;
+        existingSession.supervisorPid = undefined;
+        existingSession.processStartTime = undefined;
+        existingSession.wrapperPid = process.pid;
+        existingSession.wrapperProcessStartTime = processStartTime(process.pid);
+        await saveSession(existingSession);
+        return existingSession;
       }
       return createSession({
         ...options,
@@ -422,6 +442,10 @@ async function spawnCommand(
       prompt: spawnPrompt,
       handle,
       logPath,
+      wrapperPid: options.detach ? undefined : process.pid,
+      wrapperProcessStartTime: options.detach
+        ? undefined
+        : processStartTime(process.pid),
       usage: null,
       route: routeResult,
     },
@@ -483,7 +507,7 @@ async function spawnCommand(
   let parsed: ReturnType<typeof adapter.parseSpawnOutput>;
   try {
     parsed = adapter.parseSpawnOutput(
-      await deps.runForeground(command.argv, cwd, environment),
+      await deps.runForeground(command.argv, cwd, environment, session),
     );
     session.sessionId = parsed.sessionId || command.sessionId;
     if (!session.sessionId)
@@ -599,12 +623,35 @@ async function sendCommand(
     message,
     harnessOptions,
   );
-  const parsed = adapter.parseResumeOutput(
-    await deps.runForeground(command.argv, session.cwd),
+  const reservation = await reserveSpawnSession(
+    { ...session, prompt: message },
+    config,
+    undefined,
+    deps,
+    session,
   );
-  session.result = parsed.result;
-  session.lastResult = parsed.result;
-  session.usage = addUsage(session.usage, parsed.usage);
+  if ("limit" in reservation)
+    return printResult(
+      deps,
+      reservation,
+      `Capacity limit reached: ${reservation.limit}`,
+      CAPACITY_EXIT_CODE,
+    );
+  let parsed: ReturnType<typeof adapter.parseResumeOutput>;
+  try {
+    parsed = adapter.parseResumeOutput(
+      await deps.runForeground(command.argv, session.cwd, process.env, session),
+    );
+    session.status = SESSION_STATUS.done;
+    session.result = parsed.result;
+    session.lastResult = parsed.result;
+    session.usage = addUsage(session.usage, parsed.usage);
+  } catch (error) {
+    session.status = SESSION_STATUS.failed;
+    session.error = error instanceof Error ? error.message : String(error);
+    await saveSession(session);
+    throw error;
+  }
   if (options.browser && session.harness === "claude") session.browser = true;
   await saveSession(session);
   return printResult(
@@ -625,7 +672,7 @@ async function steerCommand(
   deps: CliDeps,
 ): Promise<void> {
   const session = await refreshSession(handle);
-  if (!session.pid)
+  if (!session.pid || session.wrapperPid)
     throw new Error(
       `session ${handle} ran in the foreground; steer works only on detached spawns`,
     );

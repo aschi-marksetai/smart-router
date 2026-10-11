@@ -38,6 +38,8 @@ Resumes the same session with its full context. Stdout is JSON with `result`.
 
 ## Long tasks
 
+Killing your own wait, status or shell never stops a detached delegate; use `smart-router stop <handle>` (or steer) and run `smart-router sessions` to find ones you no longer need. Foreground spawns stop when you interrupt them.
+
 Use `smart-router spawn "<task>" --cwd <repo path> --detach` for work that should outlive this command. Then use `smart-router wait <handle>` or `smart-router status <handle>` and `smart-router logs <handle> --tail 50`; use `smart-router stop <handle>` to end it.
 Use `smart-router steer <handle> "<message>"` to redirect a running detached delegate. Claude delegates take the message mid-turn, or with `--interrupt` stop the current step first. Codex delegates are always interrupted: the run is stopped and resumed with the message, so any step in progress is lost, and the output is the resumed turn's result.
 Exit code 3 with `error: "capacity"` means the configured concurrency or depth cap was reached. Add `--wait-for-slot <seconds>` to opt into waiting for a running slot; depth-limited delegates must do the work themselves.

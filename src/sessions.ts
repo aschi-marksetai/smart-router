@@ -33,6 +33,8 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
 const SPAWN_LOCK_DIRECTORY = ".spawn.lock";
 const LOCK_RETRY_INTERVAL_MS = 20;
 const LOCK_STALE_TIMEOUT_MS = 30_000;
+const PROCESS_STOP_POLL_INTERVAL_MS = 50;
+export const PROCESS_STOP_GRACE_PERIOD_MS = 5_000;
 export const DELEGATE_EXIT_ERROR =
   "delegate process exited without reporting (killed; likely out of memory or the pids limit)";
 
@@ -67,6 +69,8 @@ export type Session = {
   status: SessionStatus;
   pid?: number;
   supervisorPid?: number;
+  wrapperPid?: number;
+  wrapperProcessStartTime?: string;
   processStartTime?: string;
   depth?: number;
   logPath?: string;
@@ -133,6 +137,8 @@ export async function createSession(
     promptPreview: options.prompt.slice(0, PROMPT_PREVIEW_LENGTH),
     status: options.status,
     pid: options.pid,
+    wrapperPid: options.wrapperPid,
+    wrapperProcessStartTime: options.wrapperProcessStartTime,
     processStartTime: options.processStartTime,
     depth: options.depth,
     logPath: options.logPath,
@@ -257,14 +263,15 @@ export function processStartTime(pid: number): string | undefined {
   return undefined;
 }
 
-function isSessionProcessRunning(
-  session: Session,
-  getProcessStartTime: (pid: number) => string | undefined,
+function isTrackedProcessRunning(
+  pid: number | undefined,
+  startTime: string | undefined,
+  getProcessStartTime = processStartTime,
 ): boolean {
-  if (!session.pid || !isProcessRunning(session.pid)) return false;
-  const currentStartTime = getProcessStartTime(session.pid);
-  if (!session.processStartTime || !currentStartTime) return true;
-  return session.processStartTime === currentStartTime;
+  if (!pid || !isProcessRunning(pid)) return false;
+  const currentStartTime = getProcessStartTime(pid);
+  if (!startTime || !currentStartTime) return true;
+  return startTime === currentStartTime;
 }
 
 function logActivity(
@@ -303,11 +310,28 @@ export async function sweepSessions(
 ): Promise<Session[]> {
   const sessions = await listSessions();
   for (const session of sessions) {
-    const shouldSweep =
-      session.status === SESSION_STATUS.running &&
-      !!session.pid &&
-      !isSessionProcessRunning(session, getProcessStartTime);
-    if (shouldSweep)
+    if (session.status !== SESSION_STATUS.running || !session.pid) continue;
+    const childRunning = isTrackedProcessRunning(
+      session.pid,
+      session.processStartTime,
+      getProcessStartTime,
+    );
+    const orphaned =
+      session.wrapperPid &&
+      !isTrackedProcessRunning(
+        session.wrapperPid,
+        session.wrapperProcessStartTime,
+        getProcessStartTime,
+      );
+    if (orphaned && childRunning) {
+      await terminateSessionProcess(session);
+      session.status = SESSION_STATUS.stopped;
+      session.error =
+        "stopped: its calling smart-router process exited (likely killed by the caller)";
+      await saveSession(session);
+      continue;
+    }
+    if (!childRunning)
       await completeSessionFromLog(
         session,
         getAdapter(session.harness).parseSpawnOutput,
@@ -398,6 +422,26 @@ export async function completeSessionFromLog(
   }
   await saveSession(session);
   return session;
+}
+
+export async function terminateSessionProcess(
+  session: Session,
+  signal: NodeJS.Signals = "SIGTERM",
+): Promise<void> {
+  if (
+    !session.pid ||
+    !isTrackedProcessRunning(session.pid, session.processStartTime)
+  )
+    return;
+  process.kill(session.pid, signal);
+  const deadline = Date.now() + PROCESS_STOP_GRACE_PERIOD_MS;
+  while (isTrackedProcessRunning(session.pid, session.processStartTime)) {
+    if (Date.now() >= deadline) {
+      process.kill(session.pid, "SIGKILL");
+      return;
+    }
+    await Bun.sleep(PROCESS_STOP_POLL_INTERVAL_MS);
+  }
 }
 
 export async function stopSession(session: Session): Promise<Session> {

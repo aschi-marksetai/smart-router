@@ -132,6 +132,35 @@ test("entry registers backend, MCP bridge, workspace args and bound model", asyn
     models: [{ id: "auto", agentRuntime: { id: "smart-router" } }],
   });
 });
+test("static catalog publishes smart-router/auto without credentials", async () => {
+  expect(provider.id).toBe("smart-router");
+  expect(provider.staticCatalog).toBe(provider.catalog);
+  expect(provider.resolveSyntheticAuth?.({ provider: provider.id })).toEqual({
+    apiKey: "smart-router-harness-auth",
+    source: "smart-router harness-managed auth",
+    mode: "api-key",
+  });
+  const catalog = await provider.staticCatalog!.run({
+    config: {},
+    env: {},
+    resolveProviderApiKey: () => ({ apiKey: undefined }),
+    resolveProviderAuth: () => ({
+      apiKey: undefined,
+      mode: "none",
+      source: "none",
+    }),
+  });
+  expect(catalog).toMatchObject({
+    provider: {
+      ...manifest.modelCatalog.providers["smart-router"],
+      agentRuntime: { id: "smart-router" },
+      models: manifest.modelCatalog.providers["smart-router"].models.map(
+        (model) => ({ ...model, agentRuntime: { id: "smart-router" } }),
+      ),
+    },
+  });
+});
+
 test("configured binary and flags pass through", () => {
   const { backend: configured } = captureRegistration({
     smartRouterBinary: "/opt/smart-router",

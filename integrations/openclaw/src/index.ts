@@ -9,6 +9,7 @@ const BACKEND_ID = "smart-router";
 const EVENT_VERSION = 1;
 
 type Backend = Parameters<OpenClawPluginApi["registerCliBackend"]>[0];
+type Provider = Parameters<OpenClawPluginApi["registerProvider"]>[0];
 type EventParser = NonNullable<Backend["parseJsonlEvent"]>;
 type ParsedEvent = Exclude<
   ReturnType<EventParser>,
@@ -154,25 +155,33 @@ export function registerSmartRouter(api: RegistrationApi): void {
     id: BACKEND_ID,
     label: "smart-router",
     auth: [],
-    catalog: {
-      order: "simple",
-      async run() {
-        const provider = manifest.modelCatalog.providers[BACKEND_ID];
-        return {
-          provider: {
-            ...provider,
-            agentRuntime: { id: BACKEND_ID },
-            models: provider.models.map((model) => ({
-              ...model,
-              input: ["text"],
-              agentRuntime: { id: BACKEND_ID },
-            })),
-          },
-        };
-      },
-    },
+    catalog: smartRouterCatalog,
+    staticCatalog: smartRouterCatalog,
+    resolveSyntheticAuth: () => ({
+      apiKey: "smart-router-harness-auth",
+      source: "smart-router harness-managed auth",
+      mode: "api-key",
+    }),
   });
 }
+
+const smartRouterCatalog: NonNullable<Provider["staticCatalog"]> = {
+  order: "simple",
+  async run() {
+    const provider = manifest.modelCatalog.providers[BACKEND_ID];
+    return {
+      provider: {
+        ...provider,
+        agentRuntime: { id: BACKEND_ID },
+        models: provider.models.map((model) => ({
+          ...model,
+          input: ["text"],
+          agentRuntime: { id: BACKEND_ID },
+        })),
+      },
+    };
+  },
+};
 
 export default definePluginEntry({
   id: BACKEND_ID,

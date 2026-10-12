@@ -1,3 +1,4 @@
+import { codexHomeDir } from "./paths.ts";
 import { globSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -201,8 +202,7 @@ async function enumerateCodex(
       ),
     );
   } catch {
-    const directory =
-      deps.codexHome ?? process.env.CODEX_HOME ?? join(homedir(), ".codex");
+    const directory = deps.codexHome ?? codexHomeDir();
     return parseCodexModels(
       JSON.parse(await readFile(join(directory, "models_cache.json"), "utf8")),
     );

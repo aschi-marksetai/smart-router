@@ -24,3 +24,13 @@ export function stateDir(): string {
 export function sessionsDir(): string {
   return join(stateDir(), SESSIONS_DIRECTORY_NAME);
 }
+
+const CODEX_HOME_ENVIRONMENT_VARIABLE = "CODEX_HOME";
+const CODEX_HOME_DIRECTORY_NAME = ".codex";
+
+export function codexHomeDir(): string {
+  return (
+    process.env[CODEX_HOME_ENVIRONMENT_VARIABLE] ??
+    join(homedir(), CODEX_HOME_DIRECTORY_NAME)
+  );
+}

@@ -1,3 +1,4 @@
+import { codexHomeDir } from "./paths.ts";
 import { existsSync } from "node:fs";
 import { globSync } from "node:fs";
 import { homedir } from "node:os";
@@ -8,7 +9,6 @@ import { enumerate } from "./enumerate.ts";
 
 const CODEX_API_KEY_ENV = "CODEX_API_KEY";
 const CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
-const codexHome = () => process.env.CODEX_HOME ?? join(homedir(), ".codex");
 const claudeConfigDir = () =>
   process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
 const CODEXBAR_BINARY = "codexbar";
@@ -86,8 +86,8 @@ async function detectHarness(
       authed:
         config.harnesses.codex?.auth === "api-key"
           ? providerKeySet || Boolean(process.env[CODEX_API_KEY_ENV])
-          : existsSync(join(codexHome(), "models_cache.json")) ||
-            existsSync(join(codexHome(), "auth.json")),
+          : existsSync(join(codexHomeDir(), "models_cache.json")) ||
+            existsSync(join(codexHomeDir(), "auth.json")),
     };
   const authed = piProviderKeySet;
   return { installed, version, authed };

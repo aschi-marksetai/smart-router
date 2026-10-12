@@ -170,6 +170,8 @@ Pipeline:
 
 Automatic sandbox: for Codex, `spawn.autoSandbox` uses the route's `needsFullAccess`, `needsBrowser`, and `needsNetwork` scores (threshold 0.5) to select `danger-full-access` for full-access or browser tasks or to keep the configured sandbox with `sandbox_workspace_write.network_access=true` for network tasks. The scores survive a confidence fallback; only a Jev outage leaves them null, which means the configured sandbox. `--sandbox` always overrides it. `spawn.allowFullAccess` disables automatic full access when false. The chosen sandbox and network override persist in the session and apply to `send` unless `--sandbox` overrides them.
 
+For Codex `workspace-write` sessions in Git repositories, spawn and resume explicitly add the absolute Git directory and common directory to `sandbox_workspace_write.writable_roots`, allowing Git metadata writes in normal repositories and worktrees. Roots from the Codex user config (unless `--strict-mcp-config`) and supplied config overrides are preserved and deduplicated; network overrides remain intact. Other sandboxes and non-Git directories receive no additional roots.
+
 For Claude, `--browser` passes `--chrome` and persists for `send`; a routed Claude pick also enables it when `needsBrowser` exceeds 0.5. Other harnesses ignore `--browser` with a stderr note.
 
 Before spawning: if the picked model id is listed in `rules.stoppingPointRequiredFor` and the route's `statesStoppingPoint` is below 0.5, exit 1 with `{ "error": "codex:gpt-5.6-sol needs a stated stopping point: add success criteria and where to stop to the prompt, then call spawn again" }`. The check runs only when routing ran (not with `--model`) and not when the route fell back.

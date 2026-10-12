@@ -1,0 +1,58 @@
+{
+  "id": "smart-router",
+  "name": "smart-router",
+  "description": "Delegate OpenClaw turns through the smart-router CLI",
+  "version": "0.7.0",
+  "cliBackends": ["smart-router"],
+  "providers": ["smart-router"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "smartRouterBinary": {
+        "type": "string",
+        "minLength": 1
+      },
+      "cwd": {
+        "type": "string",
+        "minLength": 1
+      },
+      "hint": {
+        "type": "string"
+      },
+      "confidential": {
+        "type": "boolean"
+      },
+      "resultLimit": {
+        "type": "integer",
+        "minimum": 1
+      }
+    }
+  },
+  "modelCatalog": {
+    "providers": {
+      "smart-router": {
+        "baseUrl": "cli://smart-router",
+        "models": [
+          {
+            "id": "auto",
+            "name": "smart-router auto",
+            "reasoning": false,
+            "input": ["text"],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 16384
+          }
+        ]
+      }
+    },
+    "discovery": {
+      "smart-router": "static"
+    }
+  }
+}

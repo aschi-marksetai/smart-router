@@ -1,0 +1,4 @@
+{"v":1,"handle":"d562f0","harness":"codex","ts":"2026-10-12T00:42:53.417Z","type":"session.started","model":"gpt-6-luna","effort":"low","sessionId":"01a12d8f-fbb2-73f3-acf7-dd48cba9c836"}
+{"v":1,"handle":"d562f0","harness":"codex","ts":"2026-10-12T00:42:56.157Z","type":"message","role":"assistant","text":"done"}
+{"v":1,"handle":"d562f0","harness":"codex","ts":"2026-10-12T00:42:56.180Z","type":"usage","inputTokens":22733,"outputTokens":5,"costUsd":null,"cachedInputTokens":12032,"cacheWriteTokens":0,"cacheHitRatio":0.5292746227950557}
+{"v":1,"handle":"d562f0","harness":"codex","ts":"2026-10-12T00:42:57.129Z","type":"result","text":"done","usage":{"inputTokens":22733,"outputTokens":5,"costUsd":null,"cachedInputTokens":12032,"cacheWriteTokens":0}}

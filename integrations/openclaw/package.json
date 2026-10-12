@@ -1,0 +1,25 @@
+{
+  "name": "@markset/openclaw-smart-router",
+  "version": "0.8.0",
+  "type": "module",
+  "private": true,
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "scripts": {
+    "test": "bun test test",
+    "typecheck": "tsc --ignoreConfig --noEmit --strict --skipLibCheck --module esnext --moduleResolution bundler --target esnext --types bun src/index.ts test/index.test.ts",
+    "build": "bun build ./src/index.ts --target node --format esm --packages external --outdir dist",
+    "prepack": "bun run build"
+  },
+  "devDependencies": {
+    "openclaw": "2026.10.1"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ]
+}

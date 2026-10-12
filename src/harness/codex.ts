@@ -39,6 +39,9 @@ const CODEX_CONFIG_FILENAME = "config.toml";
 const WORKSPACE_WRITE_CONFIG_KEY = "sandbox_workspace_write";
 const WRITABLE_ROOTS_CONFIG_KEY = `${WORKSPACE_WRITE_CONFIG_KEY}.writable_roots`;
 const GIT_BINARY = "git";
+const GPG_SIGNING_CONFIG_ARGUMENTS = ["config", "--bool", "commit.gpgsign"];
+const GPG_SIGNING_UNAVAILABLE_NOTE =
+  'Commit signing is unavailable in this sandbox. Stage your changes and report "commit not signed: needs overseer" instead of committing. Never pass --no-gpg-sign or change git config to disable signing.';
 const GIT_MARKER_FILENAME = ".git";
 const SWIFT_PACKAGE_FILENAME = "Package.swift";
 const XCODE_PROJECT_SUFFIXES = [".xcodeproj", ".xcworkspace"];
@@ -122,6 +125,25 @@ export function codexToolchainNote(cwd: string, sandbox: string): string {
   const swiftProjectInWorkspaceWrite =
     sandbox === WORKSPACE_WRITE_SANDBOX && swiftWritableRoots(cwd).length > 0;
   return swiftProjectInWorkspaceWrite ? SWIFTPM_NESTED_SANDBOX_NOTE : "";
+}
+
+export function codexGpgSigningNote(cwd: string, sandbox: string): string {
+  if (sandbox !== WORKSPACE_WRITE_SANDBOX) return "";
+  return gitRequiresSigning(cwd) ? GPG_SIGNING_UNAVAILABLE_NOTE : "";
+}
+
+function gitRequiresSigning(cwd: string): boolean {
+  if (!isInsideGitRepository(cwd)) return false;
+  try {
+    return (
+      execFileSync(GIT_BINARY, ["-C", cwd, ...GPG_SIGNING_CONFIG_ARGUMENTS], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim() === "true"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function swiftWritableRoots(cwd: string): string[] {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   buildResume,
   buildSpawn,
+  codexGpgSigningNote,
   codexToolchainNote,
 } from "../src/harness/codex.ts";
 import type { HarnessOptions } from "../src/harness/types.ts";
@@ -14,6 +15,50 @@ import { chooseCodexSandbox, routeQuestions } from "../src/route.ts";
 
 const WRITABLE_ROOTS_KEY = "sandbox_workspace_write.writable_roots";
 const NETWORK_OVERRIDE = "sandbox_workspace_write.network_access=true";
+
+test("GPG signing note respects effective Git config and sandbox", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-gpg-note-"));
+  const repository = join(directory, "repository");
+  const originalGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
+  const globalConfig = join(directory, "gitconfig");
+  try {
+    await mkdir(repository);
+    execFileSync("git", ["init", repository], { stdio: "pipe" });
+    process.env.GIT_CONFIG_GLOBAL = globalConfig;
+    for (const signing of [false, true]) {
+      await writeFile(globalConfig, `[commit]\n\tgpgsign = ${signing}\n`);
+      for (const sandbox of [
+        "workspace-write",
+        "read-only",
+        "danger-full-access",
+      ]) {
+        const note = codexGpgSigningNote(repository, sandbox);
+        if (signing && sandbox === "workspace-write") {
+          expect(note).toContain(
+            'Stage your changes and report "commit not signed: needs overseer" instead of committing',
+          );
+          expect(note).toContain(
+            "Never pass --no-gpg-sign or change git config to disable signing",
+          );
+        } else expect(note).toBe("");
+      }
+    }
+    expect(codexGpgSigningNote(directory, "workspace-write")).toBe("");
+    execFileSync("git", [
+      "-C",
+      repository,
+      "config",
+      "commit.gpgsign",
+      "false",
+    ]);
+    expect(codexGpgSigningNote(repository, "workspace-write")).toBe("");
+  } finally {
+    if (originalGlobalConfig === undefined)
+      delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = originalGlobalConfig;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("merges Git metadata roots on spawn and resume only for workspace-write Git cwds", async () => {
   const directory = await realpath(

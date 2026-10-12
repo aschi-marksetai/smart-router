@@ -495,7 +495,12 @@ async function spawnCommand(
     : sandboxChoice?.sandbox;
   const sandboxNote = sandbox ? ` sandbox ${sandbox}` : "";
   const toolchainNote = sandboxChoice
-    ? codex.codexToolchainNote(cwd, sandboxChoice.sandbox)
+    ? [
+        codex.codexToolchainNote(cwd, sandboxChoice.sandbox),
+        codex.codexGpgSigningNote(cwd, sandboxChoice.sandbox),
+      ]
+        .filter(Boolean)
+        .join("\n\n")
     : "";
   const spawnPrompt = toolchainNote
     ? `${promptWithGuardrails}\n\n${toolchainNote}`
@@ -743,15 +748,23 @@ async function sendCommand(
     { ...options, ...harnessOptions, schema: options.schema },
     deps,
   );
+  const signingNote =
+    session.harness === "codex"
+      ? codex.codexGpgSigningNote(
+          session.cwd,
+          harnessOptions.codexSandbox ?? config.spawn.codexSandbox,
+        )
+      : "";
+  const resumePrompt = signingNote ? `${message}\n\n${signingNote}` : message;
   const command = adapter.buildResume(
     session.sessionId,
-    message,
+    resumePrompt,
     harnessOptions,
   );
   session.mcpConfig = harnessOptions.mcpConfig;
   session.strictMcpConfig = harnessOptions.strictMcpConfig;
   const reservation = await reserveSpawnSession(
-    { ...session, prompt: message },
+    { ...session, prompt: resumePrompt },
     config,
     undefined,
     deps,

@@ -72,6 +72,8 @@ export type Config = {
   spawn: {
     claudePermissionMode: string;
     codexSandbox: string;
+    codexExtraWritableRoots?: string[];
+    codexLocalhostNeedsNetwork?: boolean;
     autoSandbox: boolean;
     allowFullAccess: boolean;
   };
@@ -106,6 +108,8 @@ export const DEFAULT_CONFIG: Config = {
   spawn: {
     claudePermissionMode: DEFAULT_CLAUDE_PERMISSION_MODE,
     codexSandbox: DEFAULT_CODEX_SANDBOX,
+    codexExtraWritableRoots: [],
+    codexLocalhostNeedsNetwork: false,
     autoSandbox: true,
     allowFullAccess: true,
   },

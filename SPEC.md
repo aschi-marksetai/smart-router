@@ -83,6 +83,8 @@ A CLI that picks which coding-agent harness and model should run a task, spawns 
   "spawn": {
     "claudePermissionMode": "bypassPermissions",
     "codexSandbox": "workspace-write",
+    "codexExtraWritableRoots": [],
+    "codexLocalhostNeedsNetwork": false,
     "autoSandbox": true,
     "allowFullAccess": true,
   },
@@ -170,7 +172,9 @@ Pipeline:
 
 Automatic sandbox: for Codex, `spawn.autoSandbox` uses the route's `needsFullAccess`, `needsBrowser`, and `needsNetwork` scores (threshold 0.5) to select `danger-full-access` for full-access or browser tasks or to keep the configured sandbox with `sandbox_workspace_write.network_access=true` for network tasks. The scores survive a confidence fallback; only a Jev outage leaves them null, which means the configured sandbox. `--sandbox` always overrides it. `spawn.allowFullAccess` disables automatic full access when false. The chosen sandbox and network override persist in the session and apply to `send` unless `--sandbox` overrides them.
 
-For Codex `workspace-write` sessions in Git repositories, spawn and resume explicitly add the absolute Git directory and common directory to `sandbox_workspace_write.writable_roots`, allowing Git metadata writes in normal repositories and worktrees. Roots from the Codex user config (unless `--strict-mcp-config`) and supplied config overrides are preserved and deduplicated; network overrides remain intact. Other sandboxes and non-Git directories receive no additional roots.
+For Codex `workspace-write` sessions, spawn and resume merge and deduplicate writable roots from the Codex user config (unless `--strict-mcp-config`), supplied overrides, Git metadata, and `spawn.codexExtraWritableRoots` (optional string array, default `[]`; expands `~` and `~/`). Marker detection walks from cwd through the Git root, or to the filesystem root outside Git. `Package.swift` adds `~/Library/Caches/org.swift.swiftpm` and `~/.cache/clang`; `*.xcodeproj` / `*.xcworkspace` directories also add `~/Library/Developer/Xcode/DerivedData`. These directories exist or are created by the tools. Other sandboxes receive no additional roots. macOS SwiftPM's nested manifest sandbox can still fail with `sandbox_apply: Operation not permitted`; writable roots do not remove that restriction.
+
+`spawn.codexLocalhostNeedsNetwork` is an optional boolean, default `false`. When enabled, spawn and resume add `sandbox_workspace_write.network_access=true` only for `workspace-write`, including an explicit `--sandbox workspace-write`. This allows localhost bind/listen and general outbound networking; the trade-off is opt-in. Codex 0.159.0 has no standalone loopback-only workspace-write setting. Its managed proxy has `allow_local_binding`, but requires network access, retains inherited domain rules, and allows DNS; an empty override does not clear those rules. Smart-router therefore does not enable that proxy automatically. Read-only and danger-full-access are unchanged. See [OpenAI configuration reference](https://developers.openai.com/codex/config-reference), the [versioned Seatbelt policy](https://github.com/openai/codex/blob/rust-v0.159.0/codex-rs/sandboxing/src/seatbelt.rs#L319-L382), and [config merge behavior](https://github.com/openai/codex/blob/rust-v0.159.0/codex-rs/config/src/merge.rs#L77-L157).
 
 For Claude, `--browser` passes `--chrome` and persists for `send`; a routed Claude pick also enables it when `needsBrowser` exceeds 0.5. Other harnesses ignore `--browser` with a stderr note.
 

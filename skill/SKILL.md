@@ -17,6 +17,8 @@ Always pass `--cwd` so the delegate works in the right repo. Blocks until the de
 
 For Codex, the sandbox is chosen from the task; pass `--sandbox <policy>` to override it.
 
+Codex `workspace-write` adds SwiftPM/Clang cache roots for Swift/Xcode markers up to the Git root, plus DerivedData for Xcode. `spawn.codexExtraWritableRoots` (default `[]`) adds other toolchain roots and expands `~`. SwiftPM's nested macOS sandbox may still fail independently of cache permissions. Codex 0.159.0 has no standalone loopback-only workspace-write setting; opt into `spawn.codexLocalhostNeedsNetwork: true` (default `false`) for localhost tests, allowing general outbound networking too. These additions apply only to `workspace-write`.
+
 Every prompt states what done looks like and where to stop, for example "Done when `bun test` passes and the endpoint returns paginated results; stop there, do not refactor callers." Some models are configured to refuse a prompt without one, and the refusal tells you to add it and call again. Task-independent operating rules for the chosen model are appended automatically from the user's guardrails file, so do not repeat those.
 
 Unless `--no-guardrails` is set, the delegate also receives a context section with its handle and depth, the maximum-depth rule, and guidance to avoid commands on itself or an ancestor. It explains that a shell yield is not completion and recommends detached helpers with `smart-router wait <child> --timeout 90`.

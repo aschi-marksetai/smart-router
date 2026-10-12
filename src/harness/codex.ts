@@ -1,7 +1,8 @@
 export { translateEvents } from "../events.ts";
 import { codexHomeDir } from "../paths.ts";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_CODEX_SANDBOX } from "../config.ts";
 import { codexMcpOverrides } from "./mcp.ts";
@@ -38,6 +39,14 @@ const CODEX_CONFIG_FILENAME = "config.toml";
 const WORKSPACE_WRITE_CONFIG_KEY = "sandbox_workspace_write";
 const WRITABLE_ROOTS_CONFIG_KEY = `${WORKSPACE_WRITE_CONFIG_KEY}.writable_roots`;
 const GIT_BINARY = "git";
+const GIT_MARKER_FILENAME = ".git";
+const SWIFT_PACKAGE_FILENAME = "Package.swift";
+const XCODE_PROJECT_SUFFIXES = [".xcodeproj", ".xcworkspace"];
+const SWIFT_CACHE_ROOTS = [
+  "~/Library/Caches/org.swift.swiftpm",
+  "~/.cache/clang",
+];
+const XCODE_BUILD_ROOTS = ["~/Library/Developer/Xcode/DerivedData"];
 const GIT_DIRECTORY_ARGUMENTS = [
   "rev-parse",
   "--path-format=absolute",
@@ -62,7 +71,7 @@ function configOverrides(options: HarnessOptions): string[] {
   ];
   const sandbox = options.codexSandbox ?? DEFAULT_CODEX_SANDBOX;
   if (sandbox !== WORKSPACE_WRITE_SANDBOX) return overrides;
-  let gitDirectories: string[];
+  let gitDirectories: string[] = [];
   try {
     gitDirectories = execFileSync(GIT_BINARY, GIT_DIRECTORY_ARGUMENTS, {
       cwd: options.cwd,
@@ -71,31 +80,76 @@ function configOverrides(options: HarnessOptions): string[] {
     })
       .trim()
       .split("\n");
-  } catch {
-    return overrides;
-  }
+  } catch {}
   const configPath = join(codexHomeDir(), CODEX_CONFIG_FILENAME);
-  const roots: string[] = [];
-  if (!options.strictMcpConfig && existsSync(configPath))
-    roots.push(
-      ...writableRoots(Bun.TOML.parse(readFileSync(configPath, "utf8"))),
-    );
+  const configuration =
+    !options.strictMcpConfig && existsSync(configPath)
+      ? Bun.TOML.parse(readFileSync(configPath, "utf8"))
+      : {};
+  const roots = writableRoots(configuration);
   for (const override of overrides) {
     const key = override.split("=", 1)[0]?.trim();
     if (key !== WRITABLE_ROOTS_CONFIG_KEY && key !== WORKSPACE_WRITE_CONFIG_KEY)
       continue;
-    roots.push(...writableRoots(Bun.TOML.parse(override)));
+    const settings = Bun.TOML.parse(override);
+    roots.push(...writableRoots(settings));
   }
-  overrides.push(
-    `${WRITABLE_ROOTS_CONFIG_KEY}=${JSON.stringify([...new Set([...roots, ...gitDirectories])])}`,
+  const extraRoots = (options.codexExtraWritableRoots ?? []).map(
+    expandHomePath,
   );
+  const additionalRoots = [
+    ...gitDirectories,
+    ...swiftWritableRoots(options.cwd),
+    ...extraRoots,
+  ];
+  if (additionalRoots.length > 0)
+    overrides.push(
+      `${WRITABLE_ROOTS_CONFIG_KEY}=${JSON.stringify([...new Set([...roots, ...additionalRoots])])}`,
+    );
   return overrides;
+}
+
+function expandHomePath(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/")) return join(homedir(), path.slice(2));
+  return path;
+}
+
+const SWIFTPM_NESTED_SANDBOX_NOTE =
+  "This Codex sandbox cannot nest SwiftPM's own sandbox: run swift build, swift test and swift run with --disable-sandbox (xcodebuild is unaffected).";
+
+export function codexToolchainNote(cwd: string, sandbox: string): string {
+  const swiftProjectInWorkspaceWrite =
+    sandbox === WORKSPACE_WRITE_SANDBOX && swiftWritableRoots(cwd).length > 0;
+  return swiftProjectInWorkspaceWrite ? SWIFTPM_NESTED_SANDBOX_NOTE : "";
+}
+
+function swiftWritableRoots(cwd: string): string[] {
+  let directory = resolve(cwd);
+  while (existsSync(directory)) {
+    const hasXcodeProject = readdirSync(directory, {
+      withFileTypes: true,
+    }).some(
+      (entry) =>
+        entry.isDirectory() &&
+        XCODE_PROJECT_SUFFIXES.some((suffix) => entry.name.endsWith(suffix)),
+    );
+    if (hasXcodeProject)
+      return [...SWIFT_CACHE_ROOTS, ...XCODE_BUILD_ROOTS].map(expandHomePath);
+    if (existsSync(join(directory, SWIFT_PACKAGE_FILENAME)))
+      return SWIFT_CACHE_ROOTS.map(expandHomePath);
+    if (existsSync(join(directory, GIT_MARKER_FILENAME))) return [];
+    const parent = dirname(directory);
+    if (parent === directory) return [];
+    directory = parent;
+  }
+  return [];
 }
 
 function isInsideGitRepository(cwd: string): boolean {
   let directory = resolve(cwd);
   while (true) {
-    if (existsSync(join(directory, ".git"))) return true;
+    if (existsSync(join(directory, GIT_MARKER_FILENAME))) return true;
     const parent = dirname(directory);
     if (parent === directory) return false;
     directory = parent;

@@ -9,6 +9,7 @@ export type HarnessOptions = {
   strictMcpConfig?: boolean;
   codexSandbox?: string;
   codexConfigOverrides?: string[];
+  codexExtraWritableRoots?: string[];
   allowedTools?: string;
   schema?: { path: string; content: string };
   binary?: string;

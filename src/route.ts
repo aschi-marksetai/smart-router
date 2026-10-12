@@ -110,13 +110,19 @@ export function chooseCodexSandbox(options: {
   callerSandbox?: string;
   autoSandbox: boolean;
   allowFullAccess: boolean;
+  codexLocalhostNeedsNetwork?: boolean;
   routingRan: boolean;
   needsNetwork: number | null;
   needsBrowser: number | null;
   needsFullAccess: number | null;
 }): CodexSandboxChoice {
   if (options.callerSandbox)
-    return { sandbox: options.callerSandbox, usesNetworkAccess: false };
+    return {
+      sandbox: options.callerSandbox,
+      usesNetworkAccess:
+        options.callerSandbox === CODEX_WORKSPACE_WRITE_SANDBOX &&
+        options.codexLocalhostNeedsNetwork === true,
+    };
   const canUseRouteScores = options.autoSandbox && options.routingRan;
   const needsFullAccess =
     canUseRouteScores &&
@@ -131,6 +137,11 @@ export function chooseCodexSandbox(options: {
   const needsNetwork =
     canUseRouteScores && (options.needsNetwork ?? 0) > SANDBOX_THRESHOLD;
   if (needsNetwork)
+    return { sandbox: options.configuredSandbox, usesNetworkAccess: true };
+  if (
+    options.configuredSandbox === CODEX_WORKSPACE_WRITE_SANDBOX &&
+    options.codexLocalhostNeedsNetwork
+  )
     return { sandbox: options.configuredSandbox, usesNetworkAccess: true };
   return { sandbox: options.configuredSandbox, usesNetworkAccess: false };
 }

@@ -36,6 +36,7 @@ import { readUpdateNotice, updateExecutable, updateRefusal } from "./update.ts";
 import { guardrailsFor, loadGuardrails } from "./guardrails.ts";
 import {
   CODEX_NETWORK_ACCESS_OVERRIDE,
+  CODEX_WORKSPACE_WRITE_SANDBOX,
   chooseCodexSandbox,
   defaultRouteDeps,
   needsStoppingPoint,
@@ -468,7 +469,7 @@ async function spawnCommand(
       ? ""
       : `## Delegation context\n\nYour smart-router handle is ${handle} at depth ${depth} of max ${config.rules.concurrency?.maxDepth ?? DEFAULT_MAX_DEPTH}; if that depth equals the maximum you cannot spawn and must do the work yourself. Never wait on, stop, send to or steer your own handle or an ancestor. If you spawn a helper, use --detach and then \`smart-router wait <child> --timeout ${DELEGATE_WAIT_TIMEOUT_SECONDS}\` in a loop, polling, and report what you have if it is still running. A shell command returning early (a yield) is not completion; check status instead.`;
   const promptWithContext = context ? `${prompt}\n\n${context}` : prompt;
-  const spawnPrompt = guardrails
+  const promptWithGuardrails = guardrails
     ? `${promptWithContext}\n\n## Operating rules\n\n${guardrails}`
     : promptWithContext;
   const confidenceNote = routeResult
@@ -482,6 +483,7 @@ async function spawnCommand(
           callerSandbox: options.sandbox,
           autoSandbox: config.spawn.autoSandbox,
           allowFullAccess: config.spawn.allowFullAccess,
+          codexLocalhostNeedsNetwork: config.spawn.codexLocalhostNeedsNetwork,
           routingRan: routeScores !== null,
           needsNetwork: routeScores?.needsNetwork ?? null,
           needsBrowser: routeScores?.needsBrowser ?? null,
@@ -492,6 +494,12 @@ async function spawnCommand(
     ? `${sandboxChoice.sandbox}+network`
     : sandboxChoice?.sandbox;
   const sandboxNote = sandbox ? ` sandbox ${sandbox}` : "";
+  const toolchainNote = sandboxChoice
+    ? codex.codexToolchainNote(cwd, sandboxChoice.sandbox)
+    : "";
+  const spawnPrompt = toolchainNote
+    ? `${promptWithGuardrails}\n\n${toolchainNote}`
+    : promptWithGuardrails;
   const browser = shouldUseClaudeBrowser(
     selected.harness,
     options.browser,
@@ -852,6 +860,14 @@ async function harnessOptionsFor(
   config: Awaited<ReturnType<typeof loadConfig>>,
   options: PassthroughOptions & { worktree?: boolean },
 ): Promise<HarnessOptions> {
+  const codexSandbox =
+    options.codexSandbox ??
+    options.sandbox ??
+    ("sandbox" in selected ? selected.sandbox : undefined) ??
+    config.spawn.codexSandbox;
+  const localhostNeedsNetwork =
+    codexSandbox === CODEX_WORKSPACE_WRITE_SANDBOX &&
+    config.spawn.codexLocalhostNeedsNetwork;
   const schema =
     options.schema && selected.harness !== "pi"
       ? {
@@ -874,18 +890,16 @@ async function harnessOptionsFor(
     strictMcpConfig:
       options.strictMcpConfig ??
       ("strictMcpConfig" in selected ? selected.strictMcpConfig : undefined),
-    codexSandbox:
-      options.codexSandbox ??
-      options.sandbox ??
-      ("sandbox" in selected ? selected.sandbox : undefined) ??
-      config.spawn.codexSandbox,
+    codexSandbox,
     codexConfigOverrides:
       options.codexConfigOverrides ??
+      (localhostNeedsNetwork ||
       (!options.sandbox &&
-      "usesNetworkAccess" in selected &&
-      selected.usesNetworkAccess
+        "usesNetworkAccess" in selected &&
+        selected.usesNetworkAccess)
         ? [CODEX_NETWORK_ACCESS_OVERRIDE]
         : undefined),
+    codexExtraWritableRoots: config.spawn.codexExtraWritableRoots,
     allowedTools: options.allowedTools,
     schema,
     binary: harnessBinary(config, selected.harness),

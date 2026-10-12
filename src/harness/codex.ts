@@ -116,7 +116,7 @@ function expandHomePath(path: string): string {
 }
 
 const SWIFTPM_NESTED_SANDBOX_NOTE =
-  "This Codex sandbox cannot nest SwiftPM's own sandbox: run swift build, swift test and swift run with --disable-sandbox; run xcodebuild with -IDEPackageSupportDisableManifestSandbox=YES.";
+  "This Codex sandbox cannot nest SwiftPM's own sandbox: run swift build, swift test and swift run with --disable-sandbox; run xcodebuild with -IDEPackageSupportDisableManifestSandbox=YES and OTHER_SWIFT_FLAGS='$(inherited) -disable-sandbox' for macro plugins.";
 
 export function codexToolchainNote(cwd: string, sandbox: string): string {
   const swiftProjectInWorkspaceWrite =

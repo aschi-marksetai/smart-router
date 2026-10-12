@@ -254,7 +254,7 @@ test("localhost networking is opt-in and only applies to workspace-write", async
   }
 });
 
-test("tells workspace-write Swift and Xcode delegates to disable nested manifest sandboxes", async () => {
+test("tells workspace-write Swift and Xcode delegates to disable nested manifest and macro sandboxes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "smart-router-swift-note-"));
   try {
     expect(codexToolchainNote(directory, "workspace-write")).toBe("");
@@ -274,6 +274,9 @@ test("tells workspace-write Swift and Xcode delegates to disable nested manifest
       expect(note).toContain(
         "xcodebuild with -IDEPackageSupportDisableManifestSandbox=YES",
       );
+      expect(note).toContain(
+        "OTHER_SWIFT_FLAGS='$(inherited) -disable-sandbox' for macro plugins",
+      );
       expect(note).not.toContain("xcodebuild is unaffected");
       expect(note).not.toContain("-skipPackagePluginValidation");
       expect(codexToolchainNote(cwd, "danger-full-access")).toBe("");
@@ -288,10 +291,19 @@ test("tells workspace-write Swift and Xcode delegates to disable nested manifest
   }
 });
 
-test("Jev full-access instructions identify CoreSimulator tasks", () => {
+test("Jev full-access instructions identify CoreSimulator and WebKit tasks", () => {
   const { instructions } = routeQuestions([]).needsFullAccess;
-  for (const task of ["iOS Simulator", "simctl", "XCUITest", "UI-test"])
+  for (const task of [
+    "iOS Simulator",
+    "simctl",
+    "XCUITest",
+    "UI-test",
+    "WebKit",
+    "WKWebView",
+  ])
     expect(instructions).toContain(task);
   expect(instructions).toContain("requiring full access");
   expect(instructions).toContain("even with extra writable roots");
+  expect(instructions).toContain("content rule-list compilation");
+  expect(instructions).toContain("even with SwiftPM --disable-sandbox");
 });

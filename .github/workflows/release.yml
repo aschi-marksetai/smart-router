@@ -26,14 +26,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: npm ci
+        with: { node-version: 24 }
+      - run: npm ci --ignore-scripts
         working-directory: integrations/openclaw
       - run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
         working-directory: integrations/openclaw
       - run: npm run build && npm test
         working-directory: integrations/openclaw
-      - run: mkdir -p dist && npm pack --pack-destination ../../dist
+      - run: mkdir -p ../../dist && npm pack --pack-destination ../../dist
         working-directory: integrations/openclaw
       - run: cd dist && for f in *.tgz; do mv "$f" openclaw-smart-router.tgz; done && sha256sum openclaw-smart-router.tgz > openclaw-smart-router.tgz.sha256
       - uses: softprops/action-gh-release@v2

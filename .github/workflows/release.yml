@@ -29,7 +29,9 @@ jobs:
         with: { node-version: 24 }
       - run: npm ci --ignore-scripts
         working-directory: integrations/openclaw
-      - run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+      - run: |
+          npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+          node -e 'const fs=require("fs");const p="openclaw.plugin.json";const m=JSON.parse(fs.readFileSync(p,"utf8"));m.version=process.argv[1];fs.writeFileSync(p,JSON.stringify(m,null,2)+"\n")' "${GITHUB_REF_NAME#v}"
         working-directory: integrations/openclaw
       - run: npm run build && npm test
         working-directory: integrations/openclaw

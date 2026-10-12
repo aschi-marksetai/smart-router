@@ -27,7 +27,7 @@ const BROWSER_INSTRUCTIONS = "Does this task need a browser or screenshots?";
 const NETWORK_INSTRUCTIONS =
   "Does this task need network access, such as installing packages, calling APIs, fetching documentation, or pushing to a remote?";
 const FULL_ACCESS_INSTRUCTIONS =
-  "Does this task need to write outside the working directory or run privileged operations such as docker, system services, or global installs?";
+  "Does this task need to write outside the working directory or run privileged operations such as docker, system services, or global installs? Treat iOS Simulator, simctl, XCUITest and UI-test execution as requiring full access: workspace-write blocks CoreSimulator service access even with extra writable roots.";
 const STOPPING_POINT_INSTRUCTIONS =
   "Does this task state what finished looks like or where to stop?";
 const STOPPING_POINT_THRESHOLD = 0.5;

@@ -10,7 +10,7 @@ import {
 } from "../src/harness/codex.ts";
 import type { HarnessOptions } from "../src/harness/types.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
-import { chooseCodexSandbox } from "../src/route.ts";
+import { chooseCodexSandbox, routeQuestions } from "../src/route.ts";
 
 const WRITABLE_ROOTS_KEY = "sandbox_workspace_write.writable_roots";
 const NETWORK_OVERRIDE = "sandbox_workspace_write.network_access=true";
@@ -254,20 +254,44 @@ test("localhost networking is opt-in and only applies to workspace-write", async
   }
 });
 
-test("tells workspace-write Codex delegates in a Swift package to disable the SwiftPM sandbox", async () => {
+test("tells workspace-write Swift and Xcode delegates to disable nested manifest sandboxes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "smart-router-swift-note-"));
   try {
     expect(codexToolchainNote(directory, "workspace-write")).toBe("");
-    await writeFile(
-      join(directory, "Package.swift"),
-      "// swift-tools-version:5.9\n",
-    );
-    expect(codexToolchainNote(directory, "workspace-write")).toContain(
-      "--disable-sandbox",
-    );
-    expect(codexToolchainNote(directory, "danger-full-access")).toBe("");
-    expect(codexToolchainNote(directory, "read-only")).toBe("");
+    for (const marker of [
+      "Package.swift",
+      "Probe.xcodeproj",
+      "Probe.xcworkspace",
+    ]) {
+      const project = join(directory, `${marker}-fixture`);
+      const cwd = join(project, "Sources");
+      await mkdir(cwd, { recursive: true });
+      if (marker === "Package.swift")
+        await writeFile(join(project, marker), "");
+      else await mkdir(join(project, marker));
+      const note = codexToolchainNote(cwd, "workspace-write");
+      expect(note).toContain("--disable-sandbox");
+      expect(note).toContain(
+        "xcodebuild with -IDEPackageSupportDisableManifestSandbox=YES",
+      );
+      expect(note).not.toContain("xcodebuild is unaffected");
+      expect(note).not.toContain("-skipPackagePluginValidation");
+      expect(codexToolchainNote(cwd, "danger-full-access")).toBe("");
+      expect(codexToolchainNote(cwd, "read-only")).toBe("");
+    }
+    await writeFile(join(directory, "Package.swift"), "");
+    const repository = join(directory, "repository");
+    execFileSync("git", ["init", repository], { stdio: "pipe" });
+    expect(codexToolchainNote(repository, "workspace-write")).toBe("");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("Jev full-access instructions identify CoreSimulator tasks", () => {
+  const { instructions } = routeQuestions([]).needsFullAccess;
+  for (const task of ["iOS Simulator", "simctl", "XCUITest", "UI-test"])
+    expect(instructions).toContain(task);
+  expect(instructions).toContain("requiring full access");
+  expect(instructions).toContain("even with extra writable roots");
 });

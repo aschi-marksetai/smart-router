@@ -2,7 +2,7 @@
   "id": "smart-router",
   "name": "smart-router",
   "description": "Delegate OpenClaw turns through the smart-router CLI",
-  "version": "0.8.7",
+  "version": "0.8.8",
   "cliBackends": ["smart-router"],
   "providers": ["smart-router"],
   "configSchema": {

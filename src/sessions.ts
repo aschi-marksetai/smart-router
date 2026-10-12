@@ -1,10 +1,11 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
   mkdir,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   writeFile,
@@ -157,7 +158,7 @@ export async function createSession(
     usage: options.usage,
     route: options.route,
   };
-  await writeFile(sessionPath(handle), `${JSON.stringify(session, null, 2)}\n`);
+  await saveSession(session);
   return session;
 }
 
@@ -166,10 +167,14 @@ export async function loadSession(handle: string): Promise<Session> {
 }
 
 export async function saveSession(session: Session): Promise<void> {
-  await writeFile(
-    sessionPath(session.handle),
-    `${JSON.stringify(session, null, 2)}\n`,
-  );
+  const destinationPath = sessionPath(session.handle);
+  const temporaryPath = `${destinationPath}.${randomUUID()}`;
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(session, null, 2)}\n`);
+    await rename(temporaryPath, destinationPath);
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
 }
 
 export async function listSessions(owner?: string): Promise<Session[]> {

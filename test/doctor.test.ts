@@ -90,6 +90,30 @@ test("detects subscription credentials without model caches", async () => {
   expect(result.harnesses.codex.authed).toBe(true);
 });
 
+test("treats a Claude setup-token in the environment as a subscription login", async () => {
+  await mkdir(join(directory, "claude"));
+  const previousToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  const config: Config = {
+    ...DEFAULT_CONFIG,
+    harnesses: { claude: { enabled: true, auth: "subscription", binary } },
+  };
+  try {
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    expect(
+      (await doctor(config, { enumerate: async () => [] })).harnesses.claude
+        .authed,
+    ).toBe(false);
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat-test";
+    expect(
+      (await doctor(config, { enumerate: async () => [] })).harnesses.claude
+        .authed,
+    ).toBe(true);
+  } finally {
+    if (previousToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    else process.env.CLAUDE_CODE_OAUTH_TOKEN = previousToken;
+  }
+});
+
 test("detects cached catalogs and handles a failed version command", async () => {
   const catalogDirectory = join(directory, "claude", "cache", "model-catalog");
   const codexDirectory = join(directory, "codex");

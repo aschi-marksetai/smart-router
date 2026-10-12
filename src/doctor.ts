@@ -7,6 +7,7 @@ import { harnessBinary, type Config, type HarnessName } from "./config.ts";
 import { enumerate } from "./enumerate.ts";
 
 const CODEX_API_KEY_ENV = "CODEX_API_KEY";
+const CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
 const codexHome = () => process.env.CODEX_HOME ?? join(homedir(), ".codex");
 const claudeConfigDir = () =>
   process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
@@ -75,7 +76,8 @@ async function detectHarness(
           : globSync(
               join(claudeConfigDir(), "cache", "model-catalog", "*.json"),
             ).length > 0 ||
-            existsSync(join(claudeConfigDir(), ".credentials.json")),
+            existsSync(join(claudeConfigDir(), ".credentials.json")) ||
+            Boolean(process.env[CLAUDE_OAUTH_TOKEN_ENV]),
     };
   if (name === "codex")
     return {

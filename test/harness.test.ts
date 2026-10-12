@@ -1,9 +1,10 @@
-import { expect, test } from "bun:test";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { expect, spyOn, test } from "bun:test";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as claude from "../src/harness/claude.ts";
 import * as codex from "../src/harness/codex.ts";
+import { codexMcpOverrides } from "../src/harness/mcp.ts";
 import * as pi from "../src/harness/pi.ts";
 import type { HarnessOptions } from "../src/harness/types.ts";
 import { parseJsonLines } from "../src/harness/types.ts";
@@ -14,7 +15,7 @@ const ACCEPTED_CODEX_EXEC_RESUME_FLAGS = new Set(
   ),
 );
 const ACCEPTED_CLAUDE_RESUME_FLAGS = new Set(
-  "-p --resume --output-format --model --effort --permission-mode --append-system-prompt --allowedTools --json-schema --chrome --mcp-config --add-dir --worktree".split(
+  "-p --resume --output-format --model --effort --permission-mode --append-system-prompt --allowedTools --json-schema --chrome --mcp-config --strict-mcp-config --add-dir --worktree".split(
     " ",
   ),
 );
@@ -22,6 +23,50 @@ const ACCEPTED_CLAUDE_RESUME_FLAGS = new Set(
 function flagsIn(argv: string[]): string[] {
   return argv.filter((argument) => argument.startsWith("-"));
 }
+
+// prettier-ignore
+test("uses preferred OpenClaw environment variables without secrets in Codex argv", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-mcp-"));
+  const configPath = join(directory, "mcp.json");
+  const environment = { OTHER_MCP_TOKEN: "tok-123", OTHER_CAPTURE_KEY: "cap-9", OPENCLAW_MCP_TOKEN: "tok-123", OPENCLAW_MCP_CLI_CAPTURE_KEY: "cap-9" };
+  const originals = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, environment);
+  try {
+    await writeFile(configPath, '{"mcpServers":{"openclaw":{"type":"http","url":"http://127.0.0.1:43123/mcp","alwaysLoad":true,"headers":{"Authorization":"Bearer tok-123","x-openclaw-cli-capture-key":"cap-9"},"timeout":3610000}}}');
+    const options = { cwd: directory, model: "terra", mcpConfig: [configPath] };
+    for (const { argv } of [codex.buildSpawn("task", options), codex.buildResume("session", "again", options)]) {
+      expect(argv).toContain('mcp_servers.openclaw.bearer_token_env_var="OPENCLAW_MCP_TOKEN"');
+      expect(argv).toContain('mcp_servers.openclaw.env_http_headers={"x-openclaw-cli-capture-key"="OPENCLAW_MCP_CLI_CAPTURE_KEY"}');
+      expect(argv.join(" ")).not.toMatch(/tok-123|cap-9|alwaysLoad|timeout/);
+    }
+    delete process.env.OPENCLAW_MCP_TOKEN;
+    delete process.env.OPENCLAW_MCP_CLI_CAPTURE_KEY;
+    expect(codexMcpOverrides([configPath])).toContain('mcp_servers.openclaw.bearer_token_env_var="OTHER_MCP_TOKEN"');
+    expect(codexMcpOverrides([configPath])).toContain('mcp_servers.openclaw.env_http_headers={"x-openclaw-cli-capture-key"="OTHER_CAPTURE_KEY"}');
+  } finally {
+    for (const [name, value] of Object.entries(originals)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+// prettier-ignore
+test("warns for unmatched literal headers and rejects unsupported MCP servers", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "smart-router-mcp-"));
+  const configPath = join(directory, "mcp.json");
+  const warning = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await writeFile(configPath, '{"mcpServers":{"remote":{"type":"http","url":"http://localhost/mcp","headers":{"Authorization":"Bearer unmatched-mcp-secret"}}}}');
+    expect(codexMcpOverrides([configPath])).toContain('mcp_servers.remote.http_headers={"Authorization"="Bearer unmatched-mcp-secret"}');
+    expect(warning).toHaveBeenCalledWith("Warning: MCP server remote header Authorization value will be visible in the process list");
+    for (const server of [{ type: "sse", url: "http://localhost/mcp" }, {}, { type: "stdio", command: "node", env: { TOKEN: "${SMART_ROUTER_MISSING_MCP_TEST_VARIABLE}" } }]) {
+      await writeFile(configPath, JSON.stringify({ mcpServers: { remote: server } }));
+      expect(() => codexMcpOverrides([configPath])).toThrow();
+    }
+  } finally {
+    warning.mockRestore();
+  }
+});
 
 test("skips non-JSON lines", () => {
   expect(parseJsonLines('banner\n{"type":"event"}')).toEqual([
@@ -102,13 +147,34 @@ test("uses an isolated Chrome DevTools MCP config for browser commands", async (
     cwd: "/project",
     model: "opus",
     browser: true,
+    mcpConfig: ["/tmp/user.mcp.json", "/tmp/other.mcp.json"],
+    strictMcpConfig: true,
   };
 
   try {
     const spawned = claude.buildSpawn("write code", options);
     const resumed = claude.buildResume("session", "continue", options);
+    // prettier-ignore
+    const singleFile = { ...options, browser: false, mcpConfig: ["/tmp/user.mcp.json"] };
+    for (const { argv } of [
+      claude.buildSpawn("task", singleFile),
+      claude.buildResume("session", "again", singleFile),
+    ]) {
+      expect(argv.slice(argv.indexOf("--mcp-config"))).toEqual([
+        "--mcp-config",
+        singleFile.mcpConfig[0],
+        "--strict-mcp-config",
+      ]);
+    }
     expect(spawned.argv).toContain(configPath);
     expect(resumed.argv).toContain(configPath);
+    for (const { argv } of [spawned, resumed]) {
+      expect(
+        argv.filter((argument) => argument === "--mcp-config"),
+      ).toHaveLength(3);
+      expect(argv).toContain("--strict-mcp-config");
+      for (const path of options.mcpConfig ?? []) expect(argv).toContain(path);
+    }
     expect(spawned.argv).toContain(
       "You are a delegate spawned by smart-router. Do the assigned task yourself with your own tools, including browser tools when the task needs them. Do not delegate through smart-router. Report the result when the stopping point is reached. For browser work use the chrome-devtools-isolated MCP server, which has its own Chrome profile; the plugin's chrome-devtools server may be locked by another session.",
     );
@@ -223,6 +289,7 @@ test("uses only accepted resume flags", () => {
     cwd: "/project",
     model: "model",
     codexSandbox: "workspace-write",
+    strictMcpConfig: true,
   };
   expect(
     flagsIn(codex.buildResume("session", "continue", options).argv),

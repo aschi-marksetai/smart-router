@@ -23,6 +23,8 @@ Unless `--no-guardrails` is set, the delegate also receives a context section wi
 
 Codex results require a completed final turn; Claude error result events fail the session. `wait --timeout` exits 124 while the delegate is running, and `status` reports `outcome` while remaining informational for failed or stopped sessions.
 
+Pass repeatable `--mcp-config <file>` with Claude-format MCP JSON and optional `--strict-mcp-config` on spawn or send; paths and strict mode persist for follow-ups (Claude and Codex; pi ignores them).
+
 Optional flags:
 
 - `--hint "<text>"` adds context for the routing decision, such as "needs a browser" or "bulk mechanical work".

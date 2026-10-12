@@ -2,6 +2,7 @@ export { translateEvents } from "../events.ts";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_CODEX_SANDBOX } from "../config.ts";
+import { codexMcpOverrides } from "./mcp.ts";
 import {
   parseJsonLines,
   record,
@@ -18,6 +19,7 @@ const JSON_FLAG = "--json";
 const CHANGE_DIRECTORY_FLAG = "-C";
 const MODEL_FLAG = "-m";
 const CONFIG_FLAG = "-c";
+const IGNORE_USER_CONFIG_FLAG = "--ignore-user-config";
 const SANDBOX_FLAG = "-s";
 const WORKTREE_FLAG = "--worktree";
 const SKIP_GIT_REPOSITORY_CHECK_FLAG = "--skip-git-repo-check";
@@ -122,7 +124,11 @@ export function buildSpawn(
   ];
   if (options.effort)
     argv.push(CONFIG_FLAG, `model_reasoning_effort=\"${options.effort}\"`);
-  for (const override of options.codexConfigOverrides ?? [])
+  if (options.strictMcpConfig) argv.push(IGNORE_USER_CONFIG_FLAG);
+  for (const override of [
+    ...(options.codexConfigOverrides ?? []),
+    ...codexMcpOverrides(options.mcpConfig ?? []),
+  ])
     argv.push(CONFIG_FLAG, override);
   argv.push(SANDBOX_FLAG, options.codexSandbox ?? DEFAULT_CODEX_SANDBOX);
   if (options.worktree) argv.push(WORKTREE_FLAG);
@@ -151,7 +157,11 @@ export function buildResume(
     MODEL_FLAG,
     options.model,
   ];
-  for (const override of options.codexConfigOverrides ?? [])
+  if (options.strictMcpConfig) argv.push(IGNORE_USER_CONFIG_FLAG);
+  for (const override of [
+    ...(options.codexConfigOverrides ?? []),
+    ...codexMcpOverrides(options.mcpConfig ?? []),
+  ])
     argv.push(CONFIG_FLAG, override);
   argv.push(
     CONFIG_FLAG,

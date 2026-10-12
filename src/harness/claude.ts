@@ -36,6 +36,7 @@ const ALLOWED_TOOLS_FLAG = "--allowedTools";
 const JSON_SCHEMA_FLAG = "--json-schema";
 const CHROME_FLAG = "--chrome";
 const MCP_CONFIG_FLAG = "--mcp-config";
+const STRICT_MCP_CONFIG_FLAG = "--strict-mcp-config";
 const APPEND_SYSTEM_PROMPT_FLAG = "--append-system-prompt";
 const CHROME_DEVTOOLS_MCP_CONFIG_FILE = "chrome-devtools-isolated.mcp.json";
 const CHROME_DEVTOOLS_ISOLATED_SERVER_NAME = "chrome-devtools-isolated";
@@ -69,6 +70,15 @@ function delegatePreamble(browser: boolean | undefined): string {
   return browser
     ? `${DELEGATE_PREAMBLE} ${BROWSER_DELEGATE_PREAMBLE}`
     : DELEGATE_PREAMBLE;
+}
+
+function mcpArguments(options: HarnessOptions): string[] {
+  const argv = (options.mcpConfig ?? []).flatMap((path) => [
+    MCP_CONFIG_FLAG,
+    path,
+  ]);
+  if (options.strictMcpConfig) argv.push(STRICT_MCP_CONFIG_FLAG);
+  return argv;
 }
 
 export function buildSpawn(
@@ -111,6 +121,7 @@ export function buildSpawn(
       MCP_CONFIG_FLAG,
       isolatedChromeDevtoolsMcpConfigPath(),
     );
+  argv.push(...mcpArguments(options));
   if (options.worktree) argv.push(WORKTREE_FLAG);
   if (options.effort) argv.push(EFFORT_FLAG, options.effort);
   if (options.allowedTools) argv.push(ALLOWED_TOOLS_FLAG, options.allowedTools);
@@ -192,6 +203,7 @@ export function buildResume(
       MCP_CONFIG_FLAG,
       isolatedChromeDevtoolsMcpConfigPath(),
     );
+  argv.push(...mcpArguments(options));
   if (options.allowedTools) argv.push(ALLOWED_TOOLS_FLAG, options.allowedTools);
   if (options.schema) argv.push(JSON_SCHEMA_FLAG, options.schema.content);
   return { argv, sessionId };

@@ -5,6 +5,8 @@ export type HarnessOptions = {
   worktree?: boolean;
   claudePermissionMode?: string;
   browser?: boolean;
+  mcpConfig?: string[];
+  strictMcpConfig?: boolean;
   codexSandbox?: string;
   codexConfigOverrides?: string[];
   allowedTools?: string;

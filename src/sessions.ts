@@ -59,6 +59,8 @@ export type Session = {
   model: string;
   effort: string;
   browser?: boolean;
+  mcpConfig?: string[];
+  strictMcpConfig?: boolean;
   sandbox?: string;
   usesNetworkAccess?: boolean;
   cwd: string;
@@ -129,6 +131,8 @@ export async function createSession(
     model: options.model,
     effort: options.effort,
     browser: options.browser,
+    mcpConfig: options.mcpConfig,
+    strictMcpConfig: options.strictMcpConfig,
     sandbox: options.sandbox,
     usesNetworkAccess: options.usesNetworkAccess,
     cwd: options.cwd,

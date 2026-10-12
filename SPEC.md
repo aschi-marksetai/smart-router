@@ -227,6 +227,12 @@ Sessions record `owner` as `SMART_ROUTER_OWNER`, else `CLAUDE_CODE_SESSION_ID`, 
 
 `spawn` and `send` accept `--permission-mode <mode>` (claude only, overrides `config.spawn.claudePermissionMode`), `--sandbox <policy>` (codex only), `--browser` (claude `--chrome`), `--allowed-tools <list>` (claude `--allowedTools`; ignored for other harnesses with a note in the stderr summary), and `--schema <file>` (claude `--json-schema` with the file contents, codex `--output-schema <file>`; ignored for pi with a note). Ignored flags never fail the command.
 
+### MCP servers
+
+`spawn` and `send` accept repeatable `--mcp-config <file>` paths to Claude-format JSON `{ "mcpServers": { "name": { "type": "stdio", "command": "node", "args": [], "env": {} } } }`; remote entries use `type: "http" | "sse"`, `url` and optional `headers`. Absolute config paths and `strictMcpConfig` persist; send reuses them unless new paths are supplied, which replace the saved list. Config contents and interpolated secrets are never stored in the session. Later files win for duplicate server names.
+
+Claude receives each file as `--mcp-config`, alongside the isolated browser server when browser mode is enabled, and passes `--strict-mcp-config` through. Claude expands `${VAR}` in env and headers at launch using its native config interpolation. Codex rereads the files at each launch, interpolates env and headers from the process environment, and emits `-c mcp_servers.<name>.command/args/env` or `.url/http_headers` overrides. `Authorization: Bearer ${VAR}` becomes `.bearer_token_env_var="VAR"`, keeping the token out of argv. Codex rejects SSE servers; use streamable HTTP. Codex strict mode passes `--ignore-user-config`, which skips user config while preserving auth in `CODEX_HOME`; it also removes other user configuration defaults. Pi ignores both MCP flags with a stderr note.
+
 ### `smart-router send <handle> "<message>"`
 
 Loads the session file, calls the adapter's `resume`, prints `{ "handle", "result" }`.
@@ -243,7 +249,7 @@ One module per harness, all exposing `spawn(prompt, opts) → { sessionId, resul
 - **codex**: spawn `codex exec --json -C <cwd> -m <model> -c model_reasoning_effort="<effort>" -s <config.spawn.codexSandbox> [--worktree] <prompt>` (`codex exec` is already non-interactive; it has no `-a` flag); `thread_id` from the first `thread.started` event; result = text of the last `item.completed` agent message in the final turn, only when that turn ended in `turn.completed`; an incomplete turn, `turn.failed`, or an error event fails the run. Resume: `codex exec resume <id> --json -m <model> -c sandbox_mode="<config.spawn.codexSandbox>" <message>`. Add `--skip-git-repo-check` when cwd is not inside a git repo.
 - **pi**: spawn `pi -p <prompt> --mode json --model <provider/model> --thinking <effort> --session <path under state dir>`; result = final assistant text from the JSON events. Resume: same command with the same `--session` path. Model ids for pi are `provider/model`.
 
-Session file: `{ handle, owner, depth?, parentHandle?, harness, model, effort, cwd, sessionId, createdAt, promptPreview, status, browser?, sandbox?, usesNetworkAccess?, pid?, supervisorPid?, processStartTime?, wrapperPid?, wrapperProcessStartTime?, logPath?, result?, lastResult?, error?, lastMessage?, lastAction?, usage? }`. `status` is `running`, `done`, `failed` or `stopped`; handle = 6 lowercase alphanumerics.
+Session file: `{ handle, owner, depth?, parentHandle?, harness, model, effort, cwd, sessionId, createdAt, promptPreview, status, browser?, mcpConfig?, strictMcpConfig?, sandbox?, usesNetworkAccess?, pid?, supervisorPid?, processStartTime?, wrapperPid?, wrapperProcessStartTime?, logPath?, result?, lastResult?, error?, lastMessage?, lastAction?, usage? }`. `status` is `running`, `done`, `failed` or `stopped`; handle = 6 lowercase alphanumerics.
 
 ## Event stream
 

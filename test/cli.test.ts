@@ -13,6 +13,7 @@ import {
   processStartTime,
   saveSession,
   sessionLogPath,
+  sessionPath,
   SESSION_STATUS,
 } from "../src/sessions.ts";
 import type { DoctorResult } from "../src/doctor.ts";
@@ -306,6 +307,68 @@ test("spawn rejects disabled overrides and accepts enabled overrides", async () 
   expectJson(
     await cli(["spawn", "task", "--model", "claude:opus", "--effort", "high"]),
     { harness: "claude", model: "opus", effort: "high" },
+  );
+});
+
+test("MCP translation, strict mode and paths persist on send without storing bearer tokens", async () => {
+  const configPath = join(directory, "mcp.json");
+  const replacementPath = join(directory, "replacement.json");
+  process.env.MCP_TEST_TOKEN = "secret-mcp-token";
+  process.env.MCP_TEST_VALUE = "expanded";
+  try {
+    // prettier-ignore
+    await writeFile(configPath, JSON.stringify({ mcpServers: {
+      local: { type: "stdio", command: "node", args: ["server.js"], env: { VALUE: "${MCP_TEST_VALUE}" } },
+      remote: { type: "http", url: "https://example.com/mcp", headers: { Authorization: "Bearer ${MCP_TEST_TOKEN}", "X-Test": "${MCP_TEST_VALUE}" } },
+    } }));
+    await writeFile(replacementPath, '{"mcpServers":{}}');
+    runnerOutput = CODEX_OUTPUT;
+    // prettier-ignore
+    const spawned = await cli(["spawn", "task", "--model", "codex:terra", "--mcp-config", configPath, "--mcp-config", replacementPath, "--strict-mcp-config"]);
+    expect(spawned.exitCode).toBe(0);
+    const handle = spawned.json.handle;
+    expect((await cli(["send", handle, "again"])).exitCode).toBe(0);
+    const expectedOverrides = [
+      "--ignore-user-config",
+      'mcp_servers.local.command="node"',
+      'mcp_servers.local.args=["server.js"]',
+      'mcp_servers.local.env={"VALUE"="expanded"}',
+      'mcp_servers.remote.url="https://example.com/mcp"',
+      'mcp_servers.remote.bearer_token_env_var="MCP_TEST_TOKEN"',
+      'mcp_servers.remote.http_headers={"X-Test"="expanded"}',
+    ];
+    for (const argv of runnerArguments) {
+      expect(argv).toEqual(expect.arrayContaining(expectedOverrides));
+      expect(argv.join(" ")).not.toContain(process.env.MCP_TEST_TOKEN);
+    }
+    // prettier-ignore
+    expect(await loadSession(handle)).toMatchObject({ mcpConfig: [configPath, replacementPath], strictMcpConfig: true });
+    const sessionFile = await readFile(sessionPath(handle), "utf8");
+    expect(sessionFile).not.toContain(process.env.MCP_TEST_TOKEN);
+    // prettier-ignore
+    const replacement = ["send", handle, "replace", "--mcp-config", replacementPath];
+    expect((await cli(replacement)).exitCode).toBe(0);
+    expect((await cli(["send", handle, "reuse"])).exitCode).toBe(0);
+    // prettier-ignore
+    expect(await loadSession(handle)).toMatchObject({ mcpConfig: [replacementPath], strictMcpConfig: true });
+    expect(runnerArguments.at(-1)?.join(" ")).not.toContain(
+      "mcp_servers.local",
+    );
+  } finally {
+    delete process.env.MCP_TEST_TOKEN;
+    delete process.env.MCP_TEST_VALUE;
+  }
+});
+
+test("pi ignores persisted MCP flags with a stderr note", async () => {
+  // prettier-ignore
+  const session = await createSession({ harness: "pi", model: "test", effort: "high", cwd: directory, prompt: "task", status: SESSION_STATUS.done, sessionId: "pi.json", mcpConfig: ["missing.json"], strictMcpConfig: true });
+  runnerOutput =
+    '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}';
+  const result = await cli(["send", session.handle, "again"]);
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr).toContain(
+    "Ignored for pi: --mcp-config, --strict-mcp-config",
   );
 });
 

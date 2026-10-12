@@ -7,6 +7,7 @@ import {
 } from "./events.ts";
 import { Command, CommanderError } from "commander";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { version } from "./assets.ts";
 import { installSkill } from "./install.ts";
 import {
@@ -85,6 +86,8 @@ type SpawnOptions = RouteOptions & {
   detach?: boolean;
   permissionMode?: string;
   browser?: boolean;
+  mcpConfig?: string[];
+  strictMcpConfig?: boolean;
   sandbox?: string;
   allowedTools?: string;
   schema?: string;
@@ -96,6 +99,8 @@ type PassthroughOptions = {
   events?: boolean;
   permissionMode?: string;
   browser?: boolean;
+  mcpConfig?: string[];
+  strictMcpConfig?: boolean;
   sandbox?: string;
   allowedTools?: string;
   schema?: string;
@@ -120,6 +125,13 @@ const HANDLE_ENVIRONMENT_VARIABLE = "SMART_ROUTER_HANDLE";
 const ANCESTORS_ENVIRONMENT_VARIABLE = "SMART_ROUTER_ANCESTORS";
 const WAIT_TIMEOUT_OPTION = "--timeout <seconds>";
 const DELEGATE_WAIT_TIMEOUT_SECONDS = 90;
+const MCP_CONFIG_FLAG = "--mcp-config";
+const MCP_CONFIG_OPTION = `${MCP_CONFIG_FLAG} <file>`;
+const STRICT_MCP_CONFIG_FLAG = "--strict-mcp-config";
+
+function collectMcpConfig(path: string, paths: string[] = []): string[] {
+  return [...paths, resolve(path)];
+}
 
 type CapacityLimit = "maxRunning" | "maxPerCaller" | "maxDepth";
 
@@ -487,6 +499,8 @@ async function spawnCommand(
   );
   const sessionSettings = {
     browser,
+    mcpConfig: options.mcpConfig,
+    strictMcpConfig: options.strictMcpConfig,
     sandbox: sandboxChoice?.sandbox,
     usesNetworkAccess: sandboxChoice?.usesNetworkAccess,
   };
@@ -709,7 +723,6 @@ async function sendCommand(
     throw new Error(`session ${handle} ${RUNNING_SESSION_ERROR}`);
   if (!session.sessionId)
     throw new Error(`session ${handle} has no session id`);
-  printPassthroughNotes(session.harness, options, deps);
   const adapter = getAdapter(session.harness);
   const harnessOptions = await harnessOptionsFor(
     session,
@@ -717,11 +730,18 @@ async function sendCommand(
     config,
     options,
   );
+  printPassthroughNotes(
+    session.harness,
+    { ...options, ...harnessOptions, schema: options.schema },
+    deps,
+  );
   const command = adapter.buildResume(
     session.sessionId,
     message,
     harnessOptions,
   );
+  session.mcpConfig = harnessOptions.mcpConfig;
+  session.strictMcpConfig = harnessOptions.strictMcpConfig;
   const reservation = await reserveSpawnSession(
     { ...session, prompt: message },
     config,
@@ -848,6 +868,12 @@ async function harnessOptionsFor(
     claudePermissionMode:
       options.permissionMode ?? config.spawn.claudePermissionMode,
     browser: options.browser || ("browser" in selected && selected.browser),
+    mcpConfig:
+      options.mcpConfig ??
+      ("mcpConfig" in selected ? selected.mcpConfig : undefined),
+    strictMcpConfig:
+      options.strictMcpConfig ??
+      ("strictMcpConfig" in selected ? selected.strictMcpConfig : undefined),
     codexSandbox:
       options.codexSandbox ??
       options.sandbox ??
@@ -879,6 +905,10 @@ function printPassthroughNotes(
   if (options.allowedTools && harness !== "claude")
     ignored.push("--allowed-tools");
   if (options.schema && harness === "pi") ignored.push("--schema");
+  if (options.mcpConfig?.length && harness === "pi")
+    ignored.push(MCP_CONFIG_FLAG);
+  if (options.strictMcpConfig && harness === "pi")
+    ignored.push(STRICT_MCP_CONFIG_FLAG);
   if (ignored.length)
     deps.stderr(`Ignored for ${harness}: ${ignored.join(", ")}\n`);
 }
@@ -1214,6 +1244,8 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .option("--events")
     .option("--permission-mode <mode>")
     .option("--browser")
+    .option(MCP_CONFIG_OPTION, "MCP config (repeatable)", collectMcpConfig)
+    .option(STRICT_MCP_CONFIG_FLAG)
     .option("--sandbox <policy>")
     .option("--allowed-tools <list>")
     .option("--schema <file>")
@@ -1226,6 +1258,8 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .option("--events")
     .option("--permission-mode <mode>")
     .option("--browser")
+    .option(MCP_CONFIG_OPTION, "MCP config (repeatable)", collectMcpConfig)
+    .option(STRICT_MCP_CONFIG_FLAG)
     .option("--sandbox <policy>")
     .option("--allowed-tools <list>")
     .option("--schema <file>")

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,6 +15,8 @@ import {
   sessionLogPath,
   sessionPath,
   SESSION_STATUS,
+  terminateSessionProcess,
+  type Session,
 } from "../src/sessions.ts";
 import type { DoctorResult } from "../src/doctor.ts";
 import type { RouteDeps } from "../src/route.ts";
@@ -22,6 +24,8 @@ import { runForeground } from "../src/runner.ts";
 import { getQuota, runCodexbar } from "../src/quota.ts";
 
 const OWNER = "cli-test-owner";
+const foregroundChildren = new Set<Session>();
+const foregroundChildPids: number[] = [];
 const OTHER_OWNER = "someone-else";
 const CLAUDE_OUTPUT = JSON.stringify({
   session_id: "claude-session",
@@ -175,10 +179,25 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  for (const session of foregroundChildren)
+    await terminateSessionProcess(session);
+  foregroundChildren.clear();
   await rm(directory, { recursive: true, force: true });
   // prettier-ignore
   for (const name of ["SMART_ROUTER_CONFIG_DIR", "SMART_ROUTER_STATE_DIR", "CLAUDE_CONFIG_DIR", "SMART_ROUTER_OWNER", "SMART_ROUTER_DEPTH", "SMART_ROUTER_HANDLE", "SMART_ROUTER_ANCESTORS", "SMART_ROUTER_NO_UPDATE_CHECK"])
     delete process.env[name];
+});
+
+afterAll(() => {
+  const survivors = foregroundChildPids.filter((pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  expect(survivors).toEqual([]);
 });
 
 test("version, doctor, and install-skill run in-process", async () => {
@@ -402,7 +421,7 @@ test("each concurrency limit exits 3 with capacity JSON", async () => {
 
 test("foreground spawn and send register children and count toward both caps", async () => {
   const releaseFlag = join(directory, "release-foreground-child");
-  const waitForRelease = `while [ ! -e '${releaseFlag}' ]; do sleep 0.05; done`;
+  const waitForRelease = `while [ -d '${directory}' ] && [ ! -e '${releaseFlag}' ]; do sleep 0.05; done`;
   const spawned = await cli(["spawn", "task", "--model", "claude:opus"]);
   // prettier-ignore
   const commands = [["spawn", "task", "--model", "claude:opus"], ["send", spawned.json.handle, "again"]];
@@ -414,17 +433,23 @@ test("foreground spawn and send register children and count toward both caps", a
     const foregroundRunner: CliDeps["runForeground"] = async (_argv, cwd, env, session) => {
       if (!session) throw new Error("missing foreground session");
       await rm(releaseFlag, { force: true });
+      foregroundChildren.add(session);
       const running = runForeground(["sh", "-c", waitForRelease], cwd, env, session);
-      while (!(await loadSession(session.handle)).pid) await Bun.sleep(5);
-      const active = await loadSession(session.handle);
-      expect(active.status).toBe(SESSION_STATUS.running);
-      expect(active.wrapperPid).toBe(process.pid);
-      expect(active.wrapperProcessStartTime).toBe(processStartTime(process.pid));
-      expect(active.processStartTime).toBe(processStartTime(session.pid!));
-      const blockedCommand = index === 0 ? commands[1] : commands[0];
-      expectJson(await cli(blockedCommand), { error: "capacity", limit }, 3);
-      await writeFile(releaseFlag, "");
-      await running;
+      try {
+        while (!(await loadSession(session.handle)).pid) await Bun.sleep(5);
+        foregroundChildPids.push((await loadSession(session.handle)).pid!);
+        const active = await loadSession(session.handle);
+        expect(active.status).toBe(SESSION_STATUS.running);
+        expect(active.wrapperPid).toBe(process.pid);
+        expect(active.wrapperProcessStartTime).toBe(processStartTime(process.pid));
+        expect(active.processStartTime).toBe(processStartTime(session.pid!));
+        const blockedCommand = index === 0 ? commands[1] : commands[0];
+        expectJson(await cli(blockedCommand), { error: "capacity", limit }, 3);
+      } finally {
+        await writeFile(releaseFlag, "");
+        await running;
+        foregroundChildren.delete(session);
+      }
       return CLAUDE_OUTPUT;
     };
     const completed = await cli(commands[index], {

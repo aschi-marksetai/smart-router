@@ -1,6 +1,13 @@
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { version } from "../src/assets.ts";
@@ -14,6 +21,7 @@ import {
   saveSession,
   sessionLogPath,
   sessionPath,
+  sessionSocketPath,
   SESSION_STATUS,
   terminateSessionProcess,
   type Session,
@@ -798,22 +806,131 @@ test("send resumes a stopped codex session", async () => {
   expect(runnerArguments[0].slice(0, 4)).toEqual(RESUME_PREFIX);
 });
 
-test("steer refuses foreground, finished, unsupervised, and threadless sessions", async () => {
+test("steer refuses finished, stopped, unsupervised, legacy foreground, and threadless sessions", async () => {
   // prettier-ignore
   const options = { harness: "claude" as const, model: "opus", effort: "high", cwd: directory, prompt: "task", status: SESSION_STATUS.running };
   const emptyLogPath = join(directory, "empty.log");
   await writeFile(emptyLogPath, "");
   // prettier-ignore
   const refusals: [{ handle: string }, string][] = [
-    [await createSession(options), "ran in the foreground; steer works only on detached spawns"],
+    [await createSession(options), "cannot be steered"],
     [await createSession({ ...options, status: SESSION_STATUS.done, pid: process.pid }), "is not running; use send"],
+    [await createSession({ ...options, status: SESSION_STATUS.stopped, wrapperPid: process.pid }), "is not running; use send"],
     [await createSession({ ...options, pid: process.pid }), "cannot be steered"],
+    [await createSession({ ...options, harness: "codex", pid: process.pid, wrapperPid: process.pid }), "has no steering socket"],
     [await createSession({ ...options, harness: "codex", pid: process.pid, logPath: emptyLogPath }), "has not started a codex thread"],
   ];
   for (const [{ handle }, error] of refusals)
     // prettier-ignore
     expectJson(await cli(["steer", handle, "go"]), { error: expect.stringContaining(`session ${handle} ${error}`) }, 1);
 });
+
+test.each([false, true])(
+  "foreground steer preserves the caller's result (interrupt=%s)",
+  async (interrupt) => {
+    for (const harness of ["claude", "codex"] as const) {
+      const fakeHarness = join(directory, `fake-${harness}`);
+      const receivedPath = join(directory, `${harness}-received.jsonl`);
+      await writeFile(
+        fakeHarness,
+        `#!/usr/bin/env bun
+import { appendFile } from "node:fs/promises";
+const emit = (event) => console.log(JSON.stringify(event));
+if (${JSON.stringify(harness)} === "codex") {
+  emit({type:"thread.started", thread_id:"codex-thread"});
+  if (!process.argv.includes("resume")) await new Promise(() => setInterval(() => {}, 1000));
+  emit({type:"item.completed", item:{type:"agent_message", text:process.argv.at(-1)}});
+  emit({type:"turn.completed", usage:{input_tokens:7, output_tokens:9}});
+} else for await (const line of console) {
+  if (!line) continue;
+  const event = JSON.parse(line);
+  await appendFile(${JSON.stringify(receivedPath)}, line + "\\n");
+  if (event.type === "control_request") continue;
+  emit({type:"user", message:event.message, isReplay:true});
+  if (event.message.content === "wait") continue;
+  emit({type:"result", result:event.message.content, session_id:"claude-session"});
+}
+`,
+      );
+      await chmod(fakeHarness, 0o755);
+      config.harnesses[harness] = { enabled: true, binary: fakeHarness };
+      await saveConfig(config);
+      let handle = "";
+      const spawning = cli(
+        [
+          "spawn",
+          "wait",
+          "--model",
+          `${harness}:${harness === "claude" ? "opus" : "terra"}`,
+          "--no-guardrails",
+        ],
+        {
+          runForeground: async (argv, cwd, env, session, exit, onLine) => {
+            if (!session) throw new Error("missing session");
+            handle = session.handle;
+            foregroundChildren.add(session);
+            const actualArgv = argv.includes("__supervise")
+              ? [
+                  argv[0],
+                  join(import.meta.dir, "../src/cli.ts"),
+                  ...argv.slice(2),
+                ]
+              : argv;
+            return runForeground(actualArgv, cwd, env, session, exit, onLine);
+          },
+        },
+      );
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const log = handle
+          ? await readFile(sessionLogPath(handle), "utf8").catch(() => "")
+          : "";
+        if (log.includes(harness === "codex" ? "thread.started" : "isReplay"))
+          break;
+        await Bun.sleep(10);
+      }
+      expect(handle).not.toBe("");
+      expectJson(
+        await cli(["send", handle, "refused"]),
+        { error: expect.stringContaining("is still running") },
+        1,
+      );
+      expectJson(
+        await cli([
+          "steer",
+          handle,
+          "redirected",
+          ...(interrupt ? ["--interrupt"] : []),
+        ]),
+        {
+          handle,
+          steered: true,
+          interrupted: harness === "codex" || interrupt,
+        },
+      );
+      const result = await spawning;
+      expectJson(result, {
+        handle,
+        harness,
+        result: "redirected",
+        resumeCommand: expect.any(String),
+      });
+      expect((await loadSession(handle)).status).toBe("done");
+      expect(await Bun.file(sessionSocketPath(handle)).exists()).toBe(false);
+      if (harness === "claude") {
+        const received = (await readFile(receivedPath, "utf8"))
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line));
+        expect(received.map((event) => event.type)).toEqual(
+          interrupt ? ["user", "control_request", "user"] : ["user", "user"],
+        );
+        const log = await readFile(sessionLogPath(handle), "utf8");
+        expect(log.match(/"isReplay":true/g)).toHaveLength(2);
+      }
+    }
+  },
+);
 
 test("detached claude spawns run under the supervisor", async () => {
   let detachedArgv: string[] = [];

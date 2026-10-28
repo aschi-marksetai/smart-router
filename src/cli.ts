@@ -6,6 +6,7 @@ import {
   type EventState,
 } from "./events.ts";
 import { Command, CommanderError } from "commander";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { version } from "./assets.ts";
@@ -46,6 +47,7 @@ import {
 } from "./route.ts";
 import { runDetached, runForeground } from "./runner.ts";
 import {
+  listenForSteer,
   notRunningError,
   steerSupervisedSession,
   SUPERVISE_COMMAND,
@@ -64,6 +66,7 @@ import {
   removeSession,
   saveSession,
   sessionLogPath,
+  sessionSocketPath,
   sessionOwner,
   SESSION_STATUS,
   stopSession,
@@ -530,7 +533,7 @@ async function spawnCommand(
       ? [CODEX_NETWORK_ACCESS_OVERRIDE]
       : undefined,
   });
-  const supervised = Boolean(options.detach) && selected.harness === "claude";
+  const supervised = selected.harness === "claude";
   const command = adapter.buildSpawn(spawnPrompt, {
     ...harnessOptions,
     streamInput: supervised,
@@ -621,12 +624,14 @@ async function spawnCommand(
   let parsed: ReturnType<typeof adapter.parseSpawnOutput>;
   try {
     parsed = parseForegroundOutput(
-      await deps.runForeground(
-        command.argv,
-        cwd,
-        environment,
+      await runSteerableForeground(
+        supervised
+          ? supervisorCommand(handle, spawnPrompt, command.argv)
+          : command.argv,
         session,
-        deps.exit,
+        harnessOptions,
+        deps,
+        environment,
         options.events ? stream.line : undefined,
       ),
       adapter.parseSpawnOutput,
@@ -781,12 +786,12 @@ async function sendCommand(
   let parsed: ReturnType<typeof adapter.parseResumeOutput>;
   try {
     parsed = parseForegroundOutput(
-      await deps.runForeground(
+      await runSteerableForeground(
         command.argv,
-        session.cwd,
-        process.env,
         session,
-        deps.exit,
+        harnessOptions,
+        deps,
+        process.env,
         options.events ? stream.line : undefined,
       ),
       adapter.parseResumeOutput,
@@ -825,18 +830,18 @@ async function steerCommand(
 ): Promise<void> {
   rejectOwnOrAncestor("steer", handle);
   const session = await refreshSession(handle);
-  if (!session.pid || session.wrapperPid)
-    throw new Error(
-      `session ${handle} ran in the foreground; steer works only on detached spawns`,
-    );
   if (session.status !== SESSION_STATUS.running)
     throw new Error(notRunningError(handle));
-  const interrupted = Boolean(options.interrupt);
-  if (session.harness === "codex")
+  const interrupted = session.harness === "codex" || Boolean(options.interrupt);
+  if (session.harness === "codex" && !session.wrapperPid)
     return steerCodexSession(session, message, deps);
-  if (!session.supervisorPid)
+  if (!session.supervisorPid && session.harness !== "codex")
     throw new Error(
-      `session ${handle} cannot be steered; only detached codex sessions and claude sessions started under the supervisor support steer`,
+      `session ${handle} cannot be steered; only codex sessions and claude sessions started under the supervisor support steer`,
+    );
+  if (!existsSync(sessionSocketPath(handle)))
+    throw new Error(
+      `session ${handle} has no steering socket; retry shortly (older foreground runners do not support steer)`,
     );
   await steerSupervisedSession(handle, { message, interrupt: interrupted });
   return printResult(
@@ -853,6 +858,11 @@ async function steerCodexSession(
   message: string,
   deps: CliDeps,
 ): Promise<void> {
+  await interruptCodexSession(session);
+  return sendCommand(session.handle, message, {}, deps);
+}
+
+async function interruptCodexSession(session: Session): Promise<string> {
   const log = await readFile(
     session.logPath ?? sessionLogPath(session.handle),
     "utf8",
@@ -864,7 +874,65 @@ async function steerCodexSession(
     );
   session.sessionId = threadId;
   await stopSession(session);
-  return sendCommand(session.handle, message, {}, deps);
+  return threadId;
+}
+
+async function runSteerableForeground(
+  argv: string[],
+  session: Session,
+  harnessOptions: HarnessOptions,
+  deps: CliDeps,
+  environment: NodeJS.ProcessEnv,
+  onLine?: (line: string) => void,
+): Promise<string> {
+  const run = () =>
+    deps.runForeground(
+      argv,
+      session.cwd,
+      environment,
+      session,
+      deps.exit,
+      onLine,
+    );
+  if (session.harness !== "codex") return run();
+  let steering: Promise<string[]> | undefined;
+  let running = true;
+  const server = await listenForSteer(session.handle, async ({ message }) => {
+    if (!running) return { error: notRunningError(session.handle) };
+    if (steering)
+      return {
+        error: `session ${session.handle} is already being steered; retry shortly`,
+      };
+    steering = interruptCodexSession(session).then(
+      (threadId) => codex.buildResume(threadId, message, harnessOptions).argv,
+    );
+    try {
+      await steering;
+    } catch (error) {
+      steering = undefined;
+      throw error;
+    }
+    return { steered: true };
+  });
+  try {
+    while (true) {
+      let output = "";
+      try {
+        output = await run();
+      } catch (error) {
+        if (!steering) throw error;
+      }
+      running = false;
+      if (!steering) return output;
+      argv = await steering;
+      steering = undefined;
+      session.status = SESSION_STATUS.running;
+      running = true;
+    }
+  } finally {
+    running = false;
+    server.close();
+  }
 }
 
 async function harnessOptionsFor(

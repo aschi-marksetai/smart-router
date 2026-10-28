@@ -50,6 +50,37 @@ function parseSteerRequest(line: string): SteerRequest | undefined {
   return { message: request.message, interrupt: request.interrupt === true };
 }
 
+export async function listenForSteer(
+  handle: string,
+  steer: (request: SteerRequest) => SteerReply | Promise<SteerReply>,
+) {
+  const socketPath = sessionSocketPath(handle);
+  const server = createServer((connection) => {
+    const requestLines = createInterface({ input: connection });
+    requestLines.once("error", () => connection.destroy());
+    requestLines.once("line", async (line) => {
+      const request = parseSteerRequest(line);
+      let reply: SteerReply;
+      try {
+        reply = request
+          ? await steer(request)
+          : { error: "steer request needs a message" };
+      } catch (error) {
+        reply = {
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      connection.end(`${JSON.stringify(reply)}\n`);
+    });
+  });
+  await rm(socketPath, { force: true });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  return server;
+}
+
 export async function superviseSession(
   handle: string,
   prompt: string,
@@ -75,31 +106,20 @@ export async function superviseSession(
     claude.stdin.write(streamUserMessage(text));
     pendingMessages += 1;
   };
-  const steer = (request: SteerRequest | undefined): SteerReply => {
-    if (!request) return { error: "steer request needs a message" };
+  const steer = (request: SteerRequest): SteerReply => {
     if (stdinClosed) return { error: notRunningError(handle) };
     if (request.interrupt) claude.stdin.write(streamInterruptRequest());
     writeUserMessage(request.message);
     return { steered: true };
   };
-  const server = createServer((connection) => {
-    const requestLines = createInterface({ input: connection });
-    requestLines.once("error", () => connection.destroy());
-    requestLines.once("line", (line) => {
-      connection.end(`${JSON.stringify(steer(parseSteerRequest(line)))}\n`);
-    });
-  });
+  const server = await listenForSteer(handle, steer);
   const forwardStop = () => claude.kill(STOP_SIGNAL);
   process.once(STOP_SIGNAL, forwardStop);
   try {
-    await rm(socketPath, { force: true });
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(socketPath, resolve);
-    });
     writeUserMessage(prompt);
     createInterface({ input: claude.stdout }).on("line", (line) => {
-      log.write(`${line}\n`);
+      if (session.wrapperPid) process.stdout.write(`${line}\n`);
+      else log.write(`${line}\n`);
       const event = parseJsonLines(line)[0];
       if (isReplayedUserMessage(event)) pendingMessages -= 1;
       if (!isResultEvent(event) || pendingMessages > 0) return;

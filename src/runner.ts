@@ -11,6 +11,7 @@ import {
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
+import { SUPERVISE_COMMAND } from "./supervisor.ts";
 
 const IGNORE = "ignore";
 const STDERR_LINE_LIMIT = 20;
@@ -76,6 +77,7 @@ export async function runForeground(
   });
   if (session && child.pid) {
     session.pid = child.pid;
+    if (argv.includes(SUPERVISE_COMMAND)) session.supervisorPid = child.pid;
     session.processStartTime = processStartTime(child.pid);
   }
   const registration = session ? saveSession(session) : Promise.resolve();

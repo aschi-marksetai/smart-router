@@ -415,6 +415,10 @@ test("each concurrency limit exits 3 with capacity JSON", async () => {
   const global = await cli([...spawn, "--wait-for-slot", "0.01"]);
   expectJson(global, { error: "capacity", limit: "maxRunning" }, 3);
   expect(global.json.running[0].handle).toBe(running.handle);
+  expect(global.json.otherOwnersRunning).toBe(0);
+  expect(global.json.next).toBe(
+    "wait on one of these handles with smart-router wait <handle>, or stop one",
+  );
   config.rules.concurrency = { maxRunning: 6, maxPerCaller: 1, maxDepth: 2 };
   await saveConfig(config);
   expectJson(await cli(spawn), { error: "capacity", limit: "maxPerCaller" }, 3);
@@ -425,6 +429,121 @@ test("each concurrency limit exits 3 with capacity JSON", async () => {
   expectJson(depth, { error: "capacity", limit: "maxDepth" }, 3);
   expect(depth.json.next).toContain("do the work themselves");
   delete process.env.SMART_ROUTER_DEPTH;
+});
+
+test("global capacity reports other owners without exposing their sessions", async () => {
+  config.rules.concurrency = { maxRunning: 1, maxPerCaller: 3, maxDepth: 2 };
+  await saveConfig(config);
+  // prettier-ignore
+  const blocker = await createSession({ harness: "claude", model: "opus", effort: "high", cwd: directory, prompt: "private task", status: SESSION_STATUS.running, pid: process.pid });
+  blocker.owner = OTHER_OWNER;
+  await saveSession(blocker);
+  const result = await cli(["spawn", "task", "--model", "claude:opus"]);
+  expectJson(
+    result,
+    {
+      error: "capacity",
+      limit: "maxRunning",
+      running: [],
+      otherOwnersRunning: 1,
+      next: "global slots are held by other sessions; retry later or pass --wait-for-slot <seconds>",
+    },
+    3,
+  );
+  expect(result.stdout).not.toContain(blocker.handle);
+  expect(result.stdout).not.toContain(blocker.promptPreview);
+  expect(runnerArguments).toHaveLength(0);
+});
+
+test("send waits for capacity and resumes the same handle and session id", async () => {
+  const spawned = await cli(["spawn", "task", "--model", "claude:opus"]);
+  const original = await loadSession(spawned.json.handle);
+  config.rules.concurrency = { maxRunning: 1, maxPerCaller: 3, maxDepth: 2 };
+  await saveConfig(config);
+  // prettier-ignore
+  const blocker = await createSession({ harness: "claude", model: "opus", effort: "high", cwd: directory, prompt: "blocker", status: SESSION_STATUS.running, pid: process.pid });
+  const release = (async () => {
+    await Bun.sleep(20);
+    blocker.status = SESSION_STATUS.done;
+    await saveSession(blocker);
+  })();
+  const result = await cli([
+    "send",
+    original.handle,
+    "again",
+    "--wait-for-slot",
+    "1",
+  ]);
+  await release;
+  expectJson(result, { handle: original.handle, result: "finished work" });
+  expect(await loadSession(original.handle)).toMatchObject({
+    sessionId: original.sessionId,
+    status: SESSION_STATUS.done,
+  });
+  expect(runnerArguments.at(-1)).toEqual(
+    expect.arrayContaining(["--resume", original.sessionId]),
+  );
+  expect(await listSessions()).toHaveLength(2);
+});
+
+test("send capacity timeout launches nothing and leaves the session intact", async () => {
+  const spawned = await cli(["spawn", "task", "--model", "claude:opus"]);
+  const original = await loadSession(spawned.json.handle);
+  config.rules.concurrency = { maxRunning: 1, maxPerCaller: 3, maxDepth: 2 };
+  await saveConfig(config);
+  // prettier-ignore
+  await createSession({ harness: "claude", model: "opus", effort: "high", cwd: directory, prompt: "blocker", status: SESSION_STATUS.running, pid: process.pid });
+  const result = await cli([
+    "send",
+    original.handle,
+    "again",
+    "--wait-for-slot",
+    "0.01",
+  ]);
+  expectJson(result, { error: "capacity", limit: "maxRunning" }, 3);
+  expect(runnerArguments).toHaveLength(1);
+  expect(await loadSession(original.handle)).toEqual(original);
+  expect(await listSessions()).toHaveLength(2);
+});
+
+test.each(["-1", "NaN", "Infinity"])(
+  "send validates wait-for-slot like spawn: %s",
+  async (value) => {
+    const spawned = await cli(["spawn", "task", "--model", "claude:opus"]);
+    for (const command of [
+      ["spawn", "task", "--model", "claude:opus"],
+      ["send", spawned.json.handle, "again"],
+    ]) {
+      expectJson(
+        await cli([...command, "--wait-for-slot", value]),
+        { error: "--wait-for-slot must be a non-negative number" },
+        1,
+      );
+    }
+    expect(runnerArguments).toHaveLength(1);
+  },
+);
+
+test("concurrent sends cannot reserve the same available slot", async () => {
+  const first = await cli(["spawn", "first", "--model", "claude:opus"]);
+  const second = await cli(["spawn", "second", "--model", "claude:opus"]);
+  config.rules.concurrency = { maxRunning: 1, maxPerCaller: 3, maxDepth: 2 };
+  await saveConfig(config);
+  let launches = 0;
+  const run: CliDeps["runForeground"] = async () => {
+    launches += 1;
+    await Bun.sleep(150);
+    return CLAUDE_OUTPUT;
+  };
+  const results = await Promise.all(
+    [first, second].map(({ json }) =>
+      cli(["send", json.handle, "again", "--wait-for-slot", "0.01"], {
+        runForeground: run,
+      }),
+    ),
+  );
+  expect(results.map(({ exitCode }) => exitCode).sort()).toEqual([0, 3]);
+  expect(launches).toBe(1);
 });
 
 test("foreground spawn and send register children and count toward both caps", async () => {

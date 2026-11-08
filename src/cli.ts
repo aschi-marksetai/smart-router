@@ -191,10 +191,22 @@ function currentDepth(): number {
   return Number.isSafeInteger(depth) && depth >= 0 ? depth : 0;
 }
 
-function capacityOutput(limit: CapacityLimit, callerSessions: Session[]) {
+function capacityOutput(
+  limit: CapacityLimit,
+  callerSessions: Session[],
+  otherOwnersRunning: number,
+) {
+  let next =
+    "wait on one of these handles with smart-router wait <handle>, or stop one";
+  if (limit === "maxDepth")
+    next = "delegates at this depth must do the work themselves";
+  else if (limit === "maxRunning" && callerSessions.length === 0)
+    next =
+      "global slots are held by other sessions; retry later or pass --wait-for-slot <seconds>";
   return {
     error: "capacity" as const,
     limit,
+    otherOwnersRunning,
     running: callerSessions.map(
       ({ handle, model, createdAt, promptPreview }) => ({
         handle,
@@ -203,10 +215,7 @@ function capacityOutput(limit: CapacityLimit, callerSessions: Session[]) {
         promptPreview,
       }),
     ),
-    next:
-      limit === "maxDepth"
-        ? "delegates at this depth must do the work themselves"
-        : "wait on one of these handles with smart-router wait <handle>, or stop one",
+    next,
   };
 }
 
@@ -256,7 +265,11 @@ async function reserveSpawnSession(
       else if (callerSessions.length >= limits.maxPerCaller)
         limit = "maxPerCaller";
       if (limit) {
-        capacity = capacityOutput(limit, callerSessions);
+        capacity = capacityOutput(
+          limit,
+          callerSessions,
+          running.length - callerSessions.length,
+        );
         return undefined;
       }
       if (existingSession) {
@@ -729,7 +742,7 @@ async function updateCommand(
 async function sendCommand(
   handle: string,
   message: string,
-  options: PassthroughOptions,
+  options: PassthroughOptions & { waitForSlot?: string },
   deps: CliDeps,
 ): Promise<void> {
   rejectOwnOrAncestor("send", handle);
@@ -771,7 +784,7 @@ async function sendCommand(
   const reservation = await reserveSpawnSession(
     { ...session, prompt: resumePrompt },
     config,
-    undefined,
+    options.waitForSlot,
     deps,
     session,
   );
@@ -1350,6 +1363,7 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .action((prompt, options) => spawnCommand(prompt, options, deps));
   program
     .command("send <handle> <message>")
+    .option("--wait-for-slot <seconds>")
     .option("--events")
     .option("--permission-mode <mode>")
     .option("--browser")

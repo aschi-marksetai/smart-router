@@ -241,9 +241,11 @@ Sessions record `owner` as `SMART_ROUTER_OWNER`, else `CLAUDE_CODE_SESSION_ID`, 
 
 Claude receives each file as `--mcp-config`, alongside the isolated browser server when browser mode is enabled, and passes `--strict-mcp-config` through. Claude expands `${VAR}` in env and headers at launch using its native config interpolation. Codex rereads the files at each launch, interpolates env and headers from the process environment, and emits `-c mcp_servers.<name>.command/args/env` or `.url/http_headers` overrides. `Authorization: Bearer ${VAR}` becomes `.bearer_token_env_var="VAR"`, keeping the token out of argv. Codex rejects SSE servers; use streamable HTTP. Codex strict mode passes `--ignore-user-config`, which skips user config while preserving auth in `CODEX_HOME`; it also removes other user configuration defaults. Pi ignores both MCP flags with a stderr note.
 
-### `smart-router send <handle> "<message>"`
+### `smart-router send <handle> "<message>" [--wait-for-slot <seconds>]`
 
 Loads the session file, calls the adapter's `resume`, prints `{ "handle", "result" }`.
+
+`--wait-for-slot` accepts a finite, non-negative number of seconds and uses the same capacity reservation and polling as spawn, preserving the handle and session ID. A capacity timeout exits 3 without launching the resume. Capacity JSON includes the caller's `running` sessions and an `otherOwnersRunning` count without exposing other owners' handles or prompt previews. When other owners fill the global cap and the caller has no running sessions, `next` advises retrying later or passing `--wait-for-slot`.
 
 ### `smart-router quota`
 

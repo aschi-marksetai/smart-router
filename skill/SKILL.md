@@ -47,6 +47,7 @@ smart-router send <handle> "<follow-up message>"
 ```
 
 Resumes the same session with its full context. Stdout is JSON with `result`.
+Pass `--wait-for-slot <seconds>` to wait for capacity while preserving the handle and session ID. Seconds must be finite and non-negative; a capacity timeout exits 3 without launching the resume.
 
 ## Long tasks
 
@@ -54,7 +55,7 @@ Killing your own wait, status or shell never stops a detached delegate; use `sma
 
 Use `smart-router spawn "<task>" --cwd <repo path> --detach` for work that should outlive this command. Then use `smart-router wait <handle> --timeout 90` in a loop, checking status between waits; a timeout means the delegate is still running. Do not wait on, stop, send to or steer your own handle or an ancestor. A shell command returning early is a yield, not completion. Stopped or failed waits exit 1 with the last message and action when available. Use `smart-router logs <handle> --tail 50`; use `smart-router stop <handle>` to end a child delegate.
 Use `smart-router steer <handle> "<message>"` to redirect a running delegate, detached or foreground. Claude delegates take the message mid-turn, or with `--interrupt` stop the current step first. Codex delegates are always interrupted: the run is stopped and resumed with the message, so any step in progress is lost, and the output is the resumed turn's result.
-Exit code 3 with `error: "capacity"` means the configured concurrency or depth cap was reached. Add `--wait-for-slot <seconds>` to opt into waiting for a running slot; depth-limited delegates must do the work themselves.
+Exit code 3 with `error: "capacity"` means the configured concurrency or depth cap was reached. Add `--wait-for-slot <seconds>` on spawn or send to opt into waiting for a running slot; depth-limited delegates must do the work themselves. `running` lists only the caller's blockers; `otherOwnersRunning` counts other owners' running sessions. If only other sessions hold the global slots, retry later or use `--wait-for-slot`.
 
 Use `smart-router sessions` to list your sessions (`--all` includes other owners), `rm <handle>` to remove one, or `prune --older-than <days>` for finished sessions.
 

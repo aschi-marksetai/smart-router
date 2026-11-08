@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createConnection, type Socket } from "node:net";
 import { runCli, type CliDeps } from "../src/cli.ts";
 import * as claude from "../src/harness/claude.ts";
 import {
@@ -11,7 +12,11 @@ import {
   sessionSocketPath,
   SESSION_STATUS,
 } from "../src/sessions.ts";
-import { steerSupervisedSession, superviseSession } from "../src/supervisor.ts";
+import {
+  listenForSteer,
+  steerSupervisedSession,
+  superviseSession,
+} from "../src/supervisor.ts";
 
 const STATE_DIRECTORY_ENV = "SMART_ROUTER_STATE_DIR";
 const WAIT_PROMPT = "wait for steer";
@@ -68,6 +73,45 @@ async function socketReady(handle: string): Promise<void> {
   while (!existsSync(sessionSocketPath(handle)))
     await Bun.sleep(SOCKET_POLL_INTERVAL_MS);
 }
+
+test("steering rejects malformed requests and reports handler errors", async () => {
+  const { handle } = await supervisedSession();
+  const failure = "steering failed";
+  const server = await listenForSteer(handle, ({ message }) => {
+    if (message === "error") throw new Error(failure);
+    throw failure;
+  });
+  try {
+    const reply = await new Promise<string>((resolve, reject) => {
+      const connection = createConnection(sessionSocketPath(handle));
+      connection.once("error", reject);
+      connection.once("data", (data) => {
+        connection.end();
+        resolve(data.toString());
+      });
+      connection.write(`${JSON.stringify({ message: 42 })}\n`);
+    });
+    expect(JSON.parse(reply)).toEqual({
+      error: "steer request needs a message",
+    });
+    for (const message of ["error", "string"])
+      await expect(
+        steerSupervisedSession(handle, { message, interrupt: false }),
+      ).rejects.toThrow(failure);
+    const accepted = new Promise<Socket>((resolve) =>
+      server.once("connection", resolve),
+    );
+    const connection = createConnection(sessionSocketPath(handle));
+    const incoming = await accepted;
+    incoming.emit("error", new Error(failure));
+    expect(incoming.destroyed).toBe(true);
+    connection.destroy();
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
 
 test("supervisor delivers the prompt and an interrupting steer, then closes stdin after the result", async () => {
   const { handle, fakeClaude } = await supervisedSession();

@@ -175,3 +175,21 @@ test("retries acquisition when the lock disappears before stat", async () => {
   );
   await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+test("propagates lock stat errors and recovers a stale lock", async () => {
+  const lockPath = join(directory, "sessions", ".spawn.lock");
+  await mkdir(lockPath, { recursive: true });
+  await expect(
+    withSessionsLock(
+      async () => {},
+      async () => {
+        throw new Error("lock stat failed");
+      },
+    ),
+  ).rejects.toThrow("lock stat failed");
+  await withSessionsLock(
+    async () => expect((await stat(lockPath)).isDirectory()).toBe(true),
+    async () => ({ mtimeMs: 0 }),
+  );
+  await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+});

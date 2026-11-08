@@ -119,9 +119,10 @@ async function cli(
   let stdout = "";
   let stderr = "";
   let exitCode: number | undefined;
+  // Match process.exit: the first exit code is final.
   // prettier-ignore
   const deps: CliDeps = {
-    stdout: (text) => { stdout += text; }, stderr: (text) => { stderr += text; }, exit: (code) => { exitCode = code; },
+    stdout: (text) => { stdout += text; }, stderr: (text) => { stderr += text; }, exit: (code) => { exitCode ??= code; },
     runForeground: async (argv, _cwd, env) => {
       runnerArguments.push(argv); runnerEnvironments.push(env ?? {}); return runnerOutput;
     },
@@ -1118,4 +1119,73 @@ test("logs --follow --events waits for an appended log and completion", async ()
   const result = await following;
   expect(result.exitCode).toBe(0);
   expect(eventTypes(result.stdout)).toEqual(orderedEvents);
+});
+
+test.each([SESSION_STATUS.failed, SESSION_STATUS.stopped])(
+  "logs --events reports a %s session with one terminal error",
+  async (status) => {
+    const session = await createSession({
+      harness: "codex",
+      model: "terra",
+      effort: "high",
+      cwd: directory,
+      prompt: "task",
+      status,
+      lastAction: "bun test",
+    });
+    await writeFile(sessionLogPath(session.handle), "");
+    const result = await cli(["logs", session.handle, "--events"]);
+    expect(result.exitCode).toBe(1);
+    expect(eventTypes(result.stdout)).toEqual(["error"]);
+    expect(result.json).toMatchObject({
+      message: status,
+      lastAction: "bun test",
+    });
+  },
+);
+
+test("CLI rejects invalid numeric flags and reports log and state errors", async () => {
+  const spawned = await cli(["spawn", "task", "--model", "claude:opus"]);
+  const handle = spawned.json.handle;
+  const invalidCommands = [
+    {
+      args: ["wait", handle, "--result-limit", "-1"],
+      flag: "--result-limit",
+      kind: "integer",
+    },
+    {
+      args: ["wait", handle, "--timeout", "NaN"],
+      flag: "--timeout",
+      kind: "number",
+    },
+    {
+      args: ["logs", handle, "--tail", "0.5"],
+      flag: "--tail",
+      kind: "integer",
+    },
+  ];
+  for (const { args, flag, kind } of invalidCommands)
+    expectJson(
+      await cli(args),
+      { error: `${flag} must be a non-negative ${kind}` },
+      1,
+    );
+  expectJson(
+    await cli(["prune"]),
+    { error: "--older-than <days> is required" },
+    1,
+  );
+  await rm(sessionLogPath(handle), { force: true });
+  expectJson(
+    await cli(["logs", handle]),
+    { error: expect.stringContaining("ENOENT") },
+    1,
+  );
+  await rm(join(directory, "state"), { recursive: true });
+  await writeFile(join(directory, "state"), "not a directory");
+  expectJson(
+    await cli(["sessions"]),
+    { error: expect.stringContaining("ENOTDIR") },
+    1,
+  );
 });

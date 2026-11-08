@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { guardrailsFor, loadGuardrails } from "../src/guardrails.ts";
@@ -34,10 +34,13 @@ afterEach(async () => {
   if (directory) await rm(directory, { recursive: true });
 });
 
-test("loads guardrails and returns empty text for a missing file", async () => {
+test("loads guardrails, tolerates missing files, and propagates read errors", async () => {
   directory = await mkdtemp(join(tmpdir(), "smart-router-guardrails-"));
   process.env.SMART_ROUTER_CONFIG_DIR = directory;
   expect(await loadGuardrails()).toBe("");
   await writeFile(join(directory, "guardrails.md"), fixture);
   expect(await loadGuardrails()).toBe(fixture);
+  await rm(join(directory, "guardrails.md"));
+  await mkdir(join(directory, "guardrails.md"));
+  await expect(loadGuardrails()).rejects.toMatchObject({ code: "EISDIR" });
 });

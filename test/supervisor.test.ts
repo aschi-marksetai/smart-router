@@ -1,4 +1,6 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
+import * as fileSystem from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -141,6 +143,38 @@ test("supervisor delivers the prompt and an interrupting steer, then closes stdi
   await expect(
     steerSupervisedSession(handle, { message: "late", interrupt: false }),
   ).rejects.toThrow();
+});
+
+test("supervisor preserves fast child output and completion during socket setup", async () => {
+  const { handle } = await supervisedSession();
+  const socketPath = sessionSocketPath(handle);
+  const originalRemove = fileSystem.rm;
+  const spawning = spyOn(childProcess, "spawn");
+  const removing = spyOn(fileSystem, "rm").mockImplementationOnce(
+    async (path, options) => {
+      const spawned = spawning.mock.results[0];
+      // Let an already-started child close while socket setup is suspended.
+      if (path === socketPath && spawned?.type === "return")
+        await new Promise((resolve) => spawned.value.once("close", resolve));
+      await originalRemove(path, options);
+    },
+  );
+  try {
+    const result =
+      '{"type":"result","result":"done","session_id":"fast-session"}';
+    expect(
+      await superviseSession(handle, WAIT_PROMPT, [
+        "sh",
+        "-c",
+        `printf '%s\\n' '${result}'; exit 7`,
+      ]),
+    ).toBe(7);
+    expect(await readFile(sessionLogPath(handle), "utf8")).toBe(`${result}\n`);
+    expect(existsSync(socketPath)).toBe(false);
+  } finally {
+    spawning.mockRestore();
+    removing.mockRestore();
+  }
 });
 
 test("supervisor survives claude closing its input before a steer arrives", async () => {

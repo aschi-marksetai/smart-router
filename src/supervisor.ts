@@ -91,17 +91,11 @@ export async function superviseSession(
   const log = createWriteStream(session.logPath ?? sessionLogPath(handle), {
     flags: "a",
   });
-  const claude = spawn(claudeArgv[0], claudeArgv.slice(1), {
-    cwd: session.cwd,
-    stdio: ["pipe", "pipe", "inherit"],
-  });
   let pendingMessages = 0;
   let stdinClosed = false;
   const markStdinClosed = () => {
     stdinClosed = true;
   };
-  claude.stdin.on("error", markStdinClosed);
-  claude.once("exit", markStdinClosed);
   const writeUserMessage = (text: string) => {
     claude.stdin.write(streamUserMessage(text));
     pendingMessages += 1;
@@ -113,6 +107,13 @@ export async function superviseSession(
     return { steered: true };
   };
   const server = await listenForSteer(handle, steer);
+  // Finish socket setup before spawning so no await can lose the child's events.
+  const claude = spawn(claudeArgv[0], claudeArgv.slice(1), {
+    cwd: session.cwd,
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  claude.stdin.on("error", markStdinClosed);
+  claude.once("exit", markStdinClosed);
   const forwardStop = () => claude.kill(STOP_SIGNAL);
   process.once(STOP_SIGNAL, forwardStop);
   try {

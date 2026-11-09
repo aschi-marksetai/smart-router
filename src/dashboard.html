@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>smart-router sessions</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --background: #fafafa;
+        --surface: #ffffff;
+        --text: #20242b;
+        --muted: #59616d;
+        --border: #d7dce2;
+        --selected: #e8f0fc;
+        --accent: #265ca6;
+        --error: #ae2332;
+        --success: #246441;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --background: #15181d;
+          --surface: #1c2027;
+          --text: #e8ecf1;
+          --muted: #a4afbd;
+          --border: #3a4350;
+          --selected: #243954;
+          --accent: #a4c9ff;
+          --error: #ffa1aa;
+          --success: #98d6af;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        color: var(--text);
+        background: var(--background);
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+      }
+      main {
+        display: grid;
+        grid-template-columns: minmax(280px, 350px) minmax(0, 1fr);
+        height: 100dvh;
+      }
+      aside {
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid var(--border);
+        min-height: 0;
+      }
+      .toolbar,
+      #thread-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0 0 8px;
+      }
+      h1,
+      h2 {
+        font-size: 20px;
+      }
+      h3 {
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .muted,
+      small,
+      label {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      label {
+        display: block;
+        margin-top: 16px;
+        margin-bottom: 4px;
+      }
+      select {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        background: var(--surface);
+        font: inherit;
+      }
+      button,
+      select,
+      summary {
+        cursor: pointer;
+      }
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
+      }
+      #sessions {
+        overflow-y: auto;
+      }
+      .session {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: 0;
+        border-bottom: 1px solid var(--border);
+        padding: 14px 20px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+      }
+      .session:hover,
+      .session[aria-current="true"] {
+        background: var(--selected);
+      }
+      .row {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+      .age {
+        margin-left: auto;
+        white-space: nowrap;
+      }
+      .model,
+      .preview {
+        display: block;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .preview {
+        margin-top: 4px;
+        font-size: 14px;
+      }
+      .running {
+        color: var(--accent);
+      }
+      .done {
+        color: var(--success);
+      }
+      .failed,
+      .error {
+        color: var(--error);
+      }
+      #thread {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      #thread-header {
+        overflow-wrap: anywhere;
+        max-height: 40vh;
+        overflow-y: auto;
+      }
+      #conversation {
+        flex: 1;
+        overflow-y: auto;
+        padding: 24px;
+      }
+      .turn {
+        max-width: 1000px;
+        margin-bottom: 24px;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font: inherit;
+      }
+      details {
+        margin: 12px 0;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      summary {
+        padding: 12px;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        list-style: none;
+        font-family: ui-monospace, monospace;
+        font-size: 13px;
+      }
+      summary::-webkit-details-marker {
+        display: none;
+      }
+      details pre {
+        padding: 12px;
+        border-top: 1px solid var(--border);
+        font:
+          13px/1.6 ui-monospace,
+          monospace;
+      }
+      #notice {
+        padding: 0 24px;
+        margin: 0;
+      }
+      .empty {
+        padding: 24px;
+        color: var(--muted);
+      }
+      @media (max-width: 700px) {
+        main {
+          grid-template-columns: 1fr;
+          grid-template-rows: minmax(200px, 35dvh) minmax(0, 1fr);
+        }
+        aside {
+          border-right: 0;
+          border-bottom: 1px solid var(--border);
+        }
+        .toolbar {
+          padding: 12px 16px;
+        }
+        label {
+          margin-top: 4px;
+        }
+        #conversation,
+        #thread-header {
+          padding: 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <aside aria-label="Delegate sessions">
+        <div class="toolbar">
+          <h1>smart-router</h1>
+          <p class="muted">Delegate conversations · read only</p>
+          <label for="scope">Session scope</label>
+          <select id="scope">
+            <option value="launcher">Launcher session</option>
+            <option value="all">All (newest 50)</option>
+            <optgroup id="owners" label="Owners"></optgroup>
+          </select>
+        </div>
+        <nav id="sessions" aria-label="Sessions">
+          <p class="empty">Loading sessions…</p>
+        </nav>
+      </aside>
+      <section id="thread" aria-label="Selected conversation">
+        <header id="thread-header">
+          <h2>Select a session</h2>
+          <p class="muted">Open a delegate to read its conversation.</p>
+        </header>
+        <p id="notice" class="error" role="status"></p>
+        <div id="conversation" tabindex="0" aria-label="Conversation"></div>
+      </section>
+    </main>
+    <script>
+      const LIST_INTERVAL_MS = 5000;
+      const THREAD_INTERVAL_MS = 3000;
+      const ALL_LIMIT = 50;
+      const PROMPT_PREVIEW_LENGTH = 160;
+      const SCROLL_THRESHOLD = 48;
+      const MAX_INDENT_DEPTH = 8;
+      const INDENT_PX = 12;
+      const GLYPHS = { running: "●", done: "✓", failed: "✗", stopped: "■" };
+      const scopeControl = document.getElementById("scope");
+      const sessionsPane = document.getElementById("sessions");
+      const conversation = document.getElementById("conversation");
+      const notice = document.getElementById("notice");
+      let sessions = [];
+      let launcherOwner = "";
+      let selected = "";
+      let scope = "launcher";
+      let threadStatus;
+      let listTimer;
+      let threadTimer;
+      let listLoading = false;
+      let threadLoading = "";
+      let renderedThread = "";
+      let renderedList = "";
+      let renderedOwners = "";
+
+      function element(tag, text, className) {
+        const node = document.createElement(tag);
+        if (text !== undefined) node.textContent = text;
+        if (className) node.className = className;
+        return node;
+      }
+      function model(session) {
+        return `${session.harness}:${session.model}@${session.effort}`;
+      }
+      function age(createdAt) {
+        const seconds = Math.max(
+          0,
+          Math.floor((Date.now() - Date.parse(createdAt)) / 1000),
+        );
+        if (seconds < 60) return `${seconds}s ago`;
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+        if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+        return `${Math.floor(seconds / 86400)}d ago`;
+      }
+      async function getJson(path) {
+        const response = await fetch(path, { cache: "no-store" });
+        if (!response.ok)
+          throw new Error(
+            `${response.status}: ${(await response.json()).error}`,
+          );
+        return response.json();
+      }
+      function writeHash() {
+        location.hash = new URLSearchParams({
+          scope,
+          handle: selected,
+        }).toString();
+      }
+      function renderList() {
+        if (!new URLSearchParams(location.hash.slice(1)).has("scope")) {
+          scope = "launcher";
+          if (!sessions.some((session) => session.owner === launcherOwner))
+            scope = "all";
+        }
+        const owners = document.getElementById("owners");
+        const distinctOwners = [
+          ...new Set(sessions.map((session) => session.owner ?? "")),
+        ];
+        if (scope.startsWith("owner:")) distinctOwners.push(scope.slice(6));
+        const ownerValues = [...new Set(distinctOwners)].sort();
+        const ownerSignature = JSON.stringify(ownerValues);
+        if (ownerSignature !== renderedOwners) {
+          renderedOwners = ownerSignature;
+          owners.replaceChildren(
+            ...ownerValues.map((owner) => {
+              const option = element("option", owner || "(no owner)");
+              option.value = `owner:${owner}`;
+              return option;
+            }),
+          );
+        }
+        scopeControl.value = scope;
+        let visible = sessions;
+        if (scope === "launcher")
+          visible = sessions.filter(
+            (session) => session.owner === launcherOwner,
+          );
+        else if (scope === "all") visible = sessions.slice(0, ALL_LIMIT);
+        else
+          visible = sessions.filter(
+            (session) => (session.owner ?? "") === scope.slice(6),
+          );
+        const rows = visible.map((session) => ({
+          session,
+          ageLabel: age(session.createdAt),
+        }));
+        // Ages and selection change constantly; update them in place so rows keep their nodes.
+        const signature = JSON.stringify(
+          rows.map(({ session }) => [
+            session.handle,
+            session.status,
+            model(session),
+            session.depth || 0,
+            session.promptPreview,
+          ]),
+        );
+        if (signature === renderedList) {
+          rows.forEach(({ session, ageLabel }, index) => {
+            const button = sessionsPane.children[index];
+            button.setAttribute(
+              "aria-current",
+              String(session.handle === selected),
+            );
+            const ageNode = button.querySelector(".age");
+            if (ageNode.textContent !== ageLabel)
+              ageNode.textContent = ageLabel;
+          });
+          return;
+        }
+        renderedList = signature;
+        const focusedHandle = document.activeElement?.dataset.handle;
+        sessionsPane.replaceChildren(
+          ...rows.map(({ session, ageLabel }) => {
+            const button = element("button", undefined, "session");
+            button.type = "button";
+            button.dataset.handle = session.handle;
+            button.setAttribute(
+              "aria-current",
+              String(session.handle === selected),
+            );
+            button.style.paddingLeft = `${20 + Math.min(MAX_INDENT_DEPTH, Math.max(0, session.depth || 0)) * INDENT_PX}px`;
+            const row = element("span", undefined, "row");
+            const glyph = element(
+              "span",
+              GLYPHS[session.status] || "?",
+              session.status,
+            );
+            glyph.setAttribute("aria-label", session.status);
+            row.append(
+              glyph,
+              element("strong", session.handle),
+              element("small", ageLabel, "age"),
+            );
+            button.append(
+              row,
+              element("small", model(session), "model"),
+              element("span", session.promptPreview, "preview"),
+            );
+            button.addEventListener("click", () => {
+              selected = session.handle;
+              writeHash();
+            });
+            return button;
+          }),
+        );
+        if (!visible.length)
+          sessionsPane.append(
+            element("p", "No sessions in this scope.", "empty"),
+          );
+        if (focusedHandle) {
+          for (const button of sessionsPane.children) {
+            if (button.dataset.handle === focusedHandle)
+              button.focus({ preventScroll: true });
+          }
+        }
+      }
+      function turn(label, text) {
+        const block = element("section", undefined, "turn");
+        block.append(element("h3", label), element("pre", text));
+        return block;
+      }
+      function renderThread(session, events) {
+        const header = document.getElementById("thread-header");
+        const headerSignature = JSON.stringify([
+          session.handle,
+          session.status,
+          model(session),
+          session.cwd,
+          session.route,
+          session.usage,
+          session.error,
+          session.lastAction,
+        ]);
+        if (header.dataset.signature !== headerSignature) {
+          header.dataset.signature = headerSignature;
+          header.replaceChildren(
+            element("h2", `${session.handle} · ${session.status}`),
+            element("p", model(session)),
+          );
+          header.append(element("p", session.cwd, "muted"));
+          if (session.route) {
+            const reason = session.route.reason;
+            const reasonText =
+              typeof reason === "string"
+                ? reason
+                : JSON.stringify(reason ?? "");
+            header.append(
+              element(
+                "p",
+                `Route: ${session.route.pick || "—"} · ${reasonText}`,
+                "muted",
+              ),
+            );
+          }
+          if (session.usage) {
+            const usage = session.usage;
+            const cost =
+              usage.costUsd == null
+                ? "unknown"
+                : `$${usage.costUsd.toFixed(4)}`;
+            header.append(
+              element(
+                "p",
+                `Tokens: ${usage.inputTokens} in / ${usage.outputTokens} out · Cost: ${cost}`,
+                "muted",
+              ),
+            );
+          }
+          if (session.error || session.lastAction)
+            header.append(
+              element("p", session.error || session.lastAction, "muted"),
+            );
+        }
+        const signature = JSON.stringify([
+          session.promptPreview,
+          events.map(({ ts, ...event }) => event),
+        ]);
+        if (signature === renderedThread) return;
+        renderedThread = signature;
+        const atBottom =
+          conversation.scrollHeight -
+            conversation.scrollTop -
+            conversation.clientHeight <=
+          SCROLL_THRESHOLD;
+        const scrollTop = conversation.scrollTop;
+        const expanded = new Set(
+          [...conversation.querySelectorAll("details[open]")].map(
+            (node) => node.dataset.toolId,
+          ),
+        );
+        const promptLabel =
+          session.promptPreview.length >= PROMPT_PREVIEW_LENGTH
+            ? "User · prompt preview (truncated)"
+            : "User · prompt preview";
+        const content = document.createDocumentFragment();
+        content.append(turn(promptLabel, session.promptPreview));
+        const tools = new Map();
+        let pendingText = "";
+        for (const event of events) {
+          if (event.type === "text.delta") pendingText += event.text;
+          if (event.type === "message") {
+            content.append(turn("Assistant", event.text));
+            pendingText = "";
+          }
+          if (event.type === "tool.started" || event.type === "tool.finished") {
+            let tool = tools.get(event.toolId);
+            if (!tool) {
+              const details = element("details");
+              details.dataset.toolId = event.toolId;
+              details.open = expanded.has(event.toolId);
+              const summary = element("summary");
+              const input = element("pre");
+              const output = element("pre");
+              details.append(summary, input, output);
+              content.append(details);
+              tool = { summary, input, output };
+              tools.set(event.toolId, tool);
+            }
+            if (event.type === "tool.started") {
+              tool.summary.textContent = `▸ ${event.name}: ${event.input.split("\n")[0]}`;
+              tool.input.textContent = event.input;
+            } else {
+              if (!tool.summary.textContent)
+                tool.summary.textContent = `▸ ${event.name}`;
+              tool.output.textContent = event.output;
+              if (event.isError) tool.summary.classList.add("error");
+            }
+          }
+          if (event.type === "result") {
+            content.append(turn("Final result", event.text));
+            pendingText = "";
+          }
+          if (event.type === "error")
+            content.append(turn("Error", event.message));
+        }
+        if (pendingText)
+          content.append(turn("Assistant · streaming", pendingText));
+        conversation.replaceChildren(content);
+        conversation.scrollTop = atBottom
+          ? conversation.scrollHeight
+          : scrollTop;
+      }
+      async function loadList() {
+        clearTimeout(listTimer);
+        if (document.hidden || listLoading) return;
+        listLoading = true;
+        try {
+          const data = await getJson("/api/sessions");
+          sessions = data.sessions;
+          launcherOwner = data.owner;
+          renderList();
+          notice.textContent = "";
+        } catch (error) {
+          notice.textContent = `Sessions: ${error.message}`;
+        } finally {
+          listLoading = false;
+          if (!document.hidden)
+            listTimer = setTimeout(loadList, LIST_INTERVAL_MS);
+        }
+      }
+      async function loadThread() {
+        clearTimeout(threadTimer);
+        if (!selected || document.hidden || threadLoading === selected) return;
+        const handle = selected;
+        threadLoading = handle;
+        try {
+          const [session, events] = await Promise.all([
+            getJson(`/api/sessions/${encodeURIComponent(handle)}`),
+            getJson(`/api/sessions/${encodeURIComponent(handle)}/events`),
+          ]);
+          if (selected !== handle) return;
+          threadStatus = session.status;
+          notice.textContent = "";
+          renderThread(session, events);
+        } catch (error) {
+          if (selected === handle)
+            notice.textContent = `Conversation: ${error.message}`;
+        } finally {
+          if (threadLoading === handle) threadLoading = "";
+          if (
+            selected === handle &&
+            !document.hidden &&
+            (!threadStatus || threadStatus === "running")
+          ) {
+            threadTimer = setTimeout(loadThread, THREAD_INTERVAL_MS);
+          }
+        }
+      }
+      function readHash() {
+        const values = new URLSearchParams(location.hash.slice(1));
+        const nextScope = values.get("scope") || "launcher";
+        scope =
+          ["launcher", "all"].includes(nextScope) ||
+          nextScope.startsWith("owner:")
+            ? nextScope
+            : "launcher";
+        const handle = values.get("handle") || "";
+        if (
+          handle !== selected ||
+          document.getElementById("thread-header").dataset.handle !== handle
+        ) {
+          selected = handle;
+          threadStatus = undefined;
+          renderedThread = "";
+          conversation.replaceChildren();
+          conversation.scrollTop = 0;
+          const header = document.getElementById("thread-header");
+          header.dataset.handle = handle;
+          delete header.dataset.signature;
+          header.replaceChildren(
+            element("h2", handle ? `Loading ${handle}…` : "Select a session"),
+          );
+          void loadThread();
+        }
+        renderList();
+      }
+      scopeControl.addEventListener("change", () => {
+        scope = scopeControl.value;
+        writeHash();
+      });
+      window.addEventListener("hashchange", readHash);
+      document.addEventListener("visibilitychange", () => {
+        clearTimeout(listTimer);
+        clearTimeout(threadTimer);
+        if (!document.hidden) {
+          void loadList();
+          if (threadStatus === "running" || !threadStatus) void loadThread();
+        }
+      });
+      readHash();
+      void loadList();
+    </script>
+  </body>
+</html>

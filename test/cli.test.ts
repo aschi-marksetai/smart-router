@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { version } from "../src/assets.ts";
 import { buildProgram, runCli, type CliDeps } from "../src/cli.ts";
 import { DEFAULT_CONFIG, saveConfig, type Config } from "../src/config.ts";
+import { startDashboard } from "../src/dashboard.ts";
 import {
   createSession,
   listSessions,
@@ -289,13 +290,14 @@ test("spawn parses Claude and Codex output, flags, and stopping-point refusal", 
   const schemaPath = join(directory, "schema.json");
   await writeFile(schemaPath, '{"type":"object"}');
   // prettier-ignore
-  const codex = await cli(["spawn", "finish task", "--model", "codex:terra", "--effort", "high", "--schema", schemaPath]);
+  const codex = await cli(["spawn", "finish task", "--model", "codex:terra", "--effort", "high", "--schema", schemaPath, "--permission-mode", "default", "--allowed-tools", "Read"]);
   expectJson(codex, {
     harness: "codex",
     result: "codex done",
     usage: { inputTokens: 7, outputTokens: 9, costUsd: null },
   });
   expect(codex.json.resumeCommand).toContain("codex-thread");
+  expect(codex.stderr).toContain("--permission-mode, --allowed-tools");
   expect(runnerArguments[1]).toContain(schemaPath);
   expect(runnerArguments[1].at(-1)).toContain(
     `## Delegation context\n\nYour smart-router handle is ${codex.json.handle} at depth 1 of max 2`,
@@ -832,6 +834,39 @@ test("send updates done sessions; sessions, rm, and prune honor ownership", asyn
   });
 });
 
+test("sessions --all writes complete JSON to a slow pipe reader", async () => {
+  const sessionCount = 4_096;
+  const pipeCapacityBytes = 128 * 1_024;
+  const readerDelayMilliseconds = 1_000;
+  await Promise.all(
+    Array.from({ length: sessionCount }, (_, index) =>
+      createSession({
+        handle: index.toString(16).padStart(6, "0"),
+        harness: "claude",
+        model: "opus",
+        effort: "high",
+        cwd: directory,
+        prompt: "x".repeat(160),
+        status: SESSION_STATUS.done,
+      }),
+    ),
+  );
+  const child = Bun.spawn(
+    [process.execPath, "src/cli.ts", "sessions", "--all"],
+    {
+      env: { ...process.env, SMART_ROUTER_STATE_DIR: join(directory, "state") },
+      lazy: true,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  await Bun.sleep(readerDelayMilliseconds);
+  const stdout = await new Response(child.stdout).text();
+  expect(await child.exited).toBe(0);
+  expect(JSON.parse(stdout)).toHaveLength(sessionCount);
+  expect(Buffer.byteLength(stdout)).toBeGreaterThan(pipeCapacityBytes);
+});
+
 test("quota and update return JSON with success and refusal codes", async () => {
   const quota = await cli(["quota"]);
   expectJson(quota, { claude: { weeklyUsedPercent: 12, pace: "ok" } });
@@ -1189,3 +1224,74 @@ test("CLI rejects invalid numeric flags and reports log and state errors", async
     1,
   );
 });
+
+test("dashboard prints a compact startup record and stops on SIGINT", async () => {
+  const result = await cli(["dashboard", "--port", "0"]);
+  expect(result.exitCode).toBeUndefined();
+  expect(result.stdout.split("\n")).toHaveLength(2);
+  expect(result.json).toMatchObject({ owner: OWNER });
+  expect(result.json.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  try {
+    expect((await fetch(result.json.url)).status).toBe(200);
+  } finally {
+    process.emit("SIGINT");
+  }
+});
+
+test("dashboard reuses an occupied dashboard port without stopping its server", async () => {
+  const server = startDashboard({ port: 0 });
+  try {
+    const result = await cli(["dashboard", "--port", String(server.port)]);
+    expect(result.json).toEqual({
+      url: server.url.origin,
+      owner: OWNER,
+      reused: true,
+    });
+    expect(result.exitCode).toBeUndefined();
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "src/cli.ts",
+        "dashboard",
+        "--port",
+        String(server.port),
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    expect(await child.exited).toBe(0);
+    expect(JSON.parse(await new Response(child.stdout).text())).toEqual({
+      url: server.url.origin,
+      owner: OWNER,
+      reused: true,
+    });
+    expect((await fetch(server.url)).status).toBe(200);
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test.each([JSON.stringify({ service: "other" }), "not JSON"])(
+  "dashboard rejects a port occupied by another service returning %s",
+  async (body) => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response(body),
+    });
+    try {
+      const result = await cli(["dashboard", "--port", String(server.port)]);
+      expect(result.exitCode).toBe(1);
+      expect(result.json.error).toContain("port");
+      expect(result.json.reused).toBeUndefined();
+    } finally {
+      await server.stop(true);
+    }
+  },
+);
+
+test.each(["invalid", "65536"])(
+  "dashboard rejects invalid port %s",
+  async (port) => {
+    expect((await cli(["dashboard", "--port", port])).exitCode).toBe(1);
+  },
+);

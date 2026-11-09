@@ -1,0 +1,12 @@
+{
+  "name": "smart-router",
+  "owner": {
+    "name": "aschi-marksetai"
+  },
+  "plugins": [
+    {
+      "name": "smart-router-threads",
+      "source": "./plugins/smart-router-threads"
+    }
+  ]
+}

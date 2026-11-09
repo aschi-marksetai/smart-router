@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
+import { LOG_FOLLOW_INTERVAL_MS } from "./events.ts";
 import {
-  EVENT_TYPE,
-  LOG_FOLLOW_INTERVAL_MS,
-  normalized,
-  type EventState,
-} from "./events.ts";
+  createSessionEventStream,
+  sessionStatus,
+  sessionSummary,
+} from "./session-view.ts";
+import { existingDashboard, startDashboard } from "./dashboard.ts";
 import { Command, CommanderError } from "commander";
-import { existsSync } from "node:fs";
+import { existsSync, writeSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { version } from "./assets.ts";
@@ -58,7 +59,6 @@ import {
   addUsage,
   createSessionHandle,
   createSession,
-  isProcessRunning,
   logActivity,
   listSessions,
   loadSession,
@@ -132,6 +132,26 @@ const DELEGATE_WAIT_TIMEOUT_SECONDS = 90;
 const MCP_CONFIG_FLAG = "--mcp-config";
 const MCP_CONFIG_OPTION = `${MCP_CONFIG_FLAG} <file>`;
 const STRICT_MCP_CONFIG_FLAG = "--strict-mcp-config";
+const OUTPUT_RETRY_INTERVAL_MS = 1;
+
+function writeOutput(descriptor: number, text: string): void {
+  const buffer = Buffer.from(text);
+  let offset = 0;
+  while (offset < buffer.length) {
+    try {
+      offset += writeSync(descriptor, buffer, offset);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        error.code !== "EAGAIN"
+      )
+        throw error;
+      // Bun makes stdout/stderr nonblocking when their streams are initialized.
+      Bun.sleepSync(OUTPUT_RETRY_INTERVAL_MS);
+    }
+  }
+}
 
 function collectMcpConfig(path: string, paths: string[] = []): string[] {
   return [...paths, resolve(path)];
@@ -155,8 +175,8 @@ export type CliDeps = {
 };
 
 const DEFAULT_DEPS: CliDeps = {
-  stdout: (text) => process.stdout.write(text),
-  stderr: (text) => process.stderr.write(text),
+  stdout: (text) => writeOutput(1, text),
+  stderr: (text) => writeOutput(2, text),
   exit: (code) => process.exit(code),
   runForeground,
   runDetached,
@@ -1028,57 +1048,17 @@ async function refreshSession(handle: string): Promise<Session> {
 
 async function statusCommand(handle: string, deps: CliDeps): Promise<void> {
   const session = await refreshSession(handle);
-  return printResult(
-    deps,
-    {
-      ...session,
-      running:
-        session.status === SESSION_STATUS.running &&
-        !!session.pid &&
-        isProcessRunning(session.pid),
-      outcome: session.status,
-      ...(session.status === SESSION_STATUS.stopped ||
-      session.status === SESSION_STATUS.failed
-        ? {
-            error: `session ${handle} was ${session.status}: ${session.error ?? session.status}`,
-          }
-        : {}),
-    },
-    "Session status retrieved",
-  );
+  return printResult(deps, sessionStatus(session), "Session status retrieved");
 }
 
 function eventStream(session: Session, deps: CliDeps) {
-  const tools = new Map<string, string>();
-  const state: EventState = { ...session, ts: new Date().toISOString(), tools };
-  const emit = (event: ReturnType<typeof normalized>) =>
-    deps.stdout(`${JSON.stringify(event)}\n`);
+  const stream = createSessionEventStream(session, (event) =>
+    deps.stdout(`${JSON.stringify(event)}\n`),
+  );
   return {
-    line(line: string) {
-      state.ts = new Date().toISOString();
-      for (const event of getAdapter(session.harness).translateEvents(
-        line,
-        state,
-      )) {
-        if (event.type === EVENT_TYPE.result || event.type === EVENT_TYPE.error)
-          continue;
-        if (event.type === EVENT_TYPE.message) state.text = event.text;
-        if (event.type === EVENT_TYPE.toolStarted)
-          tools.set(event.toolId, event.name);
-        emit(event);
-      }
-    },
+    line: stream.line,
     finish(completed: Session, usage = completed.usage ?? null) {
-      state.ts = new Date().toISOString();
-      const payload =
-        completed.status === SESSION_STATUS.done
-          ? { type: EVENT_TYPE.result, text: completed.result ?? "", usage }
-          : {
-              type: EVENT_TYPE.error,
-              message: completed.error ?? completed.status,
-              lastAction: completed.lastAction,
-            };
-      emit(normalized(state, payload));
+      stream.finish(completed, usage);
       deps.exit(
         completed.status === SESSION_STATUS.done
           ? SUCCESS_EXIT_CODE
@@ -1255,33 +1235,7 @@ async function sessionsCommand(
 ): Promise<void> {
   await sweepSessions();
   const sessions = await listSessions(options.all ? undefined : sessionOwner());
-  return printResult(
-    deps,
-    sessions.map(
-      ({
-        handle,
-        owner,
-        status,
-        harness,
-        model,
-        effort,
-        depth,
-        createdAt,
-        promptPreview,
-      }) => ({
-        handle,
-        owner,
-        status,
-        harness,
-        model,
-        effort,
-        depth,
-        createdAt,
-        promptPreview,
-      }),
-    ),
-    "Sessions listed",
-  );
+  return printResult(deps, sessions.map(sessionSummary), "Sessions listed");
 }
 
 async function rmCommand(handle: string, deps: CliDeps): Promise<void> {
@@ -1411,6 +1365,46 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .command("sessions")
     .option(ALL_OPTION)
     .action((options) => sessionsCommand(options, deps));
+  program
+    .command("dashboard")
+    .option("--port <n>")
+    .option("--host <addr>")
+    .action(async (options: { port?: string; host?: string }) => {
+      const port =
+        options.port === undefined
+          ? undefined
+          : parseNonNegativeInteger(options.port, "--port");
+      let server;
+      try {
+        server = startDashboard({ port, host: options.host });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          error.code === "EADDRINUSE"
+        ) {
+          const existing = await existingDashboard({
+            port,
+            host: options.host,
+          });
+          if (existing) {
+            deps.stdout(`${JSON.stringify(existing)}\n`);
+            return;
+          }
+        }
+        throw error;
+      }
+      const stop = () => {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+        void server.stop(true);
+      };
+      process.on("SIGINT", stop);
+      process.on("SIGTERM", stop);
+      deps.stdout(
+        `${JSON.stringify({ url: server.url.origin, owner: sessionOwner() })}\n`,
+      );
+    });
   program.command("rm <handle>").action((handle) => rmCommand(handle, deps));
   program
     .command("prune")

@@ -38,6 +38,30 @@ Config lives in `~/.config/smart-router` (override with `SMART_ROUTER_CONFIG_DIR
 
 OpenClaw host integration: [smart-router plugin](integrations/openclaw/README.md).
 
+## Claude Code plugin
+
+The `smart-router-threads` plugin adds `/sr` to browse this session's delegate conversations in a pane; `/sr all` shows all sessions and `/sr <handle>` opens a thread.
+
+In Claude Code, install it with:
+
+```text
+/plugin install smart-router-threads --marketplace aschi-marksetai/smart-router
+```
+
+Answer `y` to add the marketplace, then choose an install scope. For local development, run from this repo:
+
+```sh
+claude --plugin-dir plugins/smart-router-threads
+```
+
+## Session dashboard
+
+Run `smart-router dashboard` to browse delegate sessions and read conversations in a local, read-only web page. It runs in the foreground at `http://127.0.0.1:4517` until Ctrl-C. The first stdout line contains its URL and launcher owner as JSON. Use `--port 0` for an available port, `--port <n>` for another fixed port, or `--host <addr>` to change the bind address (which can expose private transcripts).
+
+If a smart-router dashboard already uses the requested port, the command prints its URL and owner with `"reused": true` and exits successfully.
+
+In T3 Code, add a project script with command `smart-router dashboard` and Preview URL `http://localhost:4517`, then run it and open the preview browser tab. Choose **Launcher session**, **All** (newest 50), or an owner to filter sessions; the selected thread and scope can be bookmarked.
+
 ## Development
 
 ```sh

@@ -1,0 +1,7 @@
+{
+  "name": "smart-router-threads",
+  "version": "0.1.0",
+  "description": "Browse this session's and all smart-router delegate conversations in a pane.",
+  "author": { "name": "Austin" },
+  "types": "./types/index.d.ts"
+}

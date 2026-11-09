@@ -1,3 +1,4 @@
+import dashboardPage from "./dashboard.html" with { type: "text" };
 // @ts-expect-error Bun text import
 import preferencesTemplate from "../templates/preferences.md" with { type: "text" };
 // @ts-expect-error Bun text import
@@ -15,3 +16,6 @@ export {
   skill,
 };
 export const version = packageJson.version;
+
+// Bun types HTML imports as bundles even when imported as text.
+export const dashboardHtml = String(dashboardPage);

@@ -316,6 +316,45 @@ test("falls back below the confidence floor", async () => {
   );
   expect("fellBack" in result && result.fellBack).toBe(true);
   expect("pick" in result && result.pick).toBe("codex:terra@high");
+  expect("reason" in result && result.reason).toBe(
+    "Jev confidence 0.70 below floor 0.80; using codex:terra",
+  );
+});
+
+test("reports low confidence alongside disabled quota when falling back", async () => {
+  const result = await route(
+    "task",
+    {},
+    deps({
+      config: {
+        ...config,
+        quota: { ...config.quota, enabled: false },
+        rules: { confidenceFloor: 0.35 },
+      },
+      client: {
+        systemOne: async () => ({
+          answers: {
+            model: {
+              choice: "claude:opus",
+              confidence: 0.33,
+              probabilities: {},
+            },
+            effort: { choice: "high", probabilities: {} },
+            needsBrowser: { noul: 0 },
+            statesStoppingPoint: { noul: 0.8 },
+            needsNetwork: { noul: 0 },
+            needsFullAccess: { noul: 0 },
+          },
+        }),
+      },
+    }),
+  );
+  expect(result).toMatchObject({
+    pick: "codex:terra@high",
+    fellBack: true,
+    reason:
+      "quota disabled; Jev confidence 0.33 below floor 0.35; using codex:terra",
+  });
 });
 
 test("falls back when Jev picks a model outside the candidates", async () => {
@@ -450,7 +489,8 @@ test("uses the first eligible candidate when the default is unavailable", async 
   expect(result).toMatchObject({
     pick: "claude:opus@high",
     fellBack: true,
-    reason: "default model unavailable; using claude:opus",
+    reason:
+      "default model unavailable; using claude:opus; Jev confidence 0.90 below floor 1.00; using claude:opus",
   });
 });
 

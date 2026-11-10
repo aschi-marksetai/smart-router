@@ -453,9 +453,9 @@ export async function route(
   const selectedModelIsCandidate = candidates.some(
     ({ id }) => id === selectedModel.choice,
   );
+  const confidenceFloor = config.rules.confidenceFloor;
   const confidenceFallback =
-    config.rules.confidenceFloor !== undefined &&
-    selectedModel.confidence < config.rules.confidenceFloor;
+    confidenceFloor !== undefined && selectedModel.confidence < confidenceFloor;
   const fallbackRequired =
     !eligibleDefault || !selectedModelIsCandidate || confidenceFallback;
   const reasons = [];
@@ -467,6 +467,10 @@ export async function route(
   if (quotaUnavailable && config.rules.quotaCutoffPercent !== undefined)
     reasons.push("codexbar not installed; quota cutoff skipped");
   if (fallbackReason) reasons.push(fallbackReason);
+  if (confidenceFallback)
+    reasons.push(
+      `Jev confidence ${selectedModel.confidence.toFixed(2)} below floor ${confidenceFloor.toFixed(2)}; using ${fallbackCandidate.id}`,
+    );
   if (!selectedModelIsCandidate)
     reasons.push(
       `Jev picked ${selectedModel.choice}, which is not a candidate`,

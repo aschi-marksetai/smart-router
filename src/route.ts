@@ -458,7 +458,7 @@ export async function route(
     confidenceFloor !== undefined && selectedModel.confidence < confidenceFloor;
   const fallbackRequired =
     !eligibleDefault || !selectedModelIsCandidate || confidenceFallback;
-  const reasons = [];
+  const reasons = fallbackRequired ? [] : ["selected by Jev"];
   if (zdrUnavailable)
     reasons.push(
       "OpenRouter ZDR list unavailable; OpenRouter candidates dropped",
@@ -475,7 +475,7 @@ export async function route(
     reasons.push(
       `Jev picked ${selectedModel.choice}, which is not a candidate`,
     );
-  const reason = reasons.length ? reasons.join("; ") : "selected by Jev";
+  const reason = reasons.join("; ");
   return {
     pick: fallbackRequired
       ? `${fallbackCandidate.id}@${fallbackEffort}`

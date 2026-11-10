@@ -290,6 +290,22 @@ test("OpenRouter Jev ZDR client sends the direct endpoint request", async () => 
   }
 });
 
+test.each([
+  [true, "selected by Jev"],
+  [false, "selected by Jev; quota disabled"],
+])("reports Jev selection with quota enabled=%s", async (enabled, reason) => {
+  const result = await route(
+    "task",
+    {},
+    deps({ config: { ...config, quota: { ...config.quota, enabled } } }),
+  );
+  expect(result).toMatchObject({
+    pick: "claude:opus@high",
+    fellBack: false,
+    reason,
+  });
+});
+
 test("falls back below the confidence floor", async () => {
   const result = await route(
     "task",

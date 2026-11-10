@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmod,
@@ -313,6 +314,79 @@ test("spawn parses Claude and Codex output, flags, and stopping-point refusal", 
     },
     1,
   );
+});
+
+test("Codex spawn includes the signing note for a repository requiring signed commits", async () => {
+  execFileSync("git", ["init", directory], { stdio: "pipe" });
+  execFileSync("git", ["-C", directory, "config", "commit.gpgsign", "true"]);
+  runnerOutput = CODEX_OUTPUT;
+  const result = await cli([
+    "spawn",
+    "task",
+    "--model",
+    "codex:terra",
+    "--cwd",
+    directory,
+  ]);
+  expect(result.exitCode).toBe(0);
+  expect(runnerArguments[0]?.at(-1)).toContain(
+    "Commit signing is unavailable in this sandbox.",
+  );
+});
+
+test("spawn includes configured harness and model guardrails", async () => {
+  await writeFile(
+    join(directory, "config", "guardrails.md"),
+    "## claude\nVerify the result.\n## claude:opus\nStop after verification.\n",
+  );
+  const result = await cli(["spawn", "task", "--model", "claude:opus"]);
+  expect(result.exitCode).toBe(0);
+  expect(runnerArguments[0]?.join(" ")).toContain(
+    "## Operating rules\n\nVerify the result.\n\nStop after verification.",
+  );
+});
+
+test("spawn and send preserve the configured Codex localhost network access", async () => {
+  config.spawn = { ...config.spawn, codexLocalhostNeedsNetwork: true };
+  await saveConfig(config);
+  runnerOutput = CODEX_OUTPUT;
+  const spawned = await cli(["spawn", "task", "--model", "codex:terra"]);
+  expectJson(spawned, { sandbox: "workspace-write+network" });
+  expect(await loadSession(spawned.json.handle)).toMatchObject({
+    sandbox: "workspace-write",
+    usesNetworkAccess: true,
+  });
+  expect((await cli(["send", spawned.json.handle, "again"])).exitCode).toBe(0);
+  expect(runnerArguments).toHaveLength(2);
+  for (const argv of runnerArguments)
+    expect(argv).toContain("sandbox_workspace_write.network_access=true");
+});
+
+test("spawn refuses a dry-run route without launching a harness", async () => {
+  expectJson(
+    await cli(["spawn", "task", "--dry-run"]),
+    { error: "Cannot spawn from a dry-run route" },
+    1,
+  );
+  expect(runnerArguments).toHaveLength(0);
+  expect(await listSessions(OWNER)).toEqual([]);
+});
+
+test("send refuses a failed session without a harness session id", async () => {
+  const session = await createSession({
+    harness: "codex",
+    model: "terra",
+    effort: "high",
+    cwd: directory,
+    prompt: "task",
+    status: SESSION_STATUS.failed,
+  });
+  expectJson(
+    await cli(["send", session.handle, "again"]),
+    { error: `session ${session.handle} has no session id` },
+    1,
+  );
+  expect(runnerArguments).toHaveLength(0);
 });
 
 test("spawn rejects disabled overrides and accepts enabled overrides", async () => {

@@ -220,11 +220,17 @@ export function defaultRouteDeps(
 ): RouteDeps {
   const lazyClient: JevClient = {
     systemOne: async (request) => {
+      const keyEnv = jevApiKeyEnv(config);
+      const apiKey = process.env[keyEnv];
+      if (!apiKey)
+        throw new Error(
+          `${keyEnv} is not set (needed by jev.provider=${config.jev.provider}; checked the environment and the smart-router .env files)`,
+        );
       if (config.jev.provider === "openrouter" && config.jev.zdr) {
         const response = await fetch(OPENROUTER_SYSTEM_ONE_URL, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${process.env[jevApiKeyEnv(config)] ?? ""}`,
+            Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -246,7 +252,7 @@ export function defaultRouteDeps(
         return payload as JevResponse;
       }
       const client = new TypeSafeClient({
-        apiKey: process.env[jevApiKeyEnv(config)],
+        apiKey,
         ...(config.jev.provider === "openrouter"
           ? { baseURL: OPENROUTER_API_BASE_URL }
           : {}),

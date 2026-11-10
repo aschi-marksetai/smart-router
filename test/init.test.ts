@@ -86,7 +86,7 @@ function scripted(script: Script, overrides: Partial<InitDeps> = {}) {
     // prettier-ignore
     doctor: async () => ({ harnesses: {
       claude: { installed: true, version: null, authed: true }, codex: { installed: true, version: null, authed: true }, pi: { installed: false, version: null, authed: false },
-    }, providers: {}, codexbar: { installed: false }, candidates: [], availableModels: [] }),
+    }, jev: { provider: "typesafe", keyEnv: TYPESAFE_KEY_ENV, keySet: false }, providers: {}, codexbar: { installed: false }, candidates: [], availableModels: [] }),
     launch: (argv) => {
       launches.push(argv);
       return { exited: Promise.resolve(0) };

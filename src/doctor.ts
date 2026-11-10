@@ -4,7 +4,12 @@ import { globSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { harnessBinary, type Config, type HarnessName } from "./config.ts";
+import {
+  harnessBinary,
+  jevApiKeyEnv,
+  type Config,
+  type HarnessName,
+} from "./config.ts";
 import { enumerate } from "./enumerate.ts";
 
 const CODEX_API_KEY_ENV = "CODEX_API_KEY";
@@ -31,6 +36,7 @@ export type Detection = {
   codexbar: { installed: boolean };
 };
 export type DoctorResult = Detection & {
+  jev: { provider: Config["jev"]["provider"]; keyEnv: string; keySet: boolean };
   candidates: string[];
   availableModels: string[];
 };
@@ -139,8 +145,14 @@ export async function doctor(
     .flat()
     .map(({ id }) => id)
     .filter((id) => !configuredModelIds.has(id) && !ignoredModelIds.has(id));
+  const keyEnv = jevApiKeyEnv(config);
   return {
     ...detection,
+    jev: {
+      provider: config.jev.provider,
+      keyEnv,
+      keySet: Boolean(process.env[keyEnv]),
+    },
     candidates: buildCandidates(config, detection),
     availableModels: [...new Set(availableModels)],
   };

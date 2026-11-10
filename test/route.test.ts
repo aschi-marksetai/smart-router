@@ -20,6 +20,7 @@ import {
 } from "../src/route.ts";
 
 const detection: DoctorResult = {
+  jev: { provider: "typesafe", keyEnv: "TYPESAFE_API_KEY", keySet: false },
   harnesses: {
     claude: { installed: true, version: "1", authed: true },
     codex: { installed: true, version: "1", authed: true },
@@ -570,44 +571,77 @@ test("requires a stopping point only for configured Jev picks", () => {
   expect(needsStoppingPoint(config, { ...result, fellBack: true })).toBe(false);
 });
 
-test("a missing TypeSafe key falls back instead of throwing at startup", async () => {
-  const { defaultRouteDeps } = await import("../src/route.ts");
-  const savedKey = process.env.TYPESAFE_API_KEY;
-  delete process.env.TYPESAFE_API_KEY;
-  try {
-    const config = {
-      ...(await import("../src/config.ts")).DEFAULT_CONFIG,
-      harnesses: { codex: { enabled: true, auth: "subscription" as const } },
-      models: [
-        {
-          id: "codex:m",
-          harness: "codex" as const,
-          model: "m",
-          efforts: ["medium"],
-        },
-      ],
-      defaultModelId: "codex:m",
-    };
-    const deps = {
-      ...defaultRouteDeps(config),
-      doctor: async () => ({
-        harnesses: {
-          claude: { installed: false, version: null, authed: false },
-          codex: { installed: true, version: "1", authed: true },
-          pi: { installed: false, version: null, authed: false },
-        },
-        providers: {},
-        codexbar: { installed: false },
-        candidates: ["codex:m@medium"],
-        availableModels: [],
-      }),
-      getQuota: async () => ({ error: "codexbar not installed" as const }),
-      preferences: "",
-    };
-    const result = await route("task", {}, deps);
-    expect("pick" in result && result.fellBack).toBe(true);
-    expect("pick" in result && result.reason).toMatch(/key|API/i);
-  } finally {
-    if (savedKey !== undefined) process.env.TYPESAFE_API_KEY = savedKey;
+for (const provider of ["openrouter", "typesafe"] as const) {
+  for (const key of [undefined, ""]) {
+    test(`${provider} falls back without a request when the key is ${String(key)}`, async () => {
+      const keyEnv =
+        provider === "openrouter" ? "OPENROUTER_API_KEY" : "TYPESAFE_API_KEY";
+      const previousKey = process.env[keyEnv];
+      if (key === undefined) delete process.env[keyEnv];
+      else process.env[keyEnv] = key;
+      const fetchSpy = spyOn(globalThis, "fetch").mockRejectedValue(
+        new Error("unexpected request"),
+      );
+      try {
+        const routeConfig: Config = {
+          ...config,
+          jev: { ...config.jev, provider, apiKeyEnv: "", zdr: true },
+        };
+        const result = await route(
+          "task",
+          {},
+          {
+            ...deps(),
+            ...defaultRouteDeps(routeConfig),
+            doctor: async () => detection,
+            getQuota: deps().getQuota,
+            preferences: "",
+          },
+        );
+        expect(result).toMatchObject({
+          pick: "codex:terra@high",
+          fellBack: true,
+          reason: `${keyEnv} is not set (needed by jev.provider=${provider}; checked the environment and the smart-router .env files)`,
+        });
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        fetchSpy.mockRestore();
+        if (previousKey === undefined) delete process.env[keyEnv];
+        else process.env[keyEnv] = previousKey;
+      }
+    });
   }
-});
+}
+
+for (const provider of ["openrouter", "typesafe"] as const) {
+  test(`${provider} SDK client uses the configured Jev key when present`, async () => {
+    const keyEnv = "SMART_ROUTER_TEST_JEV_KEY";
+    const previousKey = process.env[keyEnv];
+    process.env[keyEnv] = "test-jev-key";
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ answers: {} }),
+    );
+    try {
+      const routeConfig: Config = {
+        ...config,
+        jev: { ...config.jev, provider, apiKeyEnv: keyEnv, zdr: false },
+      };
+      const state = await route("task", { dryRun: true }, deps());
+      if (!("preferences" in state)) throw new Error("missing route state");
+      const response = await defaultRouteDeps(routeConfig).client.systemOne({
+        state,
+        model: config.jev.model,
+        questions: routeQuestions(state.candidates),
+      });
+      expect(JSON.stringify(response)).toBe('{"answers":{}}');
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(
+        new Headers(fetchSpy.mock.calls[0][1]?.headers).get("authorization"),
+      ).toBe("Bearer test-jev-key");
+    } finally {
+      fetchSpy.mockRestore();
+      if (previousKey === undefined) delete process.env[keyEnv];
+      else process.env[keyEnv] = previousKey;
+    }
+  });
+}

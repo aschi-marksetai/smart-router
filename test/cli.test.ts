@@ -79,6 +79,7 @@ let routeResponse: "success" | "offline" | "stopping" = "success";
 let quotaEnabled = true;
 
 const detection: DoctorResult = {
+  jev: { provider: "typesafe", keyEnv: "TYPESAFE_API_KEY", keySet: false },
   harnesses: {
     claude: { installed: true, version: "1", authed: true },
     codex: { installed: true, version: "1", authed: true },

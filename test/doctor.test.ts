@@ -231,3 +231,27 @@ test("skips disabled harnesses", () => {
   };
   expect(buildCandidates(config, detection)).toEqual([]);
 });
+
+for (const provider of ["openrouter", "typesafe"] as const) {
+  test(`reports the ${provider} Jev key name and status without its value`, async () => {
+    const keyEnv = "SMART_ROUTER_TEST_JEV_KEY";
+    const previousKey = process.env[keyEnv];
+    const config: Config = {
+      ...DEFAULT_CONFIG,
+      jev: { ...DEFAULT_CONFIG.jev, provider, apiKeyEnv: keyEnv },
+      harnesses: {},
+    };
+    try {
+      for (const key of [undefined, "", "secret-jev-test-key"]) {
+        if (key === undefined) delete process.env[keyEnv];
+        else process.env[keyEnv] = key;
+        const result = await doctor(config, { enumerate: async () => [] });
+        expect(result.jev).toEqual({ provider, keyEnv, keySet: Boolean(key) });
+        expect(JSON.stringify(result)).not.toContain("secret-jev-test-key");
+      }
+    } finally {
+      if (previousKey === undefined) delete process.env[keyEnv];
+      else process.env[keyEnv] = previousKey;
+    }
+  });
+}

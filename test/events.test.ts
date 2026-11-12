@@ -32,7 +32,7 @@ test.each([...fixtures])("translates %s", async (name) => {
   const usage = events.find((event) => event.type === "usage");
   const result = events.find((event) => event.type === "result");
   // prettier-ignore
-  const cacheFigures = { claude: { cachedInputTokens: 6, cacheWriteTokens: 2, cacheHitRatio: 6 / 11 }, codex: { cachedInputTokens: 4, cacheWriteTokens: 2, cacheHitRatio: 4 / 7 }, pi: { cachedInputTokens: null, cacheWriteTokens: null }, "codex-failed": {} };
+  const cacheFigures = { claude: { inputTokens: 3, cachedInputTokens: 6, cacheWriteTokens: 2, cacheHitRatio: 6 / 11 }, codex: { inputTokens: 3, cachedInputTokens: 4, cacheWriteTokens: 2, cacheHitRatio: 4 / 9 }, pi: { cachedInputTokens: null, cacheWriteTokens: null }, "codex-failed": {} };
   if (usage) expect(usage).toMatchObject(cacheFigures[name]);
   if (result?.type === "result") {
     expect(result.usage).toEqual(

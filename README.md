@@ -60,6 +60,8 @@ Run `smart-router dashboard` to browse delegate sessions and read conversations 
 
 If a smart-router dashboard already uses the requested port, the command prints its URL and owner with `"reused": true` and exits successfully.
 
+Each thread header shows routed, pinned, and resumed turn counts alongside uncached input, cached input, and the cache percentage.
+
 In T3 Code, add a project script with command `smart-router dashboard` and Preview URL `http://localhost:4517`, then run it and open the preview browser tab. Choose **Launcher session**, **All** (newest 50), or an owner to filter sessions; the selected thread and scope can be bookmarked.
 
 ## Development

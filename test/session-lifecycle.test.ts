@@ -45,6 +45,7 @@ async function createRunningSession(parentHandle?: string) {
     cwd: directory,
     prompt: "task",
     status: "running",
+    turnKind: "pinned",
     parentHandle,
   });
 }
@@ -127,11 +128,25 @@ await runForeground(["sh", "-c", ${JSON.stringify(command)}], session.cwd, proce
       if (mode === "stop" || mode === "stubborn")
         await stopSession(activeParent);
       else await sweepSessions();
+      expect((await loadSession(parent.handle)).turns?.[0]).toMatchObject({
+        kind: "pinned",
+        endedAt: expect.any(String),
+        usage: null,
+      });
       expect(isProcessRunning(Number(output.split("\n")[0]))).toBe(false);
       for (const descendant of [child, leaf]) {
         expect(await loadSession(descendant.handle)).toMatchObject({
           status: "stopped",
           error: `stopped because ancestor ${parent.handle} stopped`,
+          turns: [
+            {
+              kind: "pinned",
+              startedAt: expect.any(String),
+              endedAt: expect.any(String),
+              idleSeconds: null,
+              usage: null,
+            },
+          ],
         });
         expect(isProcessRunning(descendant.pid!)).toBe(false);
         expect(

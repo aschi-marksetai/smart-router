@@ -439,6 +439,7 @@
           session.cwd,
           session.route,
           session.usage,
+          session.turns,
           session.error,
           session.lastAction,
         ]);
@@ -477,6 +478,48 @@
               ),
             );
           }
+          const turns = session.turns;
+          const counts = ["routed", "pinned", "resumed"]
+            .map((kind) => [
+              kind,
+              turns?.filter((turn) => turn.kind === kind).length ?? 0,
+            ])
+            .filter(([kind, count]) => kind !== "pinned" || count > 0)
+            .map(([kind, count]) => `${count} ${kind}`);
+          const turnText = turns
+            ? `Turns: ${turns.length} (${counts.join(", ")}) · `
+            : "";
+          const usages = turns
+            ? turns.map((turn) => turn.usage).filter(Boolean)
+            : [session.usage].filter(Boolean);
+          const uncached =
+            usages.length === 0
+              ? null
+              : usages.reduce((total, usage) => total + usage.inputTokens, 0);
+          const cached =
+            usages.length > 0 &&
+            usages.every((usage) => usage.cachedInputTokens != null)
+              ? usages.reduce(
+                  (total, usage) => total + usage.cachedInputTokens,
+                  0,
+                )
+              : null;
+          const written = usages.reduce(
+            (total, usage) => total + (usage.cacheWriteTokens ?? 0),
+            0,
+          );
+          const totalInput = (uncached ?? 0) + (cached ?? 0) + written;
+          const percentage =
+            cached == null
+              ? "unknown"
+              : `${totalInput > 0 ? Math.round((cached / totalInput) * 100) : 0}%`;
+          header.append(
+            element(
+              "p",
+              `${turnText}input ${uncached ?? "unknown"} uncached, ${cached ?? "unknown"} cached (${percentage} cached)`,
+              "muted",
+            ),
+          );
           if (session.error || session.lastAction)
             header.append(
               element("p", session.error || session.lastAction, "muted"),

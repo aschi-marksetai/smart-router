@@ -7,7 +7,15 @@ import * as codex from "../src/harness/codex.ts";
 import { codexMcpOverrides } from "../src/harness/mcp.ts";
 import * as pi from "../src/harness/pi.ts";
 import type { HarnessOptions } from "../src/harness/types.ts";
-import { parseJsonLines } from "../src/harness/types.ts";
+import { parseJsonLines, usageFrom } from "../src/harness/types.ts";
+
+// prettier-ignore
+test("normalizes OpenAI input to uncached tokens while preserving Anthropic and pi usage", () => {
+  expect(usageFrom({ input_tokens: 920225, cached_input_tokens: 746894, output_tokens: 5 })).toMatchObject({ inputTokens: 173331, cachedInputTokens: 746894 });
+  expect(usageFrom({ input_tokens: 2, cached_input_tokens: 6, output_tokens: 3 })).toMatchObject({ inputTokens: 0, cachedInputTokens: 6 });
+  expect(usageFrom({ input_tokens: 2, cache_read_input_tokens: 6, cache_creation_input_tokens: 4, output_tokens: 3 })).toMatchObject({ inputTokens: 2, cachedInputTokens: 6, cacheWriteTokens: 4 });
+  expect(usageFrom({ input: 2, cacheRead: 6, cacheWrite: 4, output: 3 })).toMatchObject({ inputTokens: 2, cachedInputTokens: 6, cacheWriteTokens: 4 });
+});
 
 const ACCEPTED_CODEX_EXEC_RESUME_FLAGS = new Set(
   "-c --last --all --enable --disable -i --strict-config -m --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust --worktree --thread-source --skip-git-repo-check --ephemeral --ignore-user-config --ignore-rules --output-schema --json -o".split(
@@ -237,7 +245,7 @@ test("builds Codex commands and parses result usage", async () => {
     sessionId: "thread-123",
     result: "Final",
     // prettier-ignore
-    usage: { inputTokens: 4, outputTokens: 5, costUsd: null, cachedInputTokens: 3, cacheWriteTokens: 1 },
+    usage: { inputTokens: 1, outputTokens: 5, costUsd: null, cachedInputTokens: 3, cacheWriteTokens: 1 },
   });
   expect(codex.buildResume("thread-123", "continue", options).argv).toEqual([
     "codex",

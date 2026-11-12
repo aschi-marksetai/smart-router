@@ -54,10 +54,18 @@ export function usageFrom(
 ): Usage | null {
   const usage = record(value);
   if (!usage) return null;
-  const inputTokens = usage.input_tokens ?? usage.input;
+  const reportedInputTokens = usage.input_tokens ?? usage.input;
   const outputTokens = usage.output_tokens ?? usage.output;
-  if (typeof inputTokens !== "number" || typeof outputTokens !== "number")
+  if (
+    typeof reportedInputTokens !== "number" ||
+    typeof outputTokens !== "number"
+  )
     return null;
+  // OpenAI includes cache reads in input_tokens; normalize to uncached input.
+  const inputTokens =
+    typeof usage.cached_input_tokens === "number"
+      ? Math.max(0, reportedInputTokens - usage.cached_input_tokens)
+      : reportedInputTokens;
   const cachedInputTokens =
     usage.cached_input_tokens ??
     usage.cache_read_input_tokens ??

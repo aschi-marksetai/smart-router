@@ -186,14 +186,10 @@ export function translateEvents(
     typeof event.total_cost_usd === "number" ? event.total_cost_usd : null,
   );
   if (usage && (terminal || state.harness === "pi")) {
-    // Codex input_tokens already includes cached tokens; Claude and pi report
-    // uncached input, cache reads and cache writes as separate counts.
     const totalInputTokens =
-      state.harness === "codex"
-        ? usage.inputTokens
-        : usage.inputTokens +
-          (usage.cachedInputTokens ?? 0) +
-          (usage.cacheWriteTokens ?? 0);
+      usage.inputTokens +
+      (usage.cachedInputTokens ?? 0) +
+      (usage.cacheWriteTokens ?? 0);
     const hasCacheHitRatio =
       typeof usage.cachedInputTokens === "number" && totalInputTokens > 0;
     const cacheHitRatio = hasCacheHitRatio

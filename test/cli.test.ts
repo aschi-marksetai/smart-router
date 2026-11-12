@@ -909,6 +909,124 @@ test("send updates done sessions; sessions, rm, and prune honor ownership", asyn
   });
 });
 
+test.each(["routed", "pinned", "fallback"])(
+  "records %s spawn and resumed turn usage with an idle gap",
+  async (kind) => {
+    runnerOutput = kind === "fallback" ? CLAUDE_OUTPUT : CODEX_OUTPUT;
+    if (kind === "fallback") routeResponse = "offline";
+    const args = ["spawn", "finish task"];
+    if (kind === "pinned") args.push("--model", "codex:terra");
+    const spawned = await cli(args);
+    expect(spawned.exitCode).toBe(0);
+    const session = await loadSession(spawned.json.handle);
+    expect(session.turns).toEqual([
+      {
+        kind: kind === "pinned" ? "pinned" : "routed",
+        startedAt: expect.any(String),
+        endedAt: expect.any(String),
+        idleSeconds: null,
+        usage: session.usage ?? null,
+      },
+    ]);
+    const previousTurn = session.turns?.[0];
+    if (!previousTurn) throw new Error("spawn did not record a turn");
+    previousTurn.endedAt = new Date(Date.now() - 10_000).toISOString();
+    await saveSession(session);
+    runnerOutput = JSON.stringify({
+      type: "turn.completed",
+      session_id: "claude-session",
+      result: "follow up",
+      usage: { input_tokens: 10, cached_input_tokens: 6, output_tokens: 2 },
+    });
+    const sent = await cli(["send", session.handle, "follow up"]);
+    expect(sent.exitCode).toBe(0);
+    const completed = await loadSession(session.handle);
+    expect(completed.turns).toHaveLength(2);
+    const resumed = completed.turns?.[1];
+    expect(resumed).toMatchObject({
+      kind: "resumed",
+      endedAt: expect.any(String),
+      usage: { inputTokens: 4, cachedInputTokens: 6, outputTokens: 2 },
+    });
+    expect(resumed?.idleSeconds).toBe(
+      (Date.parse(resumed?.startedAt ?? "") -
+        Date.parse(previousTurn.endedAt)) /
+        1_000,
+    );
+    expect(resumed?.idleSeconds).toBeGreaterThanOrEqual(10);
+    const firstInputTokens = kind === "fallback" ? 3 : 7;
+    expect(completed.usage?.inputTokens).toBe(firstInputTokens + 4);
+    expect(completed.turns?.[0].usage?.inputTokens).toBe(firstInputTokens);
+    expect(runnerArguments).toHaveLength(2);
+  },
+);
+
+test("closes detached and failed turns without reusing previous log usage", async () => {
+  const detached = await cli([
+    "spawn",
+    "task",
+    "--model",
+    "claude:opus",
+    "--detach",
+  ]);
+  const pending = await loadSession(detached.json.handle);
+  expect(pending.turns?.[0]).toMatchObject({
+    kind: "pinned",
+    endedAt: null,
+    usage: null,
+  });
+  await cli(["status", pending.handle]);
+  const completed = await loadSession(pending.handle);
+  expect(completed.turns?.[0]).toMatchObject({
+    endedAt: expect.any(String),
+    usage: { inputTokens: 3, cachedInputTokens: 6 },
+  });
+  const failed = await cli(["send", pending.handle, "again"], {
+    runForeground: async () => {
+      throw new Error("could not launch");
+    },
+  });
+  expect(failed.exitCode).toBe(1);
+  const resumed = await loadSession(pending.handle);
+  expect(resumed.turns?.[1]).toMatchObject({
+    kind: "resumed",
+    endedAt: expect.any(String),
+    usage: null,
+  });
+  expect(resumed.usage).toEqual(completed.usage);
+  await cli(["send", pending.handle, "again"], {
+    runForeground: async (_argv, _cwd, _env, session) => {
+      await writeFile(
+        sessionLogPath(pending.handle),
+        `${CLAUDE_OUTPUT}\n${JSON.stringify({ type: "result", is_error: true, usage: { input_tokens: 4, output_tokens: 2, cache_read_input_tokens: 8 } })}\n`,
+      );
+      throw new Error("turn failed");
+    },
+  });
+  expect((await loadSession(pending.handle)).turns?.[2]).toMatchObject({
+    kind: "resumed",
+    endedAt: expect.any(String),
+    usage: { inputTokens: 4, cachedInputTokens: 8 },
+  });
+  const launchFailed = await cli(
+    ["spawn", "task", "--model", "claude:opus", "--detach"],
+    {
+      runDetached: async () => {
+        throw new Error("could not launch detached");
+      },
+    },
+  );
+  expect(launchFailed.exitCode).toBe(1);
+  const failedSession = (await listSessions()).find(
+    (session) => session.error === "could not launch detached",
+  );
+  expect(failedSession?.turns?.[0]).toMatchObject({
+    kind: "pinned",
+    endedAt: expect.any(String),
+    usage: null,
+  });
+});
+
 test("sessions --all writes complete JSON to a slow pipe reader", async () => {
   const sessionCount = 4_096;
   const pipeCapacityBytes = 128 * 1_024;

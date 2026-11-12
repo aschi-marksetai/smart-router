@@ -65,6 +65,8 @@ import {
   pruneSessions,
   removeSession,
   saveSession,
+  startSessionTurn,
+  finishSessionTurn,
   sessionLogPath,
   sessionSocketPath,
   sessionOwner,
@@ -293,6 +295,7 @@ async function reserveSpawnSession(
         return undefined;
       }
       if (existingSession) {
+        await startSessionTurn(existingSession, "resumed");
         existingSession.status = SESSION_STATUS.running;
         existingSession.error = undefined;
         existingSession.pid = undefined;
@@ -587,6 +590,7 @@ async function spawnCommand(
         ? undefined
         : processStartTime(process.pid),
       usage: null,
+      turnKind: routeResult ? "routed" : "pinned",
       route: routeResult,
     },
     config,
@@ -676,6 +680,7 @@ async function spawnCommand(
     session.result = parsed.result;
     session.lastResult = parsed.result;
     session.usage = parsed.usage;
+    finishSessionTurn(session, parsed.usage);
     await saveSession(session);
   } catch (error) {
     session.status = SESSION_STATUS.failed;
@@ -833,6 +838,7 @@ async function sendCommand(
     session.result = parsed.result;
     session.lastResult = parsed.result;
     session.usage = addUsage(session.usage, parsed.usage);
+    finishSessionTurn(session, parsed.usage);
   } catch (error) {
     session.status = SESSION_STATUS.failed;
     session.error = error instanceof Error ? error.message : String(error);

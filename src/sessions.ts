@@ -17,6 +17,7 @@ import { sessionsDir } from "./paths.ts";
 import {
   parseJsonLines,
   record,
+  usageFrom,
   type ParsedOutput,
   type Usage,
 } from "./harness/types.ts";
@@ -54,6 +55,14 @@ export const FINISHED_SESSION_STATUSES: ReadonlySet<SessionStatus> = new Set([
 export type SessionStatus =
   (typeof SESSION_STATUS)[keyof typeof SESSION_STATUS];
 
+export type SessionTurn = {
+  kind: "routed" | "pinned" | "resumed";
+  startedAt: string;
+  endedAt: string | null;
+  idleSeconds: number | null;
+  usage: Usage | null;
+};
+
 export type Session = {
   handle: string;
   harness: HarnessName;
@@ -85,13 +94,15 @@ export type Session = {
   lastMessage?: string;
   lastAction?: string;
   usage?: Usage | null;
+  turns?: SessionTurn[];
+  turnLogOffset?: number;
   route?: unknown;
 };
 
 export type CreateSessionOptions = Omit<
   Session,
   "handle" | "owner" | "createdAt" | "promptPreview"
-> & { prompt: string; handle?: string };
+> & { prompt: string; handle?: string; turnKind?: SessionTurn["kind"] };
 
 export function createSessionHandle(): string {
   return randomBytes(HANDLE_BYTES).toString("hex");
@@ -156,8 +167,11 @@ export async function createSession(
     lastMessage: options.lastMessage,
     lastAction: options.lastAction,
     usage: options.usage,
+    turns: options.turns,
+    turnLogOffset: options.turnLogOffset,
     route: options.route,
   };
+  if (options.turnKind) await startSessionTurn(session, options.turnKind);
   await saveSession(session);
   return session;
 }
@@ -167,6 +181,23 @@ export async function loadSession(handle: string): Promise<Session> {
 }
 
 export async function saveSession(session: Session): Promise<void> {
+  // Every terminal transition (done, failed, stopped, swept) saves here, so close an open turn once.
+  const turn = session.turns?.at(-1);
+  if (session.status !== SESSION_STATUS.running && turn?.endedAt === null) {
+    const output = await readTurnLog(session).catch(() => "");
+    let usage: Usage | null = null;
+    for (const value of parseJsonLines(output)) {
+      const event = record(value);
+      usage =
+        usageFrom(
+          event?.usage ?? record(event?.message)?.usage,
+          typeof event?.total_cost_usd === "number"
+            ? event.total_cost_usd
+            : null,
+        ) ?? usage;
+    }
+    finishSessionTurn(session, usage);
+  }
   const destinationPath = sessionPath(session.handle);
   const temporaryPath = `${destinationPath}.${randomUUID()}`;
   try {
@@ -175,6 +206,46 @@ export async function saveSession(session: Session): Promise<void> {
   } finally {
     await rm(temporaryPath, { force: true });
   }
+}
+
+export async function startSessionTurn(
+  session: Session,
+  kind: SessionTurn["kind"],
+): Promise<void> {
+  const previousTurn = session.turns?.at(-1);
+  const startedAt = new Date().toISOString();
+  session.turnLogOffset = await stat(
+    session.logPath ?? sessionLogPath(session.handle),
+  )
+    .then(({ size }) => size)
+    .catch(() => 0);
+  session.turns ??= [];
+  session.turns.push({
+    kind,
+    startedAt,
+    endedAt: null,
+    idleSeconds: previousTurn?.endedAt
+      ? Math.max(
+          0,
+          (Date.parse(startedAt) - Date.parse(previousTurn.endedAt)) / 1_000,
+        )
+      : null,
+    usage: null,
+  });
+}
+
+export function finishSessionTurn(session: Session, usage: Usage | null): void {
+  const turn = session.turns?.at(-1);
+  if (!turn || turn.endedAt !== null) return;
+  turn.endedAt = new Date().toISOString();
+  turn.usage = usage;
+}
+
+async function readTurnLog(session: Session): Promise<string> {
+  const output = await readFile(
+    session.logPath ?? sessionLogPath(session.handle),
+  );
+  return output.subarray(session.turnLogOffset ?? 0).toString("utf8");
 }
 
 export async function listSessions(owner?: string): Promise<Session[]> {
@@ -445,15 +516,13 @@ export async function completeSessionFromLog(
   let output = "";
   let parseError: unknown;
   try {
-    output = await readFile(
-      session.logPath ?? sessionLogPath(session.handle),
-      "utf8",
-    );
+    output = await readTurnLog(session);
     const parsed = parseOutput(output);
     session.sessionId = parsed.sessionId || session.sessionId;
     session.result = parsed.result;
     session.lastResult = parsed.result;
     session.usage = addUsage(session.usage, parsed.usage);
+    finishSessionTurn(session, parsed.usage);
     session.status = parsed.result
       ? SESSION_STATUS.done
       : SESSION_STATUS.failed;

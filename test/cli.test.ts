@@ -17,6 +17,7 @@ import { DEFAULT_CONFIG, saveConfig, type Config } from "../src/config.ts";
 import { startDashboard } from "../src/dashboard.ts";
 import {
   createSession,
+  completeSessionFromLog,
   listSessions,
   loadSession,
   processStartTime,
@@ -32,6 +33,7 @@ import type { DoctorResult } from "../src/doctor.ts";
 import type { RouteDeps } from "../src/route.ts";
 import { runForeground } from "../src/runner.ts";
 import { getQuota, runCodexbar } from "../src/quota.ts";
+import { getAdapter } from "../src/harness/index.ts";
 
 const OWNER = "cli-test-owner";
 const foregroundChildren = new Set<Session>();
@@ -936,7 +938,11 @@ test.each(["routed", "pinned", "fallback"])(
       type: "turn.completed",
       session_id: "claude-session",
       result: "follow up",
-      usage: { input_tokens: 10, cached_input_tokens: 6, output_tokens: 2 },
+      usage: {
+        input_tokens: kind === "fallback" ? 10 : 17,
+        cached_input_tokens: 6,
+        output_tokens: kind === "fallback" ? 2 : 11,
+      },
     });
     const sent = await cli(["send", session.handle, "follow up"]);
     expect(sent.exitCode).toBe(0);
@@ -958,6 +964,210 @@ test.each(["routed", "pinned", "fallback"])(
     expect(completed.usage?.inputTokens).toBe(firstInputTokens + 4);
     expect(completed.turns?.[0].usage?.inputTokens).toBe(firstInputTokens);
     expect(runnerArguments).toHaveLength(2);
+  },
+);
+
+// Captured from real spawn/resume runs: Codex totals are cumulative; Claude's are not.
+const resumeUsageCases = [
+  {
+    harness: "codex",
+    model: "codex:terra",
+    events: [
+      {
+        type: "turn.completed",
+        usage: {
+          input_tokens: 23967,
+          cached_input_tokens: 7168,
+          cache_write_input_tokens: 0,
+          output_tokens: 5,
+          reasoning_output_tokens: 0,
+        },
+      },
+      {
+        type: "turn.completed",
+        usage: {
+          input_tokens: 54594,
+          cached_input_tokens: 15232,
+          cache_write_input_tokens: 0,
+          output_tokens: 10,
+          reasoning_output_tokens: 0,
+        },
+      },
+    ],
+    first: {
+      inputTokens: 16799,
+      cachedInputTokens: 7168,
+      cacheWriteTokens: 0,
+      outputTokens: 5,
+      costUsd: null,
+    },
+    resumed: {
+      inputTokens: 22563,
+      cachedInputTokens: 8064,
+      cacheWriteTokens: 0,
+      outputTokens: 5,
+      costUsd: null,
+    },
+    total: {
+      inputTokens: 39362,
+      cachedInputTokens: 15232,
+      cacheWriteTokens: 0,
+      outputTokens: 10,
+      costUsd: null,
+    },
+  },
+  {
+    harness: "claude",
+    model: "claude:opus",
+    events: [
+      {
+        type: "result",
+        usage: {
+          input_tokens: 2,
+          cache_read_input_tokens: 23618,
+          cache_creation_input_tokens: 22829,
+          output_tokens: 4,
+        },
+        total_cost_usd: 0.00494978,
+      },
+      {
+        type: "result",
+        usage: {
+          input_tokens: 2,
+          cache_read_input_tokens: 31810,
+          cache_creation_input_tokens: 20616,
+          output_tokens: 4,
+        },
+        total_cost_usd: 0.00939328,
+      },
+    ],
+    first: {
+      inputTokens: 2,
+      cachedInputTokens: 23618,
+      cacheWriteTokens: 22829,
+      outputTokens: 4,
+      costUsd: 0.00494978,
+    },
+    resumed: {
+      inputTokens: 2,
+      cachedInputTokens: 31810,
+      cacheWriteTokens: 20616,
+      outputTokens: 4,
+      costUsd: 0.00939328,
+    },
+    total: {
+      inputTokens: 4,
+      cachedInputTokens: 55428,
+      cacheWriteTokens: 43445,
+      outputTokens: 8,
+      costUsd: 0.00494978 + 0.00939328,
+    },
+  },
+];
+
+test.each(resumeUsageCases)(
+  "accounts for real $harness resume usage in results, logs, and events",
+  async (fixture) => {
+    const outputs = fixture.events.map((event) =>
+      [
+        JSON.stringify({ type: "thread.started", thread_id: "thread" }),
+        JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", text: "OK" },
+        }),
+        JSON.stringify({ ...event, session_id: "thread", result: "OK" }),
+        "",
+      ].join("\n"),
+    );
+    runnerOutput = outputs[0];
+    const spawned = await cli([
+      "spawn",
+      "Reply with OK",
+      "--model",
+      fixture.model,
+      "--detach",
+    ]);
+    await cli(["wait", spawned.json.handle]);
+    const session = await loadSession(spawned.json.handle);
+    expect(session.usage).toEqual(fixture.first);
+    const sent = await cli(
+      ["send", session.handle, "Reply with OK again", "--events"],
+      {
+        runForeground: async (_argv, _cwd, _env, _session, _exit, onLine) => {
+          await writeFile(sessionLogPath(session.handle), outputs.join(""));
+          for (const line of outputs[1].split("\n")) onLine?.(line);
+          return outputs[1];
+        },
+      },
+    );
+    expect(sent.exitCode).toBe(0);
+    const completed = await loadSession(session.handle);
+    expect(completed.turnLogOffset).toBe(Buffer.byteLength(outputs[0]));
+    expect(completed.turns?.map((turn) => turn.usage)).toEqual([
+      fixture.first,
+      fixture.resumed,
+    ]);
+    expect(completed.usage).toEqual(fixture.total);
+    const events = sent.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events.find((event) => event.type === "usage")).toMatchObject(
+      fixture.resumed,
+    );
+    expect(events.find((event) => event.type === "result").usage).toEqual(
+      fixture.resumed,
+    );
+    const replay = await cli(["logs", session.handle, "--events"]);
+    const replayEvents = replay.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(
+      replayEvents.filter((event) => event.type === "usage"),
+    ).toMatchObject([fixture.first, fixture.resumed]);
+    expect(replayEvents.at(-1).usage).toEqual(fixture.resumed);
+    const tailed = await cli([
+      "logs",
+      session.handle,
+      "--events",
+      "--tail",
+      "1",
+    ]);
+    const tailEvents = tailed.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(tailEvents.find((event) => event.type === "usage")).toMatchObject(
+      fixture.resumed,
+    );
+
+    for (const status of [SESSION_STATUS.running, SESSION_STATUS.failed]) {
+      const recovering = structuredClone(completed);
+      recovering.status = status;
+      recovering.usage = fixture.first;
+      const turn = recovering.turns?.at(-1);
+      if (!turn) throw new Error("missing resumed turn");
+      turn.endedAt = null;
+      turn.usage = null;
+      if (status === SESSION_STATUS.running) {
+        await completeSessionFromLog(
+          recovering,
+          getAdapter(recovering.harness).parseSpawnOutput,
+        );
+        await completeSessionFromLog(
+          recovering,
+          getAdapter(recovering.harness).parseSpawnOutput,
+        );
+      } else {
+        await saveSession(recovering);
+        await saveSession(recovering);
+      }
+      expect(
+        (await loadSession(recovering.handle)).turns?.at(-1)?.usage,
+      ).toEqual(fixture.resumed);
+      expect(recovering.usage).toEqual(fixture.total);
+    }
   },
 );
 
@@ -1085,12 +1295,58 @@ test("quota and update return JSON with success and refusal codes", async () => 
     fetch: async (url) => {
       if (url.endsWith(".sha256")) return new Response(checksum);
       if (url.endsWith("/asset")) return new Response(binary);
-      throw new Error(`Unexpected fetch: ${url}`);
+      return new Response(
+        JSON.stringify({
+          tag_name: `v${RELEASE_VERSION}`,
+          assets: [
+            {
+              name: RELEASE_ASSET,
+              browser_download_url: "https://example.invalid/asset",
+            },
+          ],
+        }),
+      );
     },
   });
   expectJson(updated, { updated: true, latest: RELEASE_VERSION });
   expect(await readFile(executablePath, "utf8")).toBe(binary);
 });
+
+test.each([{ args: ["update"] }, { args: ["update", "--check"] }])(
+  "explicit $args refreshes a cached release",
+  async ({ args }) => {
+    const cachePath = join(directory, "state", "update.json");
+    await mkdir(join(directory, "state"), { recursive: true });
+    await writeFile(
+      cachePath,
+      JSON.stringify({
+        latestVersion: "0.8.16",
+        isNewer: false,
+        assetUrl: "old",
+        checksumUrl: "old.sha256",
+      }),
+    );
+    let requests = 0;
+    const checked = await cli([...args], {
+      fetch: async () => {
+        requests++;
+        return new Response(
+          JSON.stringify({
+            tag_name: "v0.8.17",
+            assets: [{ name: RELEASE_ASSET, browser_download_url: "new" }],
+          }),
+        );
+      },
+    });
+    expectJson(checked, { latest: "0.8.17", updated: false });
+    expect(requests).toBe(1);
+    expect(JSON.parse(await readFile(cachePath, "utf8"))).toMatchObject({
+      latestVersion: "0.8.17",
+      isNewer: false,
+      assetUrl: "new",
+    });
+  },
+);
 
 test("spawn prints update and model notices when checks are enabled", async () => {
   config.updates = { check: true };

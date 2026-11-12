@@ -7,7 +7,17 @@ import * as codex from "../src/harness/codex.ts";
 import { codexMcpOverrides } from "../src/harness/mcp.ts";
 import * as pi from "../src/harness/pi.ts";
 import type { HarnessOptions } from "../src/harness/types.ts";
-import { parseJsonLines, usageFrom } from "../src/harness/types.ts";
+import { parseJsonLines, turnUsage, usageFrom } from "../src/harness/types.ts";
+
+// prettier-ignore
+test("turnUsage subtracts Codex thread totals, never goes negative and leaves Claude untouched", () => {
+  const reported = { inputTokens: 5707, outputTokens: 10, cachedInputTokens: 23040, cacheWriteTokens: null, costUsd: null };
+  const previous = { inputTokens: 2846, outputTokens: 5, cachedInputTokens: 11520, cacheWriteTokens: null, costUsd: null };
+  const legacyOvercounted = { ...previous, inputTokens: 8553, cachedInputTokens: 34560 };
+  expect(turnUsage(reported, { harness: "codex", usage: previous })).toMatchObject({ inputTokens: 2861, outputTokens: 5, cachedInputTokens: 11520 });
+  expect(turnUsage(reported, { harness: "codex", usage: legacyOvercounted })).toMatchObject({ inputTokens: 0, cachedInputTokens: 0 });
+  expect(turnUsage(reported, { harness: "claude", usage: previous })).toBe(reported);
+});
 
 // prettier-ignore
 test("normalizes OpenAI input to uncached tokens while preserving Anthropic and pi usage", () => {

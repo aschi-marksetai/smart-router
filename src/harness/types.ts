@@ -32,6 +32,27 @@ export type ParsedOutput = {
   usage: Usage | null;
 };
 
+export function turnUsage(
+  usage: Usage | null,
+  { harness, usage: previous }: { harness: string; usage?: Usage | null },
+): Usage | null {
+  if (harness !== "codex" || !usage || !previous) return usage;
+  // Codex turn.completed reports thread totals, including earlier invocations.
+  // Clamped because sessions saved before 0.8.18 summed those totals, so their baseline can exceed the thread's.
+  const delta = (current: number | null, prior: number | null) =>
+    current === null ? null : Math.max(0, current - (prior ?? 0));
+  return {
+    inputTokens: Math.max(0, usage.inputTokens - previous.inputTokens),
+    outputTokens: Math.max(0, usage.outputTokens - previous.outputTokens),
+    cachedInputTokens: delta(
+      usage.cachedInputTokens,
+      previous.cachedInputTokens,
+    ),
+    cacheWriteTokens: delta(usage.cacheWriteTokens, previous.cacheWriteTokens),
+    costUsd: delta(usage.costUsd, previous.costUsd),
+  };
+}
+
 export function parseJsonLines(output: string): unknown[] {
   const values: unknown[] = [];
   for (const line of output.split("\n")) {

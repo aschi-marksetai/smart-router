@@ -18,6 +18,7 @@ import {
   parseJsonLines,
   record,
   usageFrom,
+  turnUsage,
   type ParsedOutput,
   type Usage,
 } from "./harness/types.ts";
@@ -196,6 +197,8 @@ export async function saveSession(session: Session): Promise<void> {
             : null,
         ) ?? usage;
     }
+    usage = turnUsage(usage, session);
+    session.usage = addUsage(session.usage, usage);
     finishSessionTurn(session, usage);
   }
   const destinationPath = sessionPath(session.handle);
@@ -513,11 +516,13 @@ export async function completeSessionFromLog(
   parseOutput: (output: string) => ParsedOutput,
   delegateExited = false,
 ): Promise<Session> {
+  if (session.turns?.at(-1)?.endedAt) return session;
   let output = "";
   let parseError: unknown;
   try {
     output = await readTurnLog(session);
     const parsed = parseOutput(output);
+    parsed.usage = turnUsage(parsed.usage, session);
     session.sessionId = parsed.sessionId || session.sessionId;
     session.result = parsed.result;
     session.lastResult = parsed.result;

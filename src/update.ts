@@ -66,8 +66,20 @@ export async function readUpdateNotice(
       await fs.readFile(cachePath, "utf8"),
     ) as UpdateResult;
     const cacheAge = now() - (await fs.stat(cachePath)).mtimeMs;
-    if (cacheAge < UPDATE_CACHE_INTERVAL_MS) return cached;
+    if (cacheAge < UPDATE_CACHE_INTERVAL_MS)
+      return {
+        ...cached,
+        isNewer: isNewerVersion(currentVersion, cached.latestVersion),
+      };
   } catch {}
+  return refreshUpdateNotice(currentVersion, fetch);
+}
+
+export async function refreshUpdateNotice(
+  currentVersion: string,
+  fetch: FetchLike = globalThis.fetch,
+): Promise<UpdateResult | null> {
+  const cachePath = join(stateDir(), UPDATE_CACHE_FILE_NAME);
   try {
     const result = await checkForUpdate({ currentVersion, fetch });
     await fs.mkdir(dirname(cachePath), { recursive: true });

@@ -3,6 +3,7 @@ import {
   record,
   parseJsonLines,
   usageFrom,
+  turnUsage,
   type Usage,
 } from "./harness/types.ts";
 export const EVENT_TYPE = {
@@ -38,7 +39,7 @@ type EventPayload = {
 }[keyof Payloads];
 export type EventState = Pick<
   Session,
-  "handle" | "harness" | "model" | "effort"
+  "handle" | "harness" | "model" | "effort" | "usage"
 > & {
   ts: string;
   text?: string;
@@ -181,10 +182,12 @@ export function translateEvents(
     return events;
   }
   const terminal = event.type === "result" || event.type === "turn.completed";
-  const usage = usageFrom(
+  const reportedUsage = usageFrom(
     event.usage ?? message?.usage,
     typeof event.total_cost_usd === "number" ? event.total_cost_usd : null,
   );
+  const usage = turnUsage(reportedUsage, state);
+  if (terminal && reportedUsage) state.usage = reportedUsage;
   if (usage && (terminal || state.harness === "pi")) {
     const totalInputTokens =
       usage.inputTokens +

@@ -28,13 +28,19 @@ import * as codex from "./harness/codex.ts";
 import { getAdapter } from "./harness/index.ts";
 import {
   record,
+  turnUsage,
   type HarnessOptions,
   type ParsedOutput,
 } from "./harness/types.ts";
 import { runInit } from "./init.ts";
 import { getQuota } from "./quota.ts";
 import { configDir } from "./paths.ts";
-import { readUpdateNotice, updateExecutable, updateRefusal } from "./update.ts";
+import {
+  readUpdateNotice,
+  refreshUpdateNotice,
+  updateExecutable,
+  updateRefusal,
+} from "./update.ts";
 import { guardrailsFor, loadGuardrails } from "./guardrails.ts";
 import {
   CODEX_NETWORK_ACCESS_OVERRIDE,
@@ -734,7 +740,7 @@ async function updateCommand(
   options: { check?: boolean },
   deps: CliDeps,
 ): Promise<void> {
-  const result = await readUpdateNotice(version, deps.fetch, deps.now);
+  const result = await refreshUpdateNotice(version, deps.fetch);
   if (!result)
     return printResult(
       deps,
@@ -834,6 +840,7 @@ async function sendCommand(
       ),
       adapter.parseResumeOutput,
     );
+    parsed.usage = turnUsage(parsed.usage, session);
     session.status = SESSION_STATUS.done;
     session.result = parsed.result;
     session.lastResult = parsed.result;
@@ -1063,7 +1070,7 @@ function eventStream(session: Session, deps: CliDeps) {
   );
   return {
     line: stream.line,
-    finish(completed: Session, usage = completed.usage ?? null) {
+    finish(completed: Session, usage?: ParsedOutput["usage"]) {
       stream.finish(completed, usage);
       deps.exit(
         completed.status === SESSION_STATUS.done
@@ -1084,7 +1091,7 @@ async function followLog(
     options.tail === undefined
       ? undefined
       : parseNonNegativeInteger(options.tail, "--tail");
-  const stream = eventStream(session, deps);
+  const stream = eventStream({ ...session, usage: null }, deps);
   let offset = 0;
   let pending = "";
   let initial = true;
@@ -1114,6 +1121,9 @@ async function followLog(
       return;
     }
     if (output) initial = false;
+    if (options.events)
+      for (const line of lines.slice(0, lines.length - selected.length))
+        stream.line(line, false);
     for (const line of selected) {
       if (options.events) stream.line(line);
       else deps.stdout(`${line}\n`);

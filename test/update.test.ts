@@ -40,6 +40,9 @@ test("caches fresh checks and never throws", async () => {
   };
   expect((await readUpdateNotice("1.2.3", fetch))?.isNewer).toBe(true);
   expect((await readUpdateNotice("1.2.3", fetch))?.isNewer).toBe(true);
+  expect((await readUpdateNotice("1.2.4", fetch))?.isNewer).toBe(false);
+  expect((await readUpdateNotice("1.2.5", fetch))?.isNewer).toBe(false);
+  expect((await readUpdateNotice("1.2.2", fetch))?.isNewer).toBe(true);
   expect(calls).toBe(1);
   await mkdir(state, { recursive: true });
   await writeFile(join(state, "update.json"), "bad");

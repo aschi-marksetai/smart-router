@@ -62,7 +62,7 @@ export function createSessionEventStream(
   const tools = new Map<string, string>();
   const state: EventState = { ...session, ts: new Date().toISOString(), tools };
   return {
-    line(line: string) {
+    line(line: string, emitEvents = true) {
       state.ts = new Date().toISOString();
       for (const event of getAdapter(session.harness).translateEvents(
         line,
@@ -73,14 +73,20 @@ export function createSessionEventStream(
         if (event.type === EVENT_TYPE.message) state.text = event.text;
         if (event.type === EVENT_TYPE.toolStarted)
           tools.set(event.toolId, event.name);
-        emit(event);
+        if (emitEvents) emit(event);
       }
     },
-    finish(completed: Session, usage = completed.usage ?? null) {
+    finish(completed: Session, usage?: Session["usage"]) {
       state.ts = new Date().toISOString();
+      const lastTurn = completed.turns?.at(-1);
+      const resultUsage = lastTurn ? lastTurn.usage : (completed.usage ?? null);
       const payload =
         completed.status === SESSION_STATUS.done
-          ? { type: EVENT_TYPE.result, text: completed.result ?? "", usage }
+          ? {
+              type: EVENT_TYPE.result,
+              text: completed.result ?? "",
+              usage: usage === undefined ? resultUsage : usage,
+            }
           : {
               type: EVENT_TYPE.error,
               message: completed.error ?? completed.status,
@@ -95,8 +101,9 @@ export async function sessionEvents(
   session: Session,
 ): Promise<NormalizedEvent[]> {
   const events: NormalizedEvent[] = [];
-  const stream = createSessionEventStream(session, (event) =>
-    events.push(event),
+  const stream = createSessionEventStream(
+    { ...session, usage: null },
+    (event) => events.push(event),
   );
   const output = await readFile(
     session.logPath ?? sessionLogPath(session.handle),

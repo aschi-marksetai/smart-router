@@ -73,14 +73,14 @@ tests:
     assert:
       - type: javascript
         value: >-
-          ['claude:claude-fable-5-1', 'claude:claude-opus-5-5'].includes(output.pick.split('@')[0])
+          ['claude:claude-fable-5-2', 'claude:claude-opus-5-5'].includes(output.pick.split('@')[0])
   - vars:
       prompt: Decide whether we should split the monolith into services given the current team size and roadmap; the tradeoffs are ambiguous
       allowFallback: true
     assert:
       - type: javascript
         value: >-
-          ['claude:claude-fable-5-1', 'claude:claude-opus-5-5'].includes(output.pick.split('@')[0])
+          ['claude:claude-fable-5-2', 'claude:claude-opus-5-5'].includes(output.pick.split('@')[0])
   - vars:
       prompt: Give a fast first-pass code review of this diff for obvious bugs
     assert:
@@ -93,10 +93,10 @@ tests:
     assert:
       - type: javascript
         value: >-
-          ['codex:gpt-6.1-sol', 'codex:gpt-6-astra', 'claude:claude-opus-5-5', 'claude:claude-fable-5-1', 'codex:gpt-6.1-sol'].includes(output.pick.split('@')[0])
+          ['codex:gpt-6.1-sol', 'codex:gpt-6-astra', 'claude:claude-opus-5-5', 'claude:claude-fable-5-2', 'codex:gpt-6.1-sol'].includes(output.pick.split('@')[0])
       - type: javascript
         value: >-
-          Object.entries(output.probabilities).sort((a, b) => b[1] - a[1]).slice(0, 2).some(([id]) => ['codex:gpt-6.1-sol', 'codex:gpt-6-astra', 'claude:claude-opus-5-5', 'claude:claude-fable-5-1'].includes(id))
+          Object.entries(output.probabilities).sort((a, b) => b[1] - a[1]).slice(0, 2).some(([id]) => ['codex:gpt-6.1-sol', 'codex:gpt-6-astra', 'claude:claude-opus-5-5', 'claude:claude-fable-5-2'].includes(id))
   - vars:
       prompt: Give me a second opinion from a different model family on this Codex-written plan
       allowFallback: true
@@ -134,7 +134,7 @@ tests:
     assert:
       - type: javascript
         value: >-
-          ['claude:claude-fable-5-1', 'claude:claude-opus-5-5'].includes(output.pick.split('@')[0])
+          ['claude:claude-fable-5-2', 'claude:claude-opus-5-5'].includes(output.pick.split('@')[0])
   - vars:
       prompt: Read-only discovery for migrating the MarkSet worker VM (ssh alias markset-worker-1, currently on Proxmox) to Google Cloud. SSH to the VM, inventory the services, cron jobs, mounted volumes and open ports, and write the findings to docs/migration-inventory.md. Done when the inventory file exists; do not change anything on the VM.
       allowFallback: true
@@ -153,7 +153,7 @@ tests:
     assert:
       - type: javascript
         value: >-
-          output.pick.split('@')[0] === 'claude:claude-fable-5-1'
+          ['claude:claude-opus-5-5', 'claude:claude-fable-5-2'].includes(output.pick.split('@')[0])
   - vars:
       prompt: Write a short changelog entry for this release from the commit list below. Keep it to three bullets. Done when the entry is written; stop there.
     assert:

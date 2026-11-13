@@ -18,16 +18,20 @@ import {
 import * as codex from "../src/harness/codex.ts";
 
 const directories: string[] = [];
+const originalCodexHome = process.env.CODEX_HOME;
 afterEach(() => {
   for (const path of directories.splice(0))
     rmSync(path, { recursive: true, force: true });
   delete process.env.SMART_ROUTER_STATE_DIR;
+  if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+  else process.env.CODEX_HOME = originalCodexHome;
 });
 
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "sr-codex-confined-"));
   directories.push(directory);
   process.env.SMART_ROUTER_STATE_DIR = directory;
+  process.env.CODEX_HOME = directory;
   const binary = join(directory, "codex");
   const settings = join(directory, "settings.json");
   const count = join(directory, "calls");
@@ -221,6 +225,22 @@ test("Codex confines allowed MCP names and refuses unsupported deny patterns", (
 
 test("confined Codex catalogs cannot restore model-native code mode, search or agents", () => {
   const { binary } = fixture();
+  writeFileSync(
+    join(process.env.CODEX_HOME!, "models_cache.json"),
+    JSON.stringify({
+      models: [
+        { slug: "other", context_window: 1 },
+        {
+          slug: "test",
+          context_window: 272000,
+          tool_mode: "code",
+          shell_type: "local",
+          supports_search_tool: true,
+          experimental_supported_tools: ["web_search"],
+        },
+      ],
+    }),
+  );
   const command = codex.buildSpawn("task", {
     cwd: "/tmp",
     model: "test",
@@ -237,6 +257,7 @@ test("confined Codex catalogs cannot restore model-native code mode, search or a
   expect(catalog.models).toMatchObject([
     {
       slug: "test",
+      context_window: 272000,
       tool_mode: "direct",
       multi_agent_version: "disabled",
       shell_type: "disabled",

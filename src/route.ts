@@ -43,6 +43,11 @@ export type RouteOptions = {
   hint?: string;
   confidential?: boolean;
   dryRun?: boolean;
+  confined?: boolean;
+  claudeOnly?: boolean;
+  confinedCodexAvailable?: boolean;
+  confinedCodexFailure?: string;
+  appendSystemPromptFile?: string;
 };
 export type RouteCandidate = {
   id: string;
@@ -368,6 +373,16 @@ export async function route(
       : new Set<string>();
   let zdrUnavailable = false;
   const candidates = configuredCandidates.filter((candidate) => {
+    if (!config.harnesses[candidate.harness]?.enabled) return false;
+    if (options.claudeOnly && candidate.harness !== "claude") return false;
+    if (
+      options.confined &&
+      candidate.harness !== "claude" &&
+      !(candidate.harness === "codex" && options.confinedCodexAvailable)
+    )
+      return false;
+    if (options.appendSystemPromptFile && candidate.harness === "pi")
+      return false;
     if (
       confidential &&
       (config.rules.confidentialExcludedModels ?? []).some((pattern) =>
@@ -405,7 +420,12 @@ export async function route(
     candidates,
   };
   if (options.dryRun) return state;
-  if (candidates.length === 0) throw new Error("No route candidates available");
+  if (candidates.length === 0)
+    throw new Error(
+      options.confined
+        ? "confined mode needs Claude or verified Codex; none is available"
+        : "No route candidates available",
+    );
   const eligibleDefault = candidates.some(
     ({ id }) => id === config.defaultModelId,
   );
@@ -436,6 +456,7 @@ export async function route(
       reason: [
         config.quota.enabled ? "" : "quota disabled",
         fallbackReason,
+        options.confinedCodexFailure,
         error instanceof Error ? error.message : String(error),
       ]
         .filter(Boolean)
@@ -475,6 +496,7 @@ export async function route(
     reasons.push(
       `Jev picked ${selectedModel.choice}, which is not a candidate`,
     );
+  if (options.confinedCodexFailure) reasons.push(options.confinedCodexFailure);
   const reason = reasons.join("; ");
   return {
     pick: fallbackRequired

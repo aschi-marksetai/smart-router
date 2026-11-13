@@ -4,13 +4,19 @@ import { rm } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { createInterface } from "node:readline";
 import {
+  confinedClaudeEnvOverrides,
   isReplayedUserMessage,
   isResultEvent,
   streamInterruptRequest,
   streamUserMessage,
 } from "./harness/claude.ts";
 import { parseJsonLines, record } from "./harness/types.ts";
-import { loadSession, sessionLogPath, sessionSocketPath } from "./sessions.ts";
+import {
+  loadSession,
+  sessionLogPath,
+  sessionMcpPath,
+  sessionSocketPath,
+} from "./sessions.ts";
 
 export const SUPERVISE_COMMAND = "__supervise";
 const OPERANDS_SEPARATOR = "--";
@@ -110,6 +116,9 @@ export async function superviseSession(
   // Finish socket setup before spawning so no await can lose the child's events.
   const claude = spawn(claudeArgv[0], claudeArgv.slice(1), {
     cwd: session.cwd,
+    env: session.confined
+      ? { ...process.env, ...confinedClaudeEnvOverrides() }
+      : process.env,
     stdio: ["pipe", "pipe", "inherit"],
   });
   claude.stdin.on("error", markStdinClosed);
@@ -136,6 +145,7 @@ export async function superviseSession(
     process.removeListener(STOP_SIGNAL, forwardStop);
     server.close();
     await rm(socketPath, { force: true });
+    if (session.confined) await rm(sessionMcpPath(handle), { force: true });
     await new Promise((resolve) => log.end(resolve));
   }
 }

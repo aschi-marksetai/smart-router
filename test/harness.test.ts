@@ -39,7 +39,9 @@ const ACCEPTED_CLAUDE_RESUME_FLAGS = new Set(
 );
 
 function flagsIn(argv: string[]): string[] {
-  return argv.filter((argument) => argument.startsWith("-"));
+  return argv.filter(
+    (argument) => argument !== "--" && argument.startsWith("-"),
+  );
 }
 
 // prettier-ignore
@@ -107,7 +109,6 @@ test("builds Claude commands and parses result usage", () => {
   expect(spawned.argv).toEqual([
     "claude",
     "-p",
-    "write code",
     "--output-format",
     "json",
     "--model",
@@ -125,6 +126,8 @@ test("builds Claude commands and parses result usage", () => {
     "Read,Write",
     "--json-schema",
     '{"type":"object"}',
+    "--",
+    "write code",
   ]);
   expect(spawned.argv).toContain(
     "You are a delegate spawned by smart-router. Do the assigned task yourself with your own tools, including browser tools when the task needs them. Do not delegate through smart-router. Report the result when the stopping point is reached.",
@@ -143,7 +146,6 @@ test("builds Claude commands and parses result usage", () => {
     "-p",
     "--resume",
     "session",
-    "continue",
     "--output-format",
     "json",
     "--permission-mode",
@@ -152,6 +154,8 @@ test("builds Claude commands and parses result usage", () => {
     "Read,Write",
     "--json-schema",
     '{"type":"object"}',
+    "--",
+    "continue",
   ]);
 });
 
@@ -178,7 +182,9 @@ test("uses an isolated Chrome DevTools MCP config for browser commands", async (
       claude.buildSpawn("task", singleFile),
       claude.buildResume("session", "again", singleFile),
     ]) {
-      expect(argv.slice(argv.indexOf("--mcp-config"))).toEqual([
+      expect(
+        argv.slice(argv.indexOf("--mcp-config"), argv.indexOf("--")),
+      ).toEqual([
         "--mcp-config",
         singleFile.mcpConfig[0],
         "--strict-mcp-config",
@@ -244,6 +250,7 @@ test("builds Codex commands and parses result usage", async () => {
     "--skip-git-repo-check",
     "--output-schema",
     "/tmp/schema.json",
+    "--",
     "write code",
   ]);
   const output = [
@@ -272,6 +279,7 @@ test("builds Codex commands and parses result usage", async () => {
     "--skip-git-repo-check",
     "--output-schema",
     "/tmp/schema.json",
+    "--",
     "continue",
   ]);
   expect(() =>
@@ -405,4 +413,105 @@ test("treats Claude error result events as failures", () => {
       '{"type":"result","subtype":"error","is_error":true,"result":"failed"}',
     ),
   ).toThrow("failed");
+});
+
+test("confined Claude spawn and resume expose only the OpenClaw allowlist", () => {
+  const options = {
+    cwd: "/tmp",
+    model: "haiku",
+    confined: true,
+    browser: true,
+    claudePermissionMode: "bypassPermissions",
+    mcpConfig: ["/private/filtered.json"],
+    allowedTools: "Bash(git commit:*),mcp__openclaw__read,mcp__other__read",
+    disallowedTools: ["mcp__openclaw__pay", "WebSearch"],
+    appendSystemPromptFile: "/private/system.txt",
+  };
+  for (const { argv } of [
+    claude.buildSpawn("task", options),
+    claude.buildResume("session", "again", options),
+  ]) {
+    expect(
+      argv.slice(argv.indexOf("--tools"), argv.indexOf("--tools") + 2),
+    ).toEqual(["--tools", ""]);
+    expect(argv[argv.indexOf("--permission-mode") + 1]).toBe("default");
+    expect(argv).toContain("--strict-mcp-config");
+    expect(argv[argv.indexOf("--mcp-config") + 1]).toBe(
+      "/private/filtered.json",
+    );
+    expect(argv[argv.indexOf("--allowedTools") + 1]).toBe(
+      "mcp__openclaw__read",
+    );
+    expect(argv[argv.indexOf("--disallowedTools") + 1]).toBe(
+      "mcp__openclaw__pay,WebSearch",
+    );
+    expect(argv[argv.indexOf("--append-system-prompt-file") + 1]).toBe(
+      "/private/system.txt",
+    );
+    expect(argv).not.toContain("--chrome");
+    expect(argv).not.toContain("--add-dir");
+  }
+  const defaults = { cwd: "/tmp", model: "haiku", confined: true };
+  expect(claude.buildSpawn("task", defaults).argv).toContain(
+    "mcp__openclaw__*",
+  );
+  expect(
+    claude.buildResume("session", "again", {
+      ...defaults,
+      allowedTools: "Read",
+    }).argv,
+  ).not.toContain("mcp__openclaw__*");
+});
+
+test("confined Claude disables browser injection, settings and slash commands on spawn and resume", () => {
+  const names = [
+    "CLAUDE_CODE_ENABLE_CFC",
+    "CLAUDE_CODE_ENABLE_COMPUTER_USE",
+    "CLAUDE_CODE_ENABLE_BROWSER",
+  ];
+  const previous = names.map((name) => process.env[name]);
+  for (const name of names) process.env[name] = "1";
+  try {
+    const options = {
+      cwd: "/tmp",
+      model: "haiku",
+      confined: true,
+      browser: true,
+    };
+    for (const command of [
+      claude.buildSpawn("task", options),
+      claude.buildResume("session", "again", options),
+    ]) {
+      expect(command.argv).toContain("--no-chrome");
+      expect(
+        command.argv.slice(
+          command.argv.indexOf("--setting-sources"),
+          command.argv.indexOf("--setting-sources") + 2,
+        ),
+      ).toEqual(["--setting-sources", ""]);
+      expect(command.argv).toContain("--disable-slash-commands");
+      for (const name of names) {
+        expect(Object.hasOwn(command.env ?? {}, name)).toBe(true);
+        expect(command.env?.[name]).toBeUndefined();
+      }
+    }
+  } finally {
+    names.forEach((name, index) => {
+      if (previous[index] === undefined) delete process.env[name];
+      else process.env[name] = previous[index];
+    });
+  }
+});
+
+test("harnesses delimit option-looking prompts from child flags", () => {
+  const message = "--version";
+  const options = { cwd: "/tmp", model: "test" };
+  for (const harness of [claude, codex]) {
+    for (const command of [
+      harness.buildSpawn(message, options),
+      harness.buildResume("session", message, options),
+    ]) {
+      expect(command.argv.slice(-2)).toEqual(["--", message]);
+    }
+  }
 });

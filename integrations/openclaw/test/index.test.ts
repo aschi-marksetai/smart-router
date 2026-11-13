@@ -91,15 +91,17 @@ test("entry registers backend, MCP bridge, workspace args and bound model", asyn
     modelProvider: "smart-router",
     bundleMcp: true,
     bundleMcpMode: "claude-config-file",
-    nativeToolMode: "always-on",
+    nativeToolMode: "none",
     config: {
       command: "smart-router",
-      args: ["spawn", "{prompt}", "--events"],
-      resumeArgs: ["send", "{sessionId}", "{prompt}", "--events"],
+      args: ["spawn", "{prompt}", "--events", "--confined"],
+      resumeArgs: ["send", "{sessionId}", "{prompt}", "--events", "--confined"],
       output: "jsonl",
       resumeOutput: "jsonl",
       sessionMode: "existing",
       sessionIdFields: ["handle"],
+      systemPromptWhen: "always",
+      systemPromptFileArg: "--append-system-prompt-file",
     },
   });
   const context = {
@@ -171,9 +173,9 @@ test("configured binary and flags pass through", () => {
   });
   expect(configured.config.command).toBe("/opt/smart-router");
   expect(configured.config.args?.join(" ")).toBe(
-    "spawn {prompt} --events --cwd /tmp/project --hint browser --confidential --result-limit 1000",
+    "spawn {prompt} --events --confined --cwd /tmp/project --hint browser --confidential --result-limit 1000",
   );
   expect(configured.config.resumeArgs?.join(" ")).toBe(
-    "send {sessionId} {prompt} --events --result-limit 1000",
+    "send {sessionId} {prompt} --events --confined --result-limit 1000",
   );
 });

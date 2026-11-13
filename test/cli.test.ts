@@ -1,11 +1,13 @@
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import {
   chmod,
   mkdir,
   mkdtemp,
   readFile,
+  stat,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -141,6 +143,7 @@ async function cli(
     fetch: async () => new Response(JSON.stringify({ tag_name: `v${RELEASE_VERSION}`, assets: [
       { name: RELEASE_ASSET, browser_download_url: "https://example.invalid/asset" },
     ] })),
+    verifyConfinedCodex: () => { throw new Error("test binary not verified"); },
     now: Date.now, execPath: "/opt/homebrew/Cellar/smart-router/bin/smart-router", routeDeps,
     doctor: async () => detection,
     getQuota: (config) => getQuota(
@@ -1744,3 +1747,575 @@ test.each(["invalid", "65536"])(
     expect((await cli(["dashboard", "--port", port])).exitCode).toBe(1);
   },
 );
+
+test("confined MCP filtering is private, turn-scoped, and persists with deny union on send", async () => {
+  const first = join(directory, "first.json");
+  const second = join(directory, "second.json");
+  await writeFile(
+    first,
+    JSON.stringify({ mcpServers: { other: { command: "other" } } }),
+  );
+  await writeFile(
+    second,
+    JSON.stringify({
+      mcpServers: {
+        openclaw: { type: "http", url: "http://127.0.0.1:9999/mcp" },
+        other: { command: "other" },
+      },
+    }),
+  );
+  const filtered: string[] = [];
+  const inspect: Partial<CliDeps> = {
+    runForeground: async (argv) => {
+      runnerArguments.push(argv);
+      const path = argv[argv.indexOf("--mcp-config") + 1]!;
+      filtered.push(path);
+      expect(path.startsWith(join(directory, "state", "sessions"))).toBe(true);
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+      expect(await listSessions()).toHaveLength(1);
+      expect(
+        Object.keys(JSON.parse(await readFile(path, "utf8")).mcpServers),
+      ).toEqual(["openclaw"]);
+      return CLAUDE_OUTPUT;
+    },
+  };
+  const spawned = await cli(
+    [
+      "spawn",
+      "task",
+      "--confined",
+      "--model",
+      "claude:opus",
+      "--browser",
+      "--mcp-config",
+      first,
+      "--mcp-config",
+      second,
+      "--disallowedTools",
+      "WebSearch,mcp__openclaw__pay",
+      "--disallowedTools",
+      "WebSearch",
+    ],
+    inspect,
+  );
+  expect(spawned.exitCode).toBe(0);
+  const handle = spawned.json.handle;
+  expect(await loadSession(handle)).toMatchObject({
+    confined: true,
+    disallowedTools: ["WebSearch", "mcp__openclaw__pay"],
+  });
+  expect(
+    (
+      await cli(
+        [
+          "send",
+          handle,
+          "again",
+          "--disallowedTools",
+          "mcp__openclaw__send,WebSearch",
+        ],
+        inspect,
+      )
+    ).exitCode,
+  ).toBe(0);
+  expect((await cli(["send", handle, "again"], inspect)).exitCode).toBe(0);
+  expect(await loadSession(handle)).toMatchObject({
+    confined: true,
+    disallowedTools: ["WebSearch", "mcp__openclaw__pay", "mcp__openclaw__send"],
+  });
+  expect(runnerArguments.at(-1)).toContain(
+    "WebSearch,mcp__openclaw__pay,mcp__openclaw__send",
+  );
+  for (const argv of runnerArguments) {
+    expect(argv[argv.indexOf("--tools") + 1]).toBe("");
+    expect(argv).not.toContain("--chrome");
+  }
+  for (const path of filtered)
+    expect(await Bun.file(path).exists()).toBe(false);
+});
+
+test("tool restrictions filter routing before Jev and reject pinned Codex", async () => {
+  for (const flags of [
+    ["--confined"],
+    ["--disallowedTools", "WebSearch"],
+    ["--tools", "Read"],
+  ]) {
+    const result = await cli(["spawn", "task", ...flags], {
+      routeDeps: (configuration) => ({
+        ...routeDeps(configuration),
+        client: {
+          systemOne: async ({ state }) => {
+            expect(state.candidates.map(({ harness }) => harness)).toEqual([
+              "claude",
+            ]);
+            throw new Error("use eligible fallback");
+          },
+        },
+      }),
+    });
+    expectJson(result, { harness: "claude" });
+    expect(
+      (await cli(["spawn", "task", "--model", "codex:terra", ...flags]))
+        .exitCode,
+    ).toBe(1);
+  }
+  config.harnesses.claude!.enabled = false;
+  await saveConfig(config);
+  expectJson(
+    await cli(["spawn", "task", "--confined"]),
+    {
+      error: "confined mode needs Claude or verified Codex; none is available",
+    },
+    1,
+  );
+});
+
+test("native tools cannot widen confined sessions; comma parsing preserves patterns with spaces", async () => {
+  expectJson(
+    await cli(["spawn", "task", "--confined", "--tools", "Read"]),
+    { error: "native tools are disabled in confined mode" },
+    1,
+  );
+  const result = await cli([
+    "spawn",
+    "task",
+    "--model",
+    "claude:opus",
+    "--allowed-tools",
+    "Read",
+    "--allowedTools",
+    "Bash(git commit:*), Read",
+    "--tools",
+    "Read",
+    "--tools",
+    "Edit,Read",
+    "--disallowedTools",
+    " Bash(git push:*),WebSearch ",
+  ]);
+  expect(result.exitCode).toBe(0);
+  expect(runnerArguments[0]).toContain("Read,Bash(git commit:*)");
+  expect(runnerArguments[0]).toContain("Read,Edit");
+  expect(runnerArguments[0]).toContain("Bash(git push:*),WebSearch");
+  const confined = await cli([
+    "spawn",
+    "task",
+    "--model",
+    "claude:opus",
+    "--confined",
+    "--tools",
+    "",
+  ]);
+  expect(confined.exitCode).toBe(0);
+  expect(confined.stderr).toContain("no openclaw MCP server");
+  expectJson(
+    await cli(["send", confined.json.handle, "again", "--tools", "Bash"]),
+    { error: "native tools are disabled in confined mode" },
+    1,
+  );
+});
+
+test("system prompt files reach Claude and Codex without entering Jev state", async () => {
+  const path = join(directory, "system.txt");
+  await writeFile(path, "private system instructions");
+  const spawned = await cli([
+    "spawn",
+    "task",
+    "--model",
+    "claude:opus",
+    "--append-system-prompt-file",
+    path,
+  ]);
+  expect(spawned.exitCode).toBe(0);
+  expect(runnerArguments[0]).toContain("--append-system-prompt-file");
+  expect(
+    (
+      await cli([
+        "send",
+        spawned.json.handle,
+        "again",
+        "--append-system-prompt-file",
+        path,
+      ])
+    ).exitCode,
+  ).toBe(0);
+  expect(runnerArguments.at(-1)).toContain(path);
+  runnerOutput = CODEX_OUTPUT;
+  expect(
+    (
+      await cli([
+        "spawn",
+        "task",
+        "--model",
+        "codex:terra",
+        "--append-system-prompt-file",
+        path,
+      ])
+    ).exitCode,
+  ).toBe(0);
+  expect(runnerArguments.at(-1)).toContain(
+    `model_instructions_file=${JSON.stringify(path)}`,
+  );
+});
+
+test("verified confined Codex remains confined on send without the flag", async () => {
+  runnerOutput = CODEX_OUTPUT;
+  const verified = {
+    verifyConfinedCodex: () => [
+      "features.shell_tool=false",
+      'sandbox_mode="read-only"',
+      'approval_policy="never"',
+    ],
+  };
+  const spawned = await cli(
+    [
+      "spawn",
+      "task",
+      "--confined",
+      "--model",
+      "codex:terra",
+      "--disallowedTools",
+      "WebSearch",
+    ],
+    verified,
+  );
+  expect(spawned.exitCode).toBe(0);
+  expect(await loadSession(spawned.json.handle)).toMatchObject({
+    confined: true,
+    disallowedTools: ["WebSearch"],
+  });
+  expect(
+    (await cli(["send", spawned.json.handle, "again"], verified)).exitCode,
+  ).toBe(0);
+  for (const argv of runnerArguments) {
+    expect(argv).toContain("--ignore-user-config");
+    expect(argv).toContain('sandbox_mode="read-only"');
+    expect(argv).toContain("features.shell_tool=false");
+  }
+  runnerOutput = CLAUDE_OUTPUT;
+  const routed = await cli(["spawn", "task", "--confined"], {
+    ...verified,
+    routeDeps: (configuration) => ({
+      ...routeDeps(configuration),
+      client: {
+        systemOne: async ({ state }) => {
+          expect(state.candidates.map(({ harness }) => harness)).toEqual([
+            "claude",
+            "codex",
+          ]);
+          throw new Error("fallback");
+        },
+      },
+    }),
+  });
+  expect(routed.json.harness).toBe("claude");
+  expect((await cli(["send", spawned.json.handle, "again"])).exitCode).toBe(1);
+});
+
+test("stored denials cannot be dropped on unconfined resumes or unsupported harnesses", async () => {
+  const spawned = await cli([
+    "spawn",
+    "task",
+    "--model",
+    "claude:opus",
+    "--disallowedTools",
+    "WebSearch",
+  ]);
+  expect(spawned.exitCode).toBe(0);
+  const resumed = await cli([
+    "send",
+    spawned.json.handle,
+    "again",
+    "--disallowedTools",
+    "Bash(git push:*)",
+  ]);
+  expect(resumed.exitCode).toBe(0);
+  expect((await cli(["send", spawned.json.handle, "again"])).exitCode).toBe(0);
+  expect(runnerArguments.at(-1)).toContain("WebSearch,Bash(git push:*)");
+  const unsupported = await createSession({
+    harness: "codex",
+    model: "terra",
+    effort: "high",
+    cwd: directory,
+    prompt: "task",
+    sessionId: "thread",
+    status: SESSION_STATUS.done,
+    disallowedTools: ["WebSearch"],
+  });
+  expect((await cli(["send", unsupported.handle, "again"])).exitCode).toBe(1);
+});
+
+test("routing never receives system prompt contents", async () => {
+  const path = join(directory, "private-system.txt");
+  await writeFile(path, "private system instructions");
+  const result = await cli(
+    ["spawn", "public task", "--append-system-prompt-file", path],
+    {
+      routeDeps: (configuration) => ({
+        ...routeDeps(configuration),
+        client: {
+          systemOne: async ({ state }) => {
+            expect(JSON.stringify(state)).not.toContain(
+              "private system instructions",
+            );
+            expect(state.task).toBe("public task");
+            throw new Error("fallback");
+          },
+        },
+      }),
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(runnerArguments.at(-1)).toContain(path);
+});
+
+test("Jev can select verified Codex from the confined candidate set", async () => {
+  runnerOutput = CODEX_OUTPUT;
+  const result = await cli(["spawn", "task", "--confined"], {
+    verifyConfinedCodex: () => [
+      "features.shell_tool=false",
+      'sandbox_mode="read-only"',
+      'approval_policy="never"',
+    ],
+    routeDeps: (configuration) => {
+      const deps = routeDeps(configuration);
+      return {
+        ...deps,
+        client: {
+          systemOne: async (request) => {
+            expect(request.state.candidates.map(({ id }) => id)).toContain(
+              "codex:terra",
+            );
+            return deps.client.systemOne(request);
+          },
+        },
+      };
+    },
+  });
+  expectJson(result, {
+    harness: "codex",
+    route: {
+      pick: "codex:terra@high",
+      candidates: ["claude:opus", "codex:terra"],
+    },
+  });
+});
+
+test("Codex tripwire names the failed override, warns to upgrade, and records the route exclusion", async () => {
+  const failed = {
+    verifyConfinedCodex: () => {
+      throw new Error("features.shell_tool=false was not resolved");
+    },
+  };
+  const routed = await cli(["spawn", "task", "--confined"], failed);
+  expectJson(routed, { harness: "claude" });
+  expect(routed.stderr).toContain("WARNING");
+  expect(routed.stderr).toContain("features.shell_tool=false");
+  expect(routed.stderr).toContain("upgrade codex");
+  expect(routed.json.route.reason).toContain("features.shell_tool=false");
+  expect(routed.json.route.reason).toContain("upgrade codex");
+  const pinned = await cli(
+    ["spawn", "task", "--confined", "--model", "codex:terra"],
+    failed,
+  );
+  expect(pinned.exitCode).toBe(1);
+  expect(pinned.stderr).toContain("upgrade codex");
+});
+
+test("confined allowlists persist and intersect on unflagged resumes for Claude and Codex", async () => {
+  const bridge = join(directory, "loopback.json");
+  await writeFile(
+    bridge,
+    JSON.stringify({
+      mcpServers: {
+        openclaw: { type: "http", url: "http://127.0.0.1:9999/mcp" },
+      },
+    }),
+  );
+  const verified = {
+    verifyConfinedCodex: () => [
+      "features.shell_tool=false",
+      'sandbox_mode="read-only"',
+      'approval_policy="never"',
+    ],
+  };
+  for (const harness of ["claude", "codex"] as const) {
+    runnerOutput = harness === "claude" ? CLAUDE_OUTPUT : CODEX_OUTPUT;
+    const spawned = await cli(
+      [
+        "spawn",
+        "task",
+        "--confined",
+        "--model",
+        harness === "claude" ? "claude:opus" : "codex:terra",
+        "--mcp-config",
+        bridge,
+        "--allowedTools",
+        "mcp__openclaw__safe_ping",
+      ],
+      verified,
+    );
+    expect(spawned.exitCode).toBe(0);
+    const handle = spawned.json.handle;
+    expect((await loadSession(handle)).allowedTools).toBe(
+      "mcp__openclaw__safe_ping",
+    );
+    for (const flags of [
+      [],
+      ["--allowedTools", "mcp__openclaw__*"],
+      ["--allowedTools", "mcp__openclaw__safe_ping mcp__openclaw__pay"],
+    ]) {
+      expect(
+        (await cli(["send", handle, "again", ...flags], verified)).exitCode,
+      ).toBe(0);
+      const argv = runnerArguments.at(-1)!;
+      expect(argv).toContain(
+        harness === "claude"
+          ? "mcp__openclaw__safe_ping"
+          : 'mcp_servers.openclaw.enabled_tools=["safe_ping"]',
+      );
+    }
+    expect(
+      (
+        await cli(
+          ["send", handle, "none", "--allowedTools", "mcp__openclaw__pay"],
+          verified,
+        )
+      ).exitCode,
+    ).toBe(0);
+    expect((await loadSession(handle)).allowedTools).toBe("");
+    expect((await cli(["send", handle, "stay empty"], verified)).exitCode).toBe(
+      0,
+    );
+    expect((await loadSession(handle)).allowedTools).toBe("");
+  }
+});
+
+test("foreground confined Codex steer rebuilds resume while retaining the filtered MCP file", async () => {
+  const fake = join(directory, "confined-codex"),
+    bridge = join(directory, "loopback.json"),
+    received = join(directory, "resume-argv.json");
+  await writeFile(
+    bridge,
+    JSON.stringify({
+      mcpServers: {
+        openclaw: { type: "http", url: "http://127.0.0.1:9999/mcp" },
+      },
+    }),
+  );
+  await writeFile(
+    fake,
+    `#!/usr/bin/env bun
+import {writeFileSync} from "node:fs";
+const emit=e=>console.log(JSON.stringify(e));emit({type:"thread.started",thread_id:"confined-thread"});
+if(!process.argv.includes("resume"))await new Promise(()=>setInterval(()=>{},1000));
+writeFileSync(${JSON.stringify(received)},JSON.stringify(process.argv));
+emit({type:"item.completed",item:{type:"agent_message",text:"redirected"}});emit({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}});
+`,
+  );
+  await chmod(fake, 0o755);
+  config.harnesses.codex = { enabled: true, binary: fake };
+  await saveConfig(config);
+  let handle = "",
+    filtered = "";
+  const spawning = cli(
+    [
+      "spawn",
+      "wait",
+      "--confined",
+      "--model",
+      "codex:terra",
+      "--mcp-config",
+      bridge,
+      "--allowedTools",
+      "mcp__openclaw__safe_ping",
+      "--no-guardrails",
+    ],
+    {
+      verifyConfinedCodex: () => [
+        "features.shell_tool=false",
+        'sandbox_mode="read-only"',
+        'approval_policy="never"',
+      ],
+      runForeground: async (argv, cwd, env, session, exit, onLine) => {
+        if (!session) throw new Error("missing session");
+        handle = session.handle;
+        filtered = join(directory, "state/sessions", handle + ".mcp");
+        foregroundChildren.add(session);
+        return runForeground(argv, cwd, env, session, exit, onLine);
+      },
+    },
+  );
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (
+      handle &&
+      (await readFile(sessionLogPath(handle), "utf8").catch(() => "")).includes(
+        "thread.started",
+      )
+    )
+      break;
+    await Bun.sleep(10);
+  }
+  try {
+    expect(await Bun.file(filtered).exists()).toBe(true);
+    expectJson(await cli(["steer", handle, "redirected"]), { steered: true });
+    expectJson(await spawning, { result: "redirected" });
+    const argv = JSON.parse(await readFile(received, "utf8"));
+    expect(argv).toContain("--ignore-user-config");
+    expect(argv).toContain('sandbox_mode="read-only"');
+    expect(argv).toContain('mcp_servers.openclaw.enabled_tools=["safe_ping"]');
+    expect(await Bun.file(filtered).exists()).toBe(false);
+  } finally {
+    if (handle) await terminateSessionProcess(await loadSession(handle));
+    await spawning;
+  }
+});
+
+test("confined resumes reject legacy missing allowlists and intersect the latest locked policy", async () => {
+  const legacy = await createSession({
+    harness: "claude",
+    model: "opus",
+    effort: "high",
+    cwd: directory,
+    prompt: "task",
+    status: SESSION_STATUS.done,
+    sessionId: "old",
+    confined: true,
+  });
+  expectJson(
+    await cli(["send", legacy.handle, "again"]),
+    { error: "confined session has no stored allowlist; start a new session" },
+    1,
+  );
+  const current = await createSession({
+    harness: "claude",
+    model: "opus",
+    effort: "high",
+    cwd: directory,
+    prompt: "task",
+    status: SESSION_STATUS.done,
+    sessionId: "current",
+    confined: true,
+    allowedTools: "mcp__openclaw__*",
+  });
+  const result = await cli(
+    ["send", current.handle, "again", "--allowedTools", "mcp__openclaw__*"],
+    {
+      now: () => {
+        writeFileSync(
+          sessionPath(current.handle),
+          JSON.stringify({
+            ...current,
+            allowedTools: "mcp__openclaw__safe_ping",
+          }),
+        );
+        return Date.now();
+      },
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(runnerArguments.at(-1)).toContain("mcp__openclaw__safe_ping");
+  expect((await loadSession(current.handle)).allowedTools).toBe(
+    "mcp__openclaw__safe_ping",
+  );
+});

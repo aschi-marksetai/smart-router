@@ -70,6 +70,9 @@ export type Session = {
   model: string;
   effort: string;
   browser?: boolean;
+  confined?: boolean;
+  disallowedTools?: string[];
+  allowedTools?: string;
   mcpConfig?: string[];
   strictMcpConfig?: boolean;
   sandbox?: string;
@@ -117,6 +120,10 @@ export function sessionLogPath(handle: string): string {
   return join(sessionsDir(), `${handle}${LOG_FILE_SUFFIX}`);
 }
 
+export function sessionMcpPath(handle: string): string {
+  return join(sessionsDir(), `${handle}.mcp`);
+}
+
 export function sessionErrPath(handle: string): string {
   return join(sessionsDir(), `${handle}${ERR_FILE_SUFFIX}`);
 }
@@ -144,6 +151,9 @@ export async function createSession(
     model: options.model,
     effort: options.effort,
     browser: options.browser,
+    confined: options.confined,
+    disallowedTools: options.disallowedTools,
+    allowedTools: options.allowedTools,
     mcpConfig: options.mcpConfig,
     strictMcpConfig: options.strictMcpConfig,
     sandbox: options.sandbox,
@@ -201,6 +211,8 @@ export async function saveSession(session: Session): Promise<void> {
     session.usage = addUsage(session.usage, usage);
     finishSessionTurn(session, usage);
   }
+  if (session.confined && session.status !== SESSION_STATUS.running)
+    await rm(sessionMcpPath(session.handle), { force: true });
   const destinationPath = sessionPath(session.handle);
   const temporaryPath = `${destinationPath}.${randomUUID()}`;
   try {
@@ -281,6 +293,7 @@ export async function removeSession(handle: string): Promise<void> {
       sessionLogPath(handle),
       sessionErrPath(handle),
       sessionSocketPath(handle),
+      sessionMcpPath(handle),
     ].map((path) => rm(path, { force: true })),
   );
 }

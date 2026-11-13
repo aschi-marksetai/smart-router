@@ -10,6 +10,8 @@ import { runCli, type CliDeps } from "../src/cli.ts";
 import * as claude from "../src/harness/claude.ts";
 import {
   createSession,
+  loadSession,
+  saveSession,
   sessionLogPath,
   sessionSocketPath,
   SESSION_STATUS,
@@ -211,4 +213,36 @@ test("the hidden supervise command forwards stop to claude and removes its socke
   await supervising;
   expect(exitCode).toBe(1);
   expect(existsSync(sessionSocketPath(handle))).toBe(false);
+});
+
+test("confined supervisor scrubs browser environment again before launching Claude", async () => {
+  const { handle, fakeClaude } = await supervisedSession();
+  const session = await loadSession(handle);
+  session.confined = true;
+  session.allowedTools = "mcp__openclaw__*";
+  await saveSession(session);
+  await writeFile(
+    fakeClaude,
+    FAKE_CLAUDE.replace(
+      "for await (const line of console)",
+      'emit({type:"browser_env",cfc:process.env.CLAUDE_CODE_ENABLE_CFC??null,forward:process.env.CLAUDE_CODE_REMOTE_TOOLS_FORWARD??null});\nfor await (const line of console)',
+    ),
+  );
+  const previous = process.env.CLAUDE_CODE_ENABLE_CFC;
+  process.env.CLAUDE_CODE_ENABLE_CFC = "1";
+  try {
+    expect(await superviseSession(handle, "done", [fakeClaude])).toBe(0);
+    const events = (await readFile(sessionLogPath(handle), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events.find((event) => event.type === "browser_env")).toEqual({
+      type: "browser_env",
+      cfc: null,
+      forward: "0",
+    });
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_CODE_ENABLE_CFC;
+    else process.env.CLAUDE_CODE_ENABLE_CFC = previous;
+  }
 });

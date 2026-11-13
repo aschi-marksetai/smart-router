@@ -113,8 +113,14 @@ export const parseSmartRouterEvent: EventParser = (line) => {
 
 export function registerSmartRouter(api: RegistrationApi): void {
   const config = api.pluginConfig ?? {};
-  const spawnArgs = ["spawn", "{prompt}", "--events"];
-  const resumeArgs = ["send", "{sessionId}", "{prompt}", "--events"];
+  const spawnArgs = ["spawn", "{prompt}", "--events", "--confined"];
+  const resumeArgs = [
+    "send",
+    "{sessionId}",
+    "{prompt}",
+    "--events",
+    "--confined",
+  ];
   if (typeof config.cwd === "string") spawnArgs.push("--cwd", config.cwd);
   if (typeof config.hint === "string") spawnArgs.push("--hint", config.hint);
   if (config.confidential === true) spawnArgs.push("--confidential");
@@ -138,7 +144,8 @@ export function registerSmartRouter(api: RegistrationApi): void {
       input: "arg",
       sessionMode: "existing",
       sessionIdFields: ["handle"],
-      systemPromptWhen: "never",
+      systemPromptWhen: "always",
+      systemPromptFileArg: "--append-system-prompt-file",
     },
     resolveExecutionArgs(context) {
       if (context.useResume || typeof config.cwd === "string")
@@ -148,7 +155,7 @@ export function registerSmartRouter(api: RegistrationApi): void {
     parseJsonlEvent: parseSmartRouterEvent,
     bundleMcp: true,
     bundleMcpMode: "claude-config-file",
-    nativeToolMode: "always-on",
+    nativeToolMode: "none",
     ownsNativeCompaction: true,
   });
   api.registerProvider({

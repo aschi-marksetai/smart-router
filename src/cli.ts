@@ -25,6 +25,14 @@ import {
 import { doctor } from "./doctor.ts";
 import { loadDotEnv } from "./env.ts";
 import * as codex from "./harness/codex.ts";
+import { verifyConfinedCodex } from "./harness/codex-confined.ts";
+import {
+  confinedCodexToolPolicy,
+  confinedAllowedTools,
+  intersectAllowedTools,
+  parseToolList,
+  writeConfinedMcpConfig,
+} from "./harness/mcp.ts";
 import { getAdapter } from "./harness/index.ts";
 import {
   record,
@@ -74,10 +82,12 @@ import {
   startSessionTurn,
   finishSessionTurn,
   sessionLogPath,
+  sessionMcpPath,
   sessionSocketPath,
   sessionOwner,
   SESSION_STATUS,
   stopSession,
+  terminateSessionProcess,
   sweepSessions,
   processStartTime,
   withSessionsLock,
@@ -102,6 +112,10 @@ type SpawnOptions = RouteOptions & {
   strictMcpConfig?: boolean;
   sandbox?: string;
   allowedTools?: string;
+  disallowedTools?: string[];
+  tools?: string;
+  confined?: boolean;
+  appendSystemPromptFile?: string;
   schema?: string;
   resultLimit?: string;
   waitForSlot?: string;
@@ -115,12 +129,18 @@ type PassthroughOptions = {
   strictMcpConfig?: boolean;
   sandbox?: string;
   allowedTools?: string;
+  disallowedTools?: string[];
+  tools?: string;
+  confined?: boolean;
+  appendSystemPromptFile?: string;
   schema?: string;
   resultLimit?: string;
   codexSandbox?: string;
   codexConfigOverrides?: string[];
 };
 type Pick = { harness: HarnessName; model: string; effort: string };
+const MISSING_CONFINED_ALLOWLIST_ERROR =
+  "confined session has no stored allowlist; start a new session";
 const RUNNING_SESSION_ERROR = "is still running; wait or stop it first";
 const POLL_INTERVAL_MS = 1_000;
 const DEFAULT_RESULT_LIMIT: number | undefined = undefined;
@@ -165,6 +185,84 @@ function collectMcpConfig(path: string, paths: string[] = []): string[] {
   return [...paths, resolve(path)];
 }
 
+function collectToolList(value: string, previous = ""): string {
+  return [
+    ...new Set([...parseToolList(previous), ...parseToolList(value)]),
+  ].join(",");
+}
+
+function collectDeniedTools(value: string, previous: string[] = []): string[] {
+  return parseToolList(collectToolList(value, previous.join(",")));
+}
+
+function validateToolPolicy(
+  harness: HarnessName | undefined,
+  options: PassthroughOptions,
+): void {
+  if (options.confined && options.tools)
+    throw new Error("native tools are disabled in confined mode");
+  if (!harness || harness === "claude") return;
+  if (options.confined && harness === "codex") {
+    confinedCodexToolPolicy(
+      options.disallowedTools ?? [],
+      options.allowedTools,
+    );
+    return;
+  }
+  if (options.confined)
+    throw new Error("confined mode needs Claude or verified Codex");
+  if (options.disallowedTools?.length)
+    throw new Error("--disallowedTools needs a Claude model");
+  if (options.tools !== undefined)
+    throw new Error("--tools needs a Claude model");
+  if (options.appendSystemPromptFile && harness === "pi")
+    throw new Error("--append-system-prompt-file is not supported by pi");
+}
+
+function checkedConfinedCodex(
+  config: Config,
+  deps: CliDeps,
+  cwd: string,
+): string[] {
+  try {
+    return (deps.verifyConfinedCodex ?? verifyConfinedCodex)(
+      harnessBinary(config, "codex"),
+      cwd,
+    );
+  } catch (error) {
+    const failure =
+      error instanceof Error ? error.message : "Codex confinement probe failed";
+    const reason = failure.includes("upgrade codex")
+      ? failure
+      : `${failure}; upgrade codex`;
+    deps.stderr(`WARNING: Codex confined-mode tripwire: ${reason}\n`);
+    throw new Error(reason);
+  }
+}
+
+async function prepareConfinedMcp(
+  session: Session,
+  harnessOptions: HarnessOptions,
+  deps: CliDeps,
+): Promise<void> {
+  if (!session.confined) return;
+  const path = sessionMcpPath(session.handle);
+  const dropBridge =
+    session.harness === "codex" &&
+    confinedCodexToolPolicy(session.disallowedTools ?? [], session.allowedTools)
+      .dropServer;
+  const hasServer = await writeConfinedMcpConfig(
+    session.mcpConfig ?? [],
+    path,
+    dropBridge,
+  );
+  if (!hasServer)
+    deps.stderr(
+      "Warning: no openclaw MCP server; confined child has no tools\n",
+    );
+  harnessOptions.mcpConfig = [path];
+}
+
 type CapacityLimit = "maxRunning" | "maxPerCaller" | "maxDepth";
 
 export type CliDeps = {
@@ -172,6 +270,7 @@ export type CliDeps = {
   stderr: (text: string) => void;
   exit: (code: number) => void;
   runForeground: typeof runForeground;
+  verifyConfinedCodex?: typeof verifyConfinedCodex;
   runDetached: typeof runDetached;
   fetch: (url: string) => Promise<Response>;
   now: () => number;
@@ -273,14 +372,28 @@ async function reserveSpawnSession(
     let capacity: ReturnType<typeof capacityOutput> | undefined;
     const session = await withSessionsLock(async () => {
       await sweepSessions();
-      if (
-        existingSession &&
-        (await loadSession(existingSession.handle)).status ===
-          SESSION_STATUS.running
-      )
-        throw new Error(
-          `session ${existingSession.handle} ${RUNNING_SESSION_ERROR}`,
+      if (existingSession) {
+        const stored = await loadSession(existingSession.handle);
+        if (stored.status === SESSION_STATUS.running)
+          throw new Error(
+            `session ${existingSession.handle} ${RUNNING_SESSION_ERROR}`,
+          );
+        if (stored.confined && stored.allowedTools === undefined)
+          throw new Error(MISSING_CONFINED_ALLOWLIST_ERROR);
+        existingSession.allowedTools = intersectAllowedTools(
+          stored.allowedTools,
+          existingSession.allowedTools,
         );
+        existingSession.confined =
+          stored.confined || existingSession.confined || options.confined;
+        existingSession.disallowedTools = [
+          ...new Set([
+            ...(stored.disallowedTools ?? []),
+            ...(existingSession.disallowedTools ?? []),
+            ...(options.disallowedTools ?? []),
+          ]),
+        ];
+      }
       const running = (await listSessions()).filter(
         ({ status }) => status === SESSION_STATUS.running,
       );
@@ -477,10 +590,41 @@ async function spawnCommand(
     throw new Error(
       'direct model picks are disabled by rules.directModel; let the router choose and pass escalation context with --hint, for example --hint "escalate: previous attempt on codex:gpt-6-luna failed: <why>"',
     );
+  validateToolPolicy(
+    options.model ? parseHarness(options.model)[0] : undefined,
+    options,
+  );
+  const claudeOnly =
+    !options.confined &&
+    (Boolean(options.disallowedTools?.length) || options.tools !== undefined);
   const cwd = options.cwd ?? process.cwd();
+  let confinedCodexAvailable = false;
+  let confinedCodexFailure: string | undefined;
+  if (options.confined && config.harnesses.codex?.enabled) {
+    try {
+      validateToolPolicy("codex", options);
+      checkedConfinedCodex(config, deps, cwd);
+      confinedCodexAvailable = true;
+    } catch (error) {
+      confinedCodexFailure =
+        error instanceof Error
+          ? error.message
+          : "Codex confinement probe failed; upgrade codex";
+      if (options.model?.startsWith("codex:")) throw error;
+    }
+  }
   const routeResult = options.model
     ? null
-    : await route(prompt, options, deps.routeDeps(config));
+    : await route(
+        prompt,
+        {
+          ...options,
+          claudeOnly,
+          confinedCodexAvailable,
+          confinedCodexFailure,
+        },
+        deps.routeDeps(config),
+      );
   if (routeResult && !("pick" in routeResult))
     throw new Error("Cannot spawn from a dry-run route");
   let selected: Pick;
@@ -525,7 +669,7 @@ async function spawnCommand(
     selected.harness === "codex"
       ? chooseCodexSandbox({
           configuredSandbox: config.spawn.codexSandbox,
-          callerSandbox: options.sandbox,
+          callerSandbox: options.confined ? "read-only" : options.sandbox,
           autoSandbox: config.spawn.autoSandbox,
           allowFullAccess: config.spawn.allowFullAccess,
           codexLocalhostNeedsNetwork: config.spawn.codexLocalhostNeedsNetwork,
@@ -550,13 +694,17 @@ async function spawnCommand(
   const spawnPrompt = toolchainNote
     ? `${promptWithGuardrails}\n\n${toolchainNote}`
     : promptWithGuardrails;
-  const browser = shouldUseClaudeBrowser(
-    selected.harness,
-    options.browser,
-    routeScores?.needsBrowser ?? null,
-  );
+  const browser =
+    !options.confined &&
+    shouldUseClaudeBrowser(
+      selected.harness,
+      options.browser,
+      routeScores?.needsBrowser ?? null,
+    );
   const sessionSettings = {
     browser,
+    confined: options.confined,
+    disallowedTools: options.disallowedTools,
     mcpConfig: options.mcpConfig,
     strictMcpConfig: options.strictMcpConfig,
     sandbox: sandboxChoice?.sandbox,
@@ -567,26 +715,28 @@ async function spawnCommand(
   );
   printPassthroughNotes(selected.harness, options, deps);
   const adapter = getAdapter(selected.harness);
-  const harnessOptions = await harnessOptionsFor(selected, cwd, config, {
-    ...options,
-    browser,
-    codexSandbox: sandboxChoice?.sandbox,
-    codexConfigOverrides: sandboxChoice?.usesNetworkAccess
-      ? [CODEX_NETWORK_ACCESS_OVERRIDE]
-      : undefined,
-  });
+  const harnessOptions = await harnessOptionsFor(
+    selected,
+    cwd,
+    config,
+    {
+      ...options,
+      browser,
+      codexSandbox: sandboxChoice?.sandbox,
+      codexConfigOverrides: sandboxChoice?.usesNetworkAccess
+        ? [CODEX_NETWORK_ACCESS_OVERRIDE]
+        : undefined,
+    },
+    deps,
+  );
   const supervised = selected.harness === "claude";
-  const command = adapter.buildSpawn(spawnPrompt, {
-    ...harnessOptions,
-    streamInput: supervised,
-  });
   const logPath = sessionLogPath(handle);
   const reservation = await reserveSpawnSession(
     {
       ...selected,
       ...sessionSettings,
+      allowedTools: harnessOptions.allowedTools,
       cwd,
-      sessionId: command.sessionId,
       prompt: spawnPrompt,
       handle,
       parentHandle: process.env[HANDLE_ENVIRONMENT_VARIABLE],
@@ -625,15 +775,22 @@ async function spawnCommand(
   };
   if (options.detach) {
     const detachedLogPath = session.logPath ?? sessionLogPath(handle);
-    const detachedArgv = supervised
-      ? supervisorCommand(handle, spawnPrompt, command.argv)
-      : command.argv;
     try {
+      await prepareConfinedMcp(session, harnessOptions, deps);
+      const command = adapter.buildSpawn(spawnPrompt, {
+        ...harnessOptions,
+        streamInput: supervised,
+      });
+      session.sessionId = command.sessionId;
+      await saveSession(session);
+      const detachedArgv = supervised
+        ? supervisorCommand(handle, spawnPrompt, command.argv)
+        : command.argv;
       const detached = await deps.runDetached(
         detachedArgv,
         cwd,
         detachedLogPath,
-        environment,
+        { ...environment, ...command.env },
       );
       session.pid = detached.pid;
       if (supervised) session.supervisorPid = detached.pid;
@@ -666,6 +823,13 @@ async function spawnCommand(
   const stream = eventStream(session, deps);
   let parsed: ReturnType<typeof adapter.parseSpawnOutput>;
   try {
+    await prepareConfinedMcp(session, harnessOptions, deps);
+    const command = adapter.buildSpawn(spawnPrompt, {
+      ...harnessOptions,
+      streamInput: supervised,
+    });
+    session.sessionId = command.sessionId;
+    await saveSession(session);
     parsed = parseForegroundOutput(
       await runSteerableForeground(
         supervised
@@ -674,7 +838,7 @@ async function spawnCommand(
         session,
         harnessOptions,
         deps,
-        environment,
+        { ...environment, ...command.env },
         options.events ? stream.line : undefined,
       ),
       adapter.parseSpawnOutput,
@@ -703,9 +867,11 @@ async function spawnCommand(
       ...selected,
       sandbox,
       route: routeResult,
-      resumeCommand: adapter
-        .buildResume(session.sessionId, '"<msg>"', harnessOptions)
-        .argv.join(" "),
+      resumeCommand: session.confined
+        ? `smart-router send ${handle} "<msg>"`
+        : adapter
+            .buildResume(session.sessionId, '"<msg>"', harnessOptions)
+            .argv.join(" "),
       ...resultOutput(parsed.result, resultLimit(options)),
       usage: parsed.usage,
     })}\n`,
@@ -786,11 +952,12 @@ async function sendCommand(
   if (!session.sessionId)
     throw new Error(`session ${handle} has no session id`);
   const adapter = getAdapter(session.harness);
-  const harnessOptions = await harnessOptionsFor(
+  let harnessOptions = await harnessOptionsFor(
     session,
     session.cwd,
     config,
     options,
+    deps,
   );
   printPassthroughNotes(
     session.harness,
@@ -805,11 +972,9 @@ async function sendCommand(
         )
       : "";
   const resumePrompt = signingNote ? `${message}\n\n${signingNote}` : message;
-  const command = adapter.buildResume(
-    session.sessionId,
-    resumePrompt,
-    harnessOptions,
-  );
+  session.confined = harnessOptions.confined;
+  session.disallowedTools = harnessOptions.disallowedTools;
+  session.allowedTools = harnessOptions.allowedTools;
   session.mcpConfig = harnessOptions.mcpConfig;
   session.strictMcpConfig = harnessOptions.strictMcpConfig;
   const reservation = await reserveSpawnSession(
@@ -829,13 +994,26 @@ async function sendCommand(
   const stream = eventStream(session, deps);
   let parsed: ReturnType<typeof adapter.parseResumeOutput>;
   try {
+    harnessOptions = await harnessOptionsFor(
+      session,
+      session.cwd,
+      config,
+      options,
+      deps,
+    );
+    await prepareConfinedMcp(session, harnessOptions, deps);
+    const command = adapter.buildResume(
+      session.sessionId,
+      resumePrompt,
+      harnessOptions,
+    );
     parsed = parseForegroundOutput(
       await runSteerableForeground(
         command.argv,
         session,
         harnessOptions,
         deps,
-        process.env,
+        { ...process.env, ...command.env },
         options.events ? stream.line : undefined,
       ),
       adapter.parseResumeOutput,
@@ -908,7 +1086,10 @@ async function steerCodexSession(
   return sendCommand(session.handle, message, {}, deps);
 }
 
-async function interruptCodexSession(session: Session): Promise<string> {
+async function interruptCodexSession(
+  session: Session,
+  options: { preserveTurn?: boolean } = {},
+): Promise<string> {
   const log = await readFile(
     session.logPath ?? sessionLogPath(session.handle),
     "utf8",
@@ -919,7 +1100,8 @@ async function interruptCodexSession(session: Session): Promise<string> {
       `session ${session.handle} has not started a codex thread yet; retry shortly`,
     );
   session.sessionId = threadId;
-  await stopSession(session);
+  if (options.preserveTurn) await terminateSessionProcess(session);
+  else await stopSession(session);
   return threadId;
 }
 
@@ -949,7 +1131,9 @@ async function runSteerableForeground(
       return {
         error: `session ${session.handle} is already being steered; retry shortly`,
       };
-    steering = interruptCodexSession(session).then(
+    steering = interruptCodexSession(session, {
+      preserveTurn: session.confined,
+    }).then(
       (threadId) => codex.buildResume(threadId, message, harnessOptions).argv,
     );
     try {
@@ -986,7 +1170,42 @@ async function harnessOptionsFor(
   cwd: string,
   config: Awaited<ReturnType<typeof loadConfig>>,
   options: PassthroughOptions & { worktree?: boolean },
+  deps: CliDeps,
 ): Promise<HarnessOptions> {
+  const confined =
+    options.confined ||
+    ("confined" in selected && selected.confined) ||
+    undefined;
+  if (
+    "handle" in selected &&
+    selected.confined &&
+    selected.allowedTools === undefined
+  )
+    throw new Error(MISSING_CONFINED_ALLOWLIST_ERROR);
+  const storedAllowed =
+    "allowedTools" in selected ? selected.allowedTools : undefined;
+  const combinedAllowed = intersectAllowedTools(
+    storedAllowed,
+    options.allowedTools,
+  );
+  const allowedTools = confined
+    ? confinedAllowedTools(combinedAllowed)
+    : combinedAllowed;
+  const disallowedTools = [
+    ...new Set(
+      [
+        ...("disallowedTools" in selected
+          ? (selected.disallowedTools ?? [])
+          : []),
+        ...(options.disallowedTools ?? []),
+      ].flatMap(parseToolList),
+    ),
+  ];
+  validateToolPolicy(selected.harness, {
+    ...options,
+    confined,
+    disallowedTools,
+  });
   const codexSandbox =
     options.codexSandbox ??
     options.sandbox ??
@@ -1004,6 +1223,14 @@ async function harnessOptionsFor(
       : undefined;
   return {
     cwd,
+    confined,
+    codexConfinedOverrides:
+      confined && selected.harness === "codex"
+        ? checkedConfinedCodex(config, deps, cwd)
+        : undefined,
+    disallowedTools,
+    tools: options.tools,
+    appendSystemPromptFile: options.appendSystemPromptFile,
     events: options.events,
     model: selected.model,
     effort: selected.effort,
@@ -1027,7 +1254,7 @@ async function harnessOptionsFor(
         ? [CODEX_NETWORK_ACCESS_OVERRIDE]
         : undefined),
     codexExtraWritableRoots: config.spawn.codexExtraWritableRoots,
-    allowedTools: options.allowedTools,
+    allowedTools,
     schema,
     binary: harnessBinary(config, selected.harness),
   };
@@ -1207,15 +1434,17 @@ async function waitCommand(
       ERROR_EXIT_CODE,
     );
   const config = await loadConfig();
-  const resumeCommand = session.sessionId
-    ? getAdapter(session.harness)
-        .buildResume(
-          session.sessionId,
-          '"<msg>"',
-          await harnessOptionsFor(session, session.cwd, config, {}),
-        )
-        .argv.join(" ")
-    : undefined;
+  const resumeCommand = session.confined
+    ? `smart-router send ${handle} "<msg>"`
+    : session.sessionId
+      ? getAdapter(session.harness)
+          .buildResume(
+            session.sessionId,
+            '"<msg>"',
+            await harnessOptionsFor(session, session.cwd, config, {}, deps),
+          )
+          .argv.join(" ")
+      : undefined;
   return printResult(
     deps,
     {
@@ -1325,7 +1554,27 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .option(MCP_CONFIG_OPTION, "MCP config (repeatable)", collectMcpConfig)
     .option(STRICT_MCP_CONFIG_FLAG)
     .option("--sandbox <policy>")
-    .option("--allowed-tools <list>")
+    .option(
+      "--allowed-tools <list>",
+      "Allowed tools (repeatable)",
+      collectToolList,
+    )
+    .option(
+      "--allowedTools <list>",
+      "Allowed tools (repeatable)",
+      collectToolList,
+    )
+    .option(
+      "--disallowedTools <list>",
+      "Denied tools (repeatable)",
+      collectDeniedTools,
+    )
+    .option("--tools <list>", "Native tools (repeatable)", collectToolList)
+    .option(
+      "--confined",
+      "run with no native tools: MCP tools only, for OpenClaw",
+    )
+    .option("--append-system-prompt-file <path>")
     .option("--schema <file>")
     .option("--wait-for-slot <seconds>")
     .option(RESULT_LIMIT_OPTION)
@@ -1340,7 +1589,27 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .option(MCP_CONFIG_OPTION, "MCP config (repeatable)", collectMcpConfig)
     .option(STRICT_MCP_CONFIG_FLAG)
     .option("--sandbox <policy>")
-    .option("--allowed-tools <list>")
+    .option(
+      "--allowed-tools <list>",
+      "Allowed tools (repeatable)",
+      collectToolList,
+    )
+    .option(
+      "--allowedTools <list>",
+      "Allowed tools (repeatable)",
+      collectToolList,
+    )
+    .option(
+      "--disallowedTools <list>",
+      "Denied tools (repeatable)",
+      collectDeniedTools,
+    )
+    .option("--tools <list>", "Native tools (repeatable)", collectToolList)
+    .option(
+      "--confined",
+      "run with no native tools: MCP tools only, for OpenClaw",
+    )
+    .option("--append-system-prompt-file <path>")
     .option("--schema <file>")
     .option(RESULT_LIMIT_OPTION)
     .action((handle, message, options) =>

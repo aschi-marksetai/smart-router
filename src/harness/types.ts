@@ -9,8 +9,13 @@ export type HarnessOptions = {
   strictMcpConfig?: boolean;
   codexSandbox?: string;
   codexConfigOverrides?: string[];
+  codexConfinedOverrides?: string[];
   codexExtraWritableRoots?: string[];
   allowedTools?: string;
+  disallowedTools?: string[];
+  tools?: string;
+  confined?: boolean;
+  appendSystemPromptFile?: string;
   schema?: { path: string; content: string };
   binary?: string;
   streamInput?: boolean;
@@ -25,7 +30,11 @@ export type Usage = {
   costUsd: number | null;
 };
 
-export type SpawnCommand = { argv: string[]; sessionId?: string };
+export type SpawnCommand = {
+  argv: string[];
+  sessionId?: string;
+  env?: NodeJS.ProcessEnv;
+};
 export type ParsedOutput = {
   sessionId: string;
   result: string;

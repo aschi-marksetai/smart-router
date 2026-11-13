@@ -5,7 +5,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DEFAULT_CODEX_SANDBOX } from "../config.ts";
-import { codexMcpOverrides } from "./mcp.ts";
+import { confinedCodexModelCatalog } from "./codex-confined.ts";
+import { confinedCodexMcp, codexMcpOverrides } from "./mcp.ts";
 import {
   parseJsonLines,
   record,
@@ -67,9 +68,31 @@ function writableRoots(configuration: unknown): string[] {
   return roots;
 }
 
-function configOverrides(options: HarnessOptions): string[] {
+function configOverrides(
+  options: HarnessOptions,
+  confinedMcpOverrides: string[] = [],
+): string[] {
+  if (options.confined) {
+    if (!options.codexConfinedOverrides)
+      throw new Error("Codex confinement was not verified");
+    return [
+      ...options.codexConfinedOverrides,
+      `model_catalog_json=${JSON.stringify(confinedCodexModelCatalog(options))}`,
+      ...confinedMcpOverrides,
+      ...(options.appendSystemPromptFile
+        ? [
+            `model_instructions_file=${JSON.stringify(options.appendSystemPromptFile)}`,
+          ]
+        : []),
+    ];
+  }
   const overrides = [
     ...(options.codexConfigOverrides ?? []),
+    ...(options.appendSystemPromptFile
+      ? [
+          `model_instructions_file=${JSON.stringify(options.appendSystemPromptFile)}`,
+        ]
+      : []),
     ...codexMcpOverrides(options.mcpConfig ?? []),
   ];
   const sandbox = options.codexSandbox ?? DEFAULT_CODEX_SANDBOX;
@@ -249,6 +272,13 @@ export function buildSpawn(
   prompt: string,
   options: HarnessOptions,
 ): SpawnCommand {
+  const mcp = options.confined
+    ? confinedCodexMcp(
+        options.mcpConfig ?? [],
+        options.disallowedTools,
+        options.allowedTools,
+      )
+    : undefined;
   const argv = [
     options.binary ?? CODEX_BINARY,
     EXEC_COMMAND,
@@ -260,16 +290,18 @@ export function buildSpawn(
   ];
   if (options.effort)
     argv.push(CONFIG_FLAG, `model_reasoning_effort=\"${options.effort}\"`);
-  if (options.strictMcpConfig) argv.push(IGNORE_USER_CONFIG_FLAG);
-  for (const override of configOverrides(options))
+  if (options.strictMcpConfig || options.confined)
+    argv.push(IGNORE_USER_CONFIG_FLAG);
+  for (const override of configOverrides(options, mcp?.overrides))
     argv.push(CONFIG_FLAG, override);
-  argv.push(SANDBOX_FLAG, options.codexSandbox ?? DEFAULT_CODEX_SANDBOX);
-  if (options.worktree) argv.push(WORKTREE_FLAG);
+  if (!options.confined)
+    argv.push(SANDBOX_FLAG, options.codexSandbox ?? DEFAULT_CODEX_SANDBOX);
+  if (options.worktree && !options.confined) argv.push(WORKTREE_FLAG);
   if (!isInsideGitRepository(options.cwd))
     argv.push(SKIP_GIT_REPOSITORY_CHECK_FLAG);
   if (options.schema) argv.push(OUTPUT_SCHEMA_FLAG, options.schema.path);
-  argv.push(prompt);
-  return { argv };
+  argv.push("--", prompt);
+  return { argv, env: mcp?.env };
 }
 
 export function parseSpawnOutput(stdout: string): ParsedOutput {
@@ -281,6 +313,13 @@ export function buildResume(
   message: string,
   options: HarnessOptions,
 ): SpawnCommand {
+  const mcp = options.confined
+    ? confinedCodexMcp(
+        options.mcpConfig ?? [],
+        options.disallowedTools,
+        options.allowedTools,
+      )
+    : undefined;
   const argv = [
     options.binary ?? CODEX_BINARY,
     EXEC_COMMAND,
@@ -290,18 +329,20 @@ export function buildResume(
     MODEL_FLAG,
     options.model,
   ];
-  if (options.strictMcpConfig) argv.push(IGNORE_USER_CONFIG_FLAG);
-  for (const override of configOverrides(options))
+  if (options.strictMcpConfig || options.confined)
+    argv.push(IGNORE_USER_CONFIG_FLAG);
+  for (const override of configOverrides(options, mcp?.overrides))
     argv.push(CONFIG_FLAG, override);
-  argv.push(
-    CONFIG_FLAG,
-    `sandbox_mode="${options.codexSandbox ?? DEFAULT_CODEX_SANDBOX}"`,
-  );
+  if (!options.confined)
+    argv.push(
+      CONFIG_FLAG,
+      `sandbox_mode="${options.codexSandbox ?? DEFAULT_CODEX_SANDBOX}"`,
+    );
   if (!isInsideGitRepository(options.cwd))
     argv.push(SKIP_GIT_REPOSITORY_CHECK_FLAG);
   if (options.schema) argv.push(OUTPUT_SCHEMA_FLAG, options.schema.path);
-  argv.push(message);
-  return { argv, sessionId };
+  argv.push("--", message);
+  return { argv, sessionId, env: mcp?.env };
 }
 
 export function parseResumeOutput(stdout: string): ParsedOutput {

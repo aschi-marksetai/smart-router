@@ -38,6 +38,8 @@ Config lives in `~/.config/smart-router` (override with `SMART_ROUTER_CONFIG_DIR
 
 OpenClaw host integration: [smart-router plugin](integrations/openclaw/README.md).
 
+For OpenClaw, `spawn --confined` restricts the child to the `openclaw` MCP bridge. Claude runs with built-in tools disabled; supported Codex installations must pass a feature check and run with a read-only sandbox. Confinement, intersected allowlists, and denied tools persist across `send` turns. Only one HTTP loopback bridge is accepted; other MCP servers are removed, and unsupported configurations fail closed. Codex retains `apply_patch`, `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource`: the read-only sandbox with `approval_policy="never"` blocks writes, and resource access is limited to the bridge.
+
 ## Claude Code plugin
 
 The `smart-router-threads` plugin adds `/sr` to browse this session's delegate conversations in a pane; `/sr all` shows all sessions and `/sr <handle>` opens a thread.

@@ -1565,7 +1565,7 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
       collectToolList,
     )
     .option(
-      "--disallowedTools <list>",
+      "--disallowedTools <list...>",
       "Denied tools (repeatable)",
       collectDeniedTools,
     )
@@ -1600,7 +1600,7 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
       collectToolList,
     )
     .option(
-      "--disallowedTools <list>",
+      "--disallowedTools <list...>",
       "Denied tools (repeatable)",
       collectDeniedTools,
     )

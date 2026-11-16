@@ -78,11 +78,36 @@ Use model-scoped runtime keys, as documented in [runtime configuration](https://
 }
 ```
 
+Model pins use `smart-router/<harness>:<model>`, for example
+`smart-router/codex:gpt-6.1-terra` or `smart-router/claude:opus`.
+`smart-router/auto` leaves model selection to the router. Pins pass the exact
+`<harness>:<model>` to `spawn --model`; `send` retains the session's original
+model. The model must already be enabled in smart-router, support its configured
+default effort, and be permitted by `rules.directModel`. A failed Codex confinement
+precheck rejects the pin. OpenClaw may then use an explicitly configured fallback.
+
+Register each pin in `models.providers.smart-router.models` using the explicit
+fallback above, with its `id` changed from `auto` to `codex:gpt-6.1-terra`. Add its
+runtime binding alongside `smart-router/auto` in `agents.defaults.models`, and
+select that full ID in the agent's `model`:
+
+```json
+"smart-router/codex:gpt-6.1-terra": { "agentRuntime": { "id": "smart-router" } }
+```
+
 Optional plugin config keys: `smartRouterBinary` selects the executable; `cwd` overrides the session workspace; `hint` and `confidential` pass to spawn; positive integer `resultLimit` bounds returned text on spawn and send. Otherwise OpenClaw supplies the workspace at execution time, and smart-router preserves it for resume.
 
 OpenClaw supplies the tools allowed by its **subagent policy** through a per-attempt loopback MCP server. Its [CLI backend bridge](https://docs.openclaw.ai/plugins/cli-backend-plugins) injects `--strict-mcp-config --mcp-config <file>` on spawn and resume, plus `OPENCLAW_MCP_TOKEN` and `OPENCLAW_MCP_CLI_CAPTURE_KEY`. smart-router references those environment variables when it launches Claude or Codex. The plugin does not copy credentials or construct an MCP server.
 
-Limitations: OpenClaw cannot steer a running delegate through this adapter. Native Claude and Codex coding tools execute outside OpenClaw policy; displayed native tool events do not prove host tool execution. Exact restricted-tool runs fail closed because native tools are declared always on. The selected harness and model stay fixed for each subagent session. The catalog's 128k context, 16k output, and zero prices are display metadata; smart-router and the selected harness determine actual limits and usage. Input is text only.
+Confinement requires the matching smart-router CLI and plugin. The child has only
+the loopback OpenClaw bridge; deny lists accept comma-separated, space-separated,
+and separate argument entries. Codex delegates bridge tool approvals to OpenClaw's
+`before_tool_call` hooks with `mcp_servers.openclaw.default_tools_approval_mode="approve"`.
+Its native tools retain a read-only sandbox and `approval_policy="never"`; ask-first
+messaging and money rules must be enforced by the gateway. The four residual Codex
+tools and bridge trust assumptions are described in the root README.
+
+Limitations: OpenClaw cannot steer a running delegate through this adapter. The selected harness and model stay fixed for each subagent session. The catalog's 128k context, 16k output, and zero prices are display metadata; smart-router and the selected harness determine actual limits and usage. Input is text only.
 
 Development checks:
 

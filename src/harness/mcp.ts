@@ -150,6 +150,30 @@ const HTTP_TRANSPORT_TYPES = new Set([
   "streamable_http",
 ]);
 
+function parseConfinedJson(text: string): unknown {
+  const config: unknown = JSON.parse(text);
+  // JSON.parse validates grammar but discards duplicates; inspect the original keys too.
+  const objects: (Set<string> | undefined)[] = [];
+  for (const token of text.matchAll(/"(?:\\.|[^"\\])*"|[{}\[\]]/g)) {
+    const value = token[0];
+    if (value === "{") objects.push(new Set());
+    if (value === "[") objects.push(undefined);
+    if (value === "}" || value === "]") objects.pop();
+    const isObjectKey =
+      value.startsWith('"') &&
+      text
+        .slice(token.index + value.length)
+        .trimStart()
+        .startsWith(":");
+    if (!isObjectKey) continue;
+    const keys = objects.at(-1);
+    const key: string = JSON.parse(value);
+    if (keys?.has(key)) throw new Error("Duplicate MCP config key");
+    keys?.add(key);
+  }
+  return config;
+}
+
 function readConfinedBridge(
   paths: string[],
 ): ({ type: "http" } & HttpServer) | undefined {
@@ -157,7 +181,7 @@ function readConfinedBridge(
   for (const path of paths) {
     let config: unknown;
     try {
-      config = JSON.parse(readFileSync(path, "utf8"));
+      config = parseConfinedJson(readFileSync(path, "utf8"));
     } catch {
       throw new Error("Cannot read confined MCP config");
     }
@@ -224,6 +248,8 @@ export function confinedCodexMcp(
     `${prefix}={}`,
     `${prefix}.required=true`,
     `${prefix}.enabled=true`,
+    // OpenClaw before_tool_call owns approvals; native Codex tools remain read-only.
+    `${prefix}.default_tools_approval_mode="approve"`,
   ];
   overrides.push(`${prefix}.url=${JSON.stringify(server.url)}`);
   const headers: Record<string, string> = {};

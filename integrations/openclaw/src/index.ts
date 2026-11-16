@@ -148,9 +148,12 @@ export function registerSmartRouter(api: RegistrationApi): void {
       systemPromptFileArg: "--append-system-prompt-file",
     },
     resolveExecutionArgs(context) {
-      if (context.useResume || typeof config.cwd === "string")
-        return context.baseArgs;
-      return [...context.baseArgs, "--cwd", context.workspaceDir];
+      const args = [...context.baseArgs];
+      if (!context.useResume && typeof config.cwd !== "string")
+        args.push("--cwd", context.workspaceDir);
+      if (!context.useResume && context.modelId !== "auto")
+        args.push("--model", context.modelId);
+      return args;
     },
     parseJsonlEvent: parseSmartRouterEvent,
     bundleMcp: true,

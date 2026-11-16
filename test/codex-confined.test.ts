@@ -416,3 +416,53 @@ test("allowlist intersection handles exact names, bridge aliases and literal MCP
     intersectAllowedTools("mcp__openclaw__safe*", "mcp__openclaw__safe_ping"),
   ).toBe("mcp__openclaw__safe_ping");
 });
+
+test("confined Codex delegates bridge approvals to OpenClaw on spawn and resume", () => {
+  const { binary } = fixture();
+  const path = join(process.env.SMART_ROUTER_STATE_DIR!, "bridge.json");
+  writeFileSync(
+    path,
+    JSON.stringify({
+      mcpServers: {
+        openclaw: { type: "http", url: "http://localhost:9999/mcp" },
+      },
+    }),
+  );
+  const options = {
+    cwd: "/tmp",
+    model: "test",
+    confined: true,
+    mcpConfig: [path],
+    codexConfinedOverrides: verifyConfinedCodex(binary),
+  };
+  for (const command of [
+    codex.buildSpawn("task", options),
+    codex.buildResume("thread", "again", options),
+  ]) {
+    expect(command.argv).toContain(
+      'mcp_servers.openclaw.default_tools_approval_mode="approve"',
+    );
+    expect(command.argv).toContain('sandbox_mode="read-only"');
+    expect(command.argv).toContain('approval_policy="never"');
+  }
+});
+
+test("confined bridge rejects duplicate JSON keys including escaped openclaw keys", async () => {
+  fixture();
+  const directory = process.env.SMART_ROUTER_STATE_DIR!;
+  const input = join(directory, "duplicate.json");
+  const bridge = '{"type":"http","url":"http://localhost:9999/mcp"}';
+  for (const text of [
+    `{"mcpServers":{"openclaw":${bridge},"openclaw":${bridge}}}`,
+    `{"mcpServers":{"openclaw":${bridge},"open\\u0063law":${bridge}}}`,
+    `{"mcpServers":{},"mcpServers":{"openclaw":${bridge}}}`,
+  ]) {
+    writeFileSync(input, text);
+    await expect(
+      writeConfinedMcpConfig([input], join(directory, "filtered")),
+    ).rejects.toThrow("Cannot read confined MCP config");
+    expect(() => confinedCodexMcp([input])).toThrow(
+      "Cannot read confined MCP config",
+    );
+  }
+});

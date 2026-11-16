@@ -2319,3 +2319,72 @@ test("confined resumes reject legacy missing allowlists and intersect the latest
     "mcp__openclaw__safe_ping",
   );
 });
+
+test("OpenClaw variadic denials retain the automatic routed model and confined resume", async () => {
+  runnerOutput = CODEX_OUTPUT;
+  const verified = {
+    verifyConfinedCodex: () => [
+      'sandbox_mode="read-only"',
+      'approval_policy="never"',
+    ],
+  };
+  const bridge = join(directory, "bridge.json");
+  await writeFile(
+    bridge,
+    JSON.stringify({
+      mcpServers: {
+        openclaw: { type: "http", url: "http://127.0.0.1:9999/mcp" },
+      },
+    }),
+  );
+  const spawned = await cli(
+    [
+      "spawn",
+      "task",
+      "--confined",
+      "--mcp-config",
+      bridge,
+      "--disallowedTools",
+      "WebSearch",
+      "mcp__openclaw__pay",
+      "mcp__openclaw__send",
+    ],
+    verified,
+  );
+  expectJson(spawned, {
+    harness: "codex",
+    model: "terra",
+    route: { pick: "codex:terra@high" },
+  });
+  expect((await loadSession(spawned.json.handle)).disallowedTools).toEqual([
+    "WebSearch",
+    "mcp__openclaw__pay",
+    "mcp__openclaw__send",
+  ]);
+  expect(
+    (
+      await cli(
+        [
+          "send",
+          spawned.json.handle,
+          "again",
+          "--disallowedTools",
+          "mcp__openclaw__delete",
+          "WebFetch",
+        ],
+        verified,
+      )
+    ).exitCode,
+  ).toBe(0);
+  for (const argv of runnerArguments) {
+    expect(argv[argv.indexOf("-m") + 1]).toBe("terra");
+    expect(argv).toContain("--ignore-user-config");
+    expect(argv).toContain('sandbox_mode="read-only"');
+  }
+  expect(runnerArguments[0]).toContain(
+    'mcp_servers.openclaw.disabled_tools=["pay","send"]',
+  );
+  expect(runnerArguments[1]).toContain(
+    'mcp_servers.openclaw.disabled_tools=["pay","send","delete"]',
+  );
+});

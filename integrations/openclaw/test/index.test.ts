@@ -179,3 +179,36 @@ test("configured binary and flags pass through", () => {
     "send {sessionId} {prompt} --events --confined --result-limit 1000",
   );
 });
+
+test("OpenClaw model pins reach spawn while auto routes and resumes retain the stored model", () => {
+  const context = {
+    workspaceDir: "/tmp/workspace",
+    provider: "smart-router",
+    useResume: false,
+    baseArgs: ["spawn", "{prompt}", "--events", "--confined"],
+  };
+  for (const modelId of ["codex:gpt-6.1-terra", "claude:opus"]) {
+    expect(backend.resolveExecutionArgs?.({ ...context, modelId })).toEqual([
+      ...context.baseArgs,
+      "--cwd",
+      context.workspaceDir,
+      "--model",
+      modelId,
+    ]);
+    const configured = captureRegistration({ cwd: "/tmp/override" }).backend;
+    expect(configured.resolveExecutionArgs?.({ ...context, modelId })).toEqual([
+      ...context.baseArgs,
+      "--model",
+      modelId,
+    ]);
+    const baseArgs = ["send", "handle", "{prompt}", "--events", "--confined"];
+    expect(
+      backend.resolveExecutionArgs?.({
+        ...context,
+        modelId,
+        baseArgs,
+        useResume: true,
+      }),
+    ).toEqual(baseArgs);
+  }
+});

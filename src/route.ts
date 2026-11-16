@@ -45,6 +45,7 @@ export type RouteOptions = {
   dryRun?: boolean;
   confined?: boolean;
   claudeOnly?: boolean;
+  harnessOnly?: HarnessName;
   confinedCodexAvailable?: boolean;
   confinedCodexFailure?: string;
   appendSystemPromptFile?: string;
@@ -374,7 +375,11 @@ export async function route(
   let zdrUnavailable = false;
   const candidates = configuredCandidates.filter((candidate) => {
     if (!config.harnesses[candidate.harness]?.enabled) return false;
-    if (options.claudeOnly && candidate.harness !== "claude") return false;
+    if (
+      (options.claudeOnly && candidate.harness !== "claude") ||
+      (options.harnessOnly && candidate.harness !== options.harnessOnly)
+    )
+      return false;
     if (
       options.confined &&
       candidate.harness !== "claude" &&
@@ -419,6 +424,10 @@ export async function route(
     quota,
     candidates,
   };
+  if (candidates.length === 0 && options.harnessOnly)
+    throw new Error(
+      `No route candidates available for harness ${options.harnessOnly}`,
+    );
   if (options.dryRun) return state;
   if (candidates.length === 0)
     throw new Error(
@@ -478,7 +487,9 @@ export async function route(
   const confidenceFallback =
     confidenceFloor !== undefined && selectedModel.confidence < confidenceFloor;
   const fallbackRequired =
-    !eligibleDefault || !selectedModelIsCandidate || confidenceFallback;
+    (!options.harnessOnly && !eligibleDefault) ||
+    !selectedModelIsCandidate ||
+    confidenceFallback;
   const reasons = fallbackRequired ? [] : ["selected by Jev"];
   if (zdrUnavailable)
     reasons.push(
@@ -487,7 +498,7 @@ export async function route(
   if (!config.quota.enabled) reasons.push("quota disabled");
   if (quotaUnavailable && config.rules.quotaCutoffPercent !== undefined)
     reasons.push("codexbar not installed; quota cutoff skipped");
-  if (fallbackReason) reasons.push(fallbackReason);
+  if (fallbackRequired && fallbackReason) reasons.push(fallbackReason);
   if (confidenceFallback)
     reasons.push(
       `Jev confidence ${selectedModel.confidence.toFixed(2)} below floor ${confidenceFloor.toFixed(2)}; using ${fallbackCandidate.id}`,

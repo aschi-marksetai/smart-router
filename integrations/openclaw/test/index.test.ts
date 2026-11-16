@@ -187,7 +187,12 @@ test("OpenClaw model pins reach spawn while auto routes and resumes retain the s
     useResume: false,
     baseArgs: ["spawn", "{prompt}", "--events", "--confined"],
   };
-  for (const modelId of ["codex:gpt-6.1-terra", "claude:opus"]) {
+  for (const modelId of [
+    "codex:gpt-6.1-terra",
+    "claude:opus",
+    "codex:auto",
+    "claude:auto",
+  ]) {
     expect(backend.resolveExecutionArgs?.({ ...context, modelId })).toEqual([
       ...context.baseArgs,
       "--cwd",

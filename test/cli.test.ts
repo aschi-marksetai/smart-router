@@ -367,14 +367,114 @@ test("spawn and send preserve the configured Codex localhost network access", as
     expect(argv).toContain("sandbox_workspace_write.network_access=true");
 });
 
-test("spawn refuses a dry-run route without launching a harness", async () => {
-  expectJson(
-    await cli(["spawn", "task", "--dry-run"]),
-    { error: "Cannot spawn from a dry-run route" },
-    1,
-  );
+test("spawn dry-run reports the decision without launching a harness", async () => {
+  expectJson(await cli(["spawn", "task", "--dry-run"]), {
+    pick: "codex:terra@high",
+    fellBack: false,
+  });
   expect(runnerArguments).toHaveLength(0);
   expect(await listSessions(OWNER)).toEqual([]);
+});
+
+test("harness:auto routes under directModel deny and stores the concrete model on send", async () => {
+  config.rules.directModel = "deny";
+  config.models[1].efforts = ["low", "high"];
+  await saveConfig(config);
+  runnerOutput = CODEX_OUTPUT;
+  const scopedRouteDeps = (configuration: Config): RouteDeps => {
+    const deps = routeDeps(configuration);
+    return {
+      ...deps,
+      client: {
+        systemOne: async (request) => {
+          const response = await deps.client.systemOne(request);
+          response.answers.effort.choice = "low";
+          return response;
+        },
+      },
+    };
+  };
+  const spawned = await cli(["spawn", "review", "--model", "codex:auto"], {
+    routeDeps: scopedRouteDeps,
+  });
+  expectJson(spawned, {
+    harness: "codex",
+    model: "terra",
+    effort: "low",
+    route: { pick: "codex:terra@low", fellBack: false },
+  });
+  expect(await loadSession(spawned.json.handle)).toMatchObject({
+    harness: "codex",
+    model: "terra",
+    effort: "low",
+    route: { pick: "codex:terra@low" },
+  });
+  expectJson(
+    await cli(["send", spawned.json.handle, "again"], {
+      routeDeps: () => {
+        throw new Error("must not reroute a resume");
+      },
+    }),
+    { result: "codex done" },
+  );
+  expect(await loadSession(spawned.json.handle)).toMatchObject({
+    harness: "codex",
+    model: "terra",
+    effort: "low",
+  });
+  expectJson(
+    await cli(["spawn", "review", "--model", "codex:auto", "--effort", "high"]),
+    { error: DIRECT_MODEL_DENIED_ERROR },
+    1,
+  );
+  expectJson(
+    await cli(["spawn", "review", "--model", "codex:terra"]),
+    { error: DIRECT_MODEL_DENIED_ERROR },
+    1,
+  );
+});
+
+test("harness:auto supports effort overrides, scoped route inspection and dry-run", async () => {
+  config.models[1].efforts = ["low", "high"];
+  await saveConfig(config);
+  runnerOutput = CODEX_OUTPUT;
+  const args = ["spawn", "review", "--model", "codex:auto", "--effort", "low"];
+  expectJson(await cli([...args, "--dry-run"]), {
+    pick: "codex:terra@low",
+    candidates: ["codex:terra"],
+  });
+  expect(runnerArguments).toHaveLength(0);
+  expect(await listSessions(OWNER)).toEqual([]);
+  expectJson(await cli(args), {
+    model: "terra",
+    effort: "low",
+    route: { pick: "codex:terra@low" },
+  });
+  expectJson(await cli(["route", "review", "--model", "codex:auto"]), {
+    pick: "codex:terra@high",
+    candidates: ["codex:terra"],
+    fellBack: false,
+  });
+  const state = await cli([
+    "route",
+    "review",
+    "--model",
+    "codex:auto",
+    "--dry-run",
+  ]);
+  expectJson(state, { candidates: [{ harness: "codex", model: "terra" }] });
+  expectJson(
+    await cli(["route", "review", "--model", "codex:terra"]),
+    { error: "route --model must be harness:auto" },
+    1,
+  );
+  config.harnesses.codex!.enabled = false;
+  await saveConfig(config);
+  expectJson(
+    await cli(["spawn", "review", "--model", "codex:auto"]),
+    { error: "No route candidates available for harness codex" },
+    1,
+  );
 });
 
 test("send refuses a failed session without a harness session id", async () => {
@@ -2113,12 +2213,17 @@ test("Codex tripwire names the failed override, warns to upgrade, and records th
   expect(routed.stderr).toContain("upgrade codex");
   expect(routed.json.route.reason).toContain("features.shell_tool=false");
   expect(routed.json.route.reason).toContain("upgrade codex");
-  const pinned = await cli(
-    ["spawn", "task", "--confined", "--model", "codex:terra"],
-    failed,
-  );
-  expect(pinned.exitCode).toBe(1);
-  expect(pinned.stderr).toContain("upgrade codex");
+  for (const model of ["codex:terra", "codex:auto"]) {
+    const pinned = await cli(
+      ["spawn", "task", "--confined", "--model", model],
+      failed,
+    );
+    expectJson(
+      pinned,
+      { error: "features.shell_tool=false was not resolved; upgrade codex" },
+      1,
+    );
+  }
 });
 
 test("confined allowlists persist and intersect on unflagged resumes for Claude and Codex", async () => {

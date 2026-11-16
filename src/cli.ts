@@ -540,6 +540,12 @@ function parsePick(value: string): Pick {
   };
 }
 
+function autoHarness(modelId?: string): HarnessName | undefined {
+  if (!modelId) return undefined;
+  const [harness, model] = parseHarness(modelId);
+  return model === "auto" ? harness : undefined;
+}
+
 function directPick(modelId: string, effort: string, config: Config): Pick {
   const [harness, model] = parseHarness(modelId);
   const enabledModels = config.models.filter(
@@ -559,11 +565,18 @@ function directPick(modelId: string, effort: string, config: Config): Pick {
 
 async function routeCommand(
   prompt: string,
-  options: RouteOptions,
+  options: RouteOptions & { model?: string },
   deps: CliDeps,
 ): Promise<void> {
   const config = await loadConfig();
-  const result = await route(prompt, options, deps.routeDeps(config));
+  const harnessOnly = autoHarness(options.model);
+  if (options.model && !harnessOnly)
+    throw new Error("route --model must be harness:auto");
+  const result = await route(
+    prompt,
+    { ...options, harnessOnly },
+    deps.routeDeps(config),
+  );
   deps.stdout(`${JSON.stringify(result)}\n`);
   await printUpdateNotice(
     config,
@@ -583,9 +596,11 @@ async function spawnCommand(
 ): Promise<void> {
   await sweepSessions();
   const config = await loadConfig();
+  const harnessOnly = autoHarness(options.model);
+  const directModel = options.model && !harnessOnly;
   if (
     config.rules.directModel === DIRECT_MODEL_DENY &&
-    (options.model || options.effort)
+    (directModel || options.effort)
   )
     throw new Error(
       'direct model picks are disabled by rules.directModel; let the router choose and pass escalation context with --hint, for example --hint "escalate: previous attempt on codex:gpt-6-luna failed: <why>"',
@@ -613,13 +628,15 @@ async function spawnCommand(
       if (options.model?.startsWith("codex:")) throw error;
     }
   }
-  const routeResult = options.model
+  const routeResult = directModel
     ? null
     : await route(
         prompt,
         {
           ...options,
+          dryRun: false,
           claudeOnly,
+          harnessOnly,
           confinedCodexAvailable,
           confinedCodexFailure,
         },
@@ -628,7 +645,7 @@ async function spawnCommand(
   if (routeResult && !("pick" in routeResult))
     throw new Error("Cannot spawn from a dry-run route");
   let selected: Pick;
-  if (options.model) {
+  if (options.model && directModel) {
     selected = directPick(
       options.model,
       options.effort ?? config.defaultEffort,
@@ -637,6 +654,14 @@ async function spawnCommand(
   } else {
     if (!routeResult) throw new Error("Route result is missing");
     selected = parsePick(routeResult.pick);
+    if (options.effort) {
+      selected = directPick(
+        `${selected.harness}:${selected.model}`,
+        options.effort,
+        config,
+      );
+      routeResult.pick = `${selected.harness}:${selected.model}@${selected.effort}`;
+    }
   }
   if (routeResult && needsStoppingPoint(config, routeResult)) {
     const modelId = routeResult.pick.split("@", 1)[0];
@@ -644,6 +669,14 @@ async function spawnCommand(
       `${modelId} needs a stated stopping point: add success criteria and where to stop to the prompt, then call spawn again`,
     );
   }
+  if (options.dryRun)
+    return printResult(
+      deps,
+      routeResult ?? {
+        pick: `${selected.harness}:${selected.model}@${selected.effort}`,
+      },
+      "Spawn dry run completed",
+    );
   const guardrails =
     options.guardrails === false
       ? ""
@@ -1533,6 +1566,7 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .action((options) => deps.runInit(options));
   program
     .command("route <prompt>")
+    .option("--model <harness:auto>")
     .option("--cwd <dir>")
     .option("--hint <text>")
     .option("--confidential")

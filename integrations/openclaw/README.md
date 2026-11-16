@@ -80,19 +80,31 @@ Use model-scoped runtime keys, as documented in [runtime configuration](https://
 
 Model pins use `smart-router/<harness>:<model>`, for example
 `smart-router/codex:gpt-6.1-terra` or `smart-router/claude:opus`.
-`smart-router/auto` leaves model selection to the router. Pins pass the exact
-`<harness>:<model>` to `spawn --model`; `send` retains the session's original
-model. The model must already be enabled in smart-router, support its configured
+`smart-router/auto` leaves model selection to the router.
+`smart-router/<harness>:auto` restricts routing to that harness while the router
+chooses the model and effort, for example `smart-router/codex:auto` or
+`smart-router/claude:auto`. Scoped routing is allowed under `rules.directModel: deny`;
+explicit effort overrides remain denied. If no eligible candidate exists in that
+harness, routing fails without switching harnesses, including on fallback.
+
+Pins pass the exact `<harness>:<model>` or `<harness>:auto` to `spawn --model`;
+`send` retains the session's concrete model and effort. A concrete model pin
+must already be enabled in smart-router, support its configured
 default effort, and be permitted by `rules.directModel`. A failed Codex confinement
-precheck rejects the pin. OpenClaw may then use an explicitly configured fallback.
+precheck rejects both concrete Codex pins and `codex:auto`. OpenClaw may then use
+an explicitly configured fallback.
 
 Register each pin in `models.providers.smart-router.models` using the explicit
-fallback above, with its `id` changed from `auto` to `codex:gpt-6.1-terra`. Add its
+fallback above, with its `id` changed from `auto` to `codex:auto` (or the desired
+concrete model, such as `codex:gpt-6.1-terra`) and its `name` updated accordingly.
+For example, the scoped entry starts with
+`{ "id": "codex:auto", "name": "smart-router Codex auto", ... }`, retaining the
+remaining model metadata from the example. Add its
 runtime binding alongside `smart-router/auto` in `agents.defaults.models`, and
 select that full ID in the agent's `model`:
 
 ```json
-"smart-router/codex:gpt-6.1-terra": { "agentRuntime": { "id": "smart-router" } }
+"smart-router/codex:auto": { "agentRuntime": { "id": "smart-router" } }
 ```
 
 Optional plugin config keys: `smartRouterBinary` selects the executable; `cwd` overrides the session workspace; `hint` and `confidential` pass to spawn; positive integer `resultLimit` bounds returned text on spawn and send. Otherwise OpenClaw supplies the workspace at execution time, and smart-router preserves it for resume.

@@ -173,6 +173,89 @@ function candidateIds(result: Awaited<ReturnType<typeof route>>): string[] {
     : result.candidates;
 }
 
+test.each([
+  ["router effort", "codex:terra", 0.9, false, false],
+  ["hard review", "codex:sol", 0.9, false, false],
+  ["Claude highest probability", "claude:opus", 0.9, false, true],
+  ["low confidence", "codex:terra", 0.1, false, true],
+  ["offline", "codex:terra", 0.9, true, true],
+  ["escalation outside scope", "claude:opus", 0.9, false, true],
+])(
+  "Codex scope preserves routing and fallback: %s",
+  async (name, choice, confidence, offline, fellBack) => {
+    const result = await route(
+      "Review the change; stop after the review.",
+      { harnessOnly: "codex", hint: name },
+      deps({
+        config: {
+          ...config,
+          defaultModelId: "claude:opus",
+          rules: { confidenceFloor: 0.5 },
+          models: [
+            ...config.models,
+            { ...config.models[1], id: "codex:sol", model: "sol" },
+          ],
+        },
+        doctor: async () => ({
+          ...detection,
+          candidates: [...detection.candidates, "codex:sol@high"],
+        }),
+        client: {
+          systemOne: async (request) => {
+            expect(
+              request.state.candidates.map(({ harness }) => harness),
+            ).toEqual(["codex", "codex"]);
+            if (offline) throw new Error("offline");
+            const response = await deps({}, choice).client.systemOne(request);
+            response.answers.model.confidence = confidence;
+            response.answers.model.probabilities = {
+              "claude:opus": 0.99,
+              "codex:terra": 0.01,
+            };
+            response.answers.effort.choice =
+              name === "hard review" ? "high" : "low";
+            return response;
+          },
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      pick: `${fellBack ? "codex:terra" : choice}@${fellBack || name === "hard review" ? "high" : "low"}`,
+      candidates: ["codex:terra", "codex:sol"],
+      fellBack,
+    });
+  },
+);
+
+test.each([false, true])(
+  "Codex scope fails without candidates (dryRun=%s)",
+  async (dryRun) => {
+    await expect(
+      route(
+        "review",
+        { harnessOnly: "codex", dryRun },
+        deps({
+          config: { ...config, rules: { quotaCutoffPercent: { codex: 0 } } },
+        }),
+      ),
+    ).rejects.toThrow("No route candidates available for harness codex");
+  },
+);
+
+test("Claude scope and claudeOnly retain Claude candidates and fallback", async () => {
+  for (const options of [
+    { harnessOnly: "claude" },
+    { claudeOnly: true },
+  ] as const) {
+    const result = await route("review", options, deps({}, "codex:terra"));
+    expect(result).toMatchObject({
+      pick: "claude:opus@high",
+      candidates: ["claude:opus"],
+      fellBack: true,
+    });
+  }
+});
+
 test("requires cached OpenRouter ZDR models for confidential routing", async () => {
   const previousState = process.env.SMART_ROUTER_STATE_DIR;
   const directory = await mkdtemp(join(tmpdir(), "smart-router-zdr-"));

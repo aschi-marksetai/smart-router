@@ -11,6 +11,10 @@ export type Thread = {
   depth: number;
   createdAt: string;
   promptPreview: string;
+  label?: string;
+  phase?: string;
+  startedAt?: string;
+  endedAt?: string;
   cwd?: string;
   routePick?: string;
   inputTokens?: number;
@@ -40,8 +44,19 @@ export type PaneState = {
   error: string;
 };
 
+// A Bash call running `smart-router spawn`, keyed by its tool_use_id.
+export type SpawnCall = {
+  startedAt: number;
+  label?: string;
+  handle?: string;
+};
+export type SpawnCalls = Record<string, SpawnCall>;
+
 declare module "claude-code" {
   interface PluginState {
-    "smart-router-threads": { pane: Shaped<PaneState> };
+    "smart-router-threads": {
+      pane: Shaped<PaneState>;
+      spawns: Shaped<SpawnCalls>;
+    };
   }
 }

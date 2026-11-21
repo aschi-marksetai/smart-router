@@ -13,17 +13,28 @@ import {
   type Session,
 } from "./sessions.ts";
 
-export function sessionSummary({
-  handle,
-  owner,
-  status,
-  harness,
-  model,
-  effort,
-  depth,
-  createdAt,
-  promptPreview,
-}: Session) {
+const RESULT_PREVIEW_LENGTH = 160;
+
+function latestTurnTiming({ turns }: Session) {
+  const turn = turns?.at(-1);
+  return { startedAt: turn?.startedAt, endedAt: turn?.endedAt };
+}
+
+export function sessionSummary(session: Session) {
+  const {
+    handle,
+    owner,
+    status,
+    harness,
+    model,
+    effort,
+    depth,
+    createdAt,
+    promptPreview,
+    label,
+    phase,
+    lastResult,
+  } = session;
   return {
     handle,
     owner,
@@ -34,6 +45,10 @@ export function sessionSummary({
     depth,
     createdAt,
     promptPreview,
+    label,
+    phase,
+    resultPreview: lastResult?.slice(0, RESULT_PREVIEW_LENGTH),
+    ...latestTurnTiming(session),
   };
 }
 
@@ -41,6 +56,7 @@ export function sessionStatus(session: Session) {
   const handle = session.handle;
   return {
     ...session,
+    ...latestTurnTiming(session),
     running:
       session.status === SESSION_STATUS.running &&
       !!session.pid &&

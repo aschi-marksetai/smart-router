@@ -82,6 +82,8 @@ export type Session = {
   sessionId?: string;
   createdAt: string;
   promptPreview: string;
+  label?: string;
+  phase?: string;
   status: SessionStatus;
   pid?: number;
   supervisorPid?: number;
@@ -163,6 +165,8 @@ export async function createSession(
     sessionId: options.sessionId,
     createdAt: new Date().toISOString(),
     promptPreview: options.prompt.slice(0, PROMPT_PREVIEW_LENGTH),
+    label: options.label,
+    phase: options.phase,
     status: options.status,
     pid: options.pid,
     wrapperPid: options.wrapperPid,

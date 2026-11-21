@@ -134,6 +134,11 @@ test("status and normalized events use the shared CLI projections", async () => 
     depth: 1,
     createdAt: session.createdAt,
     promptPreview: session.promptPreview,
+    label: undefined,
+    phase: undefined,
+    resultPreview: "done",
+    startedAt: undefined,
+    endedAt: undefined,
   });
 });
 

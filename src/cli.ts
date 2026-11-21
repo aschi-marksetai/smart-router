@@ -120,6 +120,8 @@ type SpawnOptions = RouteOptions & {
   resultLimit?: string;
   waitForSlot?: string;
   events?: boolean;
+  label?: string;
+  phase?: string;
 };
 type PassthroughOptions = {
   events?: boolean;
@@ -161,6 +163,9 @@ const MCP_CONFIG_FLAG = "--mcp-config";
 const MCP_CONFIG_OPTION = `${MCP_CONFIG_FLAG} <file>`;
 const STRICT_MCP_CONFIG_FLAG = "--strict-mcp-config";
 const OUTPUT_RETRY_INTERVAL_MS = 1;
+const LABEL_FLAG = "--label";
+const PHASE_FLAG = "--phase";
+const DISPLAY_NAME_MAX_LENGTH = 80;
 
 function writeOutput(descriptor: number, text: string): void {
   const buffer = Buffer.from(text);
@@ -311,6 +316,22 @@ function parseNonNegativeInteger(value: string, flag: string): number {
   if (!Number.isSafeInteger(number) || number < 0)
     throw new Error(`${flag} must be a non-negative integer`);
   return number;
+}
+
+function parseDisplayName(
+  value: string | undefined,
+  flag: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  const name = value.trim();
+  if (!name) throw new Error(`${flag} must not be empty`);
+  if (/[\p{Cc}]/u.test(name))
+    throw new Error(`${flag} must be one line without control characters`);
+  if (name.length > DISPLAY_NAME_MAX_LENGTH)
+    throw new Error(
+      `${flag} must be at most ${DISPLAY_NAME_MAX_LENGTH} characters`,
+    );
+  return name;
 }
 
 function currentDepth(): number {
@@ -563,9 +584,61 @@ function directPick(modelId: string, effort: string, config: Config): Pick {
   return { harness, model, effort };
 }
 
+async function buildLaunch(
+  prompt: string,
+  selected: Pick,
+  options: SpawnOptions,
+  config: Config,
+  routeScores: Extract<
+    Awaited<ReturnType<typeof route>>,
+    { pick: string }
+  > | null,
+) {
+  const cwd = options.cwd ?? process.cwd();
+  const guardrails =
+    options.guardrails === false
+      ? ""
+      : guardrailsFor(
+          await loadGuardrails(),
+          `${selected.harness}:${selected.model}`,
+        );
+  const promptWithGuardrails = guardrails
+    ? `${prompt}\n\n## Operating rules\n\n${guardrails}`
+    : prompt;
+  const sandboxChoice =
+    selected.harness === "codex"
+      ? chooseCodexSandbox({
+          configuredSandbox: config.spawn.codexSandbox,
+          callerSandbox: options.confined ? "read-only" : options.sandbox,
+          autoSandbox: config.spawn.autoSandbox,
+          allowFullAccess: config.spawn.allowFullAccess,
+          codexLocalhostNeedsNetwork: config.spawn.codexLocalhostNeedsNetwork,
+          routingRan: routeScores !== null,
+          needsNetwork: routeScores?.needsNetwork ?? null,
+          needsBrowser: routeScores?.needsBrowser ?? null,
+          needsFullAccess: routeScores?.needsFullAccess ?? null,
+        })
+      : null;
+  const sandbox = sandboxChoice?.usesNetworkAccess
+    ? `${sandboxChoice.sandbox}+network`
+    : sandboxChoice?.sandbox;
+  const toolchainNote = sandboxChoice
+    ? [
+        codex.codexToolchainNote(cwd, sandboxChoice.sandbox),
+        codex.codexGpgSigningNote(cwd, sandboxChoice.sandbox),
+      ]
+        .filter(Boolean)
+        .join("\n\n")
+    : "";
+  const spawnPrompt = toolchainNote
+    ? `${promptWithGuardrails}\n\n${toolchainNote}`
+    : promptWithGuardrails;
+  return { prompt: spawnPrompt, sandbox, sandboxChoice };
+}
+
 async function routeCommand(
   prompt: string,
-  options: RouteOptions & { model?: string },
+  options: RouteOptions & { model?: string; launch?: boolean },
   deps: CliDeps,
 ): Promise<void> {
   const config = await loadConfig();
@@ -577,7 +650,26 @@ async function routeCommand(
     { ...options, harnessOnly },
     deps.routeDeps(config),
   );
-  deps.stdout(`${JSON.stringify(result)}\n`);
+  let output: unknown = result;
+  if (options.launch) {
+    if (!("pick" in result))
+      throw new Error("--launch cannot be combined with --dry-run");
+    if (needsStoppingPoint(config, result))
+      throw new Error(
+        `${result.pick.split("@", 1)[0]} needs a stated stopping point: add success criteria and where to stop to the prompt, then call route --launch again`,
+      );
+    const selected = parsePick(result.pick);
+    const launch = await buildLaunch(prompt, selected, options, config, result);
+    output = {
+      ...result,
+      launch: {
+        ...selected,
+        prompt: launch.prompt,
+        sandbox: launch.sandbox ?? null,
+      },
+    };
+  }
+  deps.stdout(`${JSON.stringify(output)}\n`);
   await printUpdateNotice(
     config,
     "availableModels" in result ? result.availableModels : [],
@@ -594,6 +686,8 @@ async function spawnCommand(
   options: SpawnOptions,
   deps: CliDeps,
 ): Promise<void> {
+  const label = parseDisplayName(options.label, LABEL_FLAG);
+  const phase = parseDisplayName(options.phase, PHASE_FLAG);
   await sweepSessions();
   const config = await loadConfig();
   const harnessOnly = autoHarness(options.model);
@@ -677,13 +771,6 @@ async function spawnCommand(
       },
       "Spawn dry run completed",
     );
-  const guardrails =
-    options.guardrails === false
-      ? ""
-      : guardrailsFor(
-          await loadGuardrails(),
-          `${selected.harness}:${selected.model}`,
-        );
   const handle = createSessionHandle();
   const depth = currentDepth() + 1;
   const context =
@@ -691,42 +778,22 @@ async function spawnCommand(
       ? ""
       : `## Delegation context\n\nYour smart-router handle is ${handle} at depth ${depth} of max ${config.rules.concurrency?.maxDepth ?? DEFAULT_MAX_DEPTH}; if that depth equals the maximum you cannot spawn and must do the work yourself. Never wait on, stop, send to or steer your own handle or an ancestor. If you spawn a helper, use --detach and then \`smart-router wait <child> --timeout ${DELEGATE_WAIT_TIMEOUT_SECONDS}\` in a loop, polling, and report what you have if it is still running. A shell command returning early (a yield) is not completion; check status instead.`;
   const promptWithContext = context ? `${prompt}\n\n${context}` : prompt;
-  const promptWithGuardrails = guardrails
-    ? `${promptWithContext}\n\n## Operating rules\n\n${guardrails}`
-    : promptWithContext;
+  const {
+    prompt: spawnPrompt,
+    sandbox,
+    sandboxChoice,
+  } = await buildLaunch(
+    promptWithContext,
+    selected,
+    options,
+    config,
+    routeResult,
+  );
   const confidenceNote = routeResult
     ? ` (confidence ${routeResult.confidence})`
     : " (caller override)";
   const routeScores = routeResult && "pick" in routeResult ? routeResult : null;
-  const sandboxChoice =
-    selected.harness === "codex"
-      ? chooseCodexSandbox({
-          configuredSandbox: config.spawn.codexSandbox,
-          callerSandbox: options.confined ? "read-only" : options.sandbox,
-          autoSandbox: config.spawn.autoSandbox,
-          allowFullAccess: config.spawn.allowFullAccess,
-          codexLocalhostNeedsNetwork: config.spawn.codexLocalhostNeedsNetwork,
-          routingRan: routeScores !== null,
-          needsNetwork: routeScores?.needsNetwork ?? null,
-          needsBrowser: routeScores?.needsBrowser ?? null,
-          needsFullAccess: routeScores?.needsFullAccess ?? null,
-        })
-      : null;
-  const sandbox = sandboxChoice?.usesNetworkAccess
-    ? `${sandboxChoice.sandbox}+network`
-    : sandboxChoice?.sandbox;
   const sandboxNote = sandbox ? ` sandbox ${sandbox}` : "";
-  const toolchainNote = sandboxChoice
-    ? [
-        codex.codexToolchainNote(cwd, sandboxChoice.sandbox),
-        codex.codexGpgSigningNote(cwd, sandboxChoice.sandbox),
-      ]
-        .filter(Boolean)
-        .join("\n\n")
-    : "";
-  const spawnPrompt = toolchainNote
-    ? `${promptWithGuardrails}\n\n${toolchainNote}`
-    : promptWithGuardrails;
   const browser =
     !options.confined &&
     shouldUseClaudeBrowser(
@@ -772,6 +839,8 @@ async function spawnCommand(
       cwd,
       prompt: spawnPrompt,
       handle,
+      label,
+      phase,
       parentHandle: process.env[HANDLE_ENVIRONMENT_VARIABLE],
       logPath,
       wrapperPid: options.detach ? undefined : process.pid,
@@ -1566,6 +1635,7 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .action((options) => deps.runInit(options));
   program
     .command("route <prompt>")
+    .option("--launch")
     .option("--model <harness:auto>")
     .option("--cwd <dir>")
     .option("--hint <text>")
@@ -1613,6 +1683,8 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .option("--wait-for-slot <seconds>")
     .option(RESULT_LIMIT_OPTION)
     .option("--no-guardrails")
+    .option(`${LABEL_FLAG} <text>`, "Row label shown by the /sr pane")
+    .option(`${PHASE_FLAG} <text>`, "Phase group shown by the /sr pane")
     .action((prompt, options) => spawnCommand(prompt, options, deps));
   program
     .command("send <handle> <message>")

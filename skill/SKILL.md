@@ -5,7 +5,17 @@ description: Delegate a task to whichever coding-agent harness and model fits it
 
 # smart-router
 
-Use this instead of your native subagent tool when you delegate work. It picks the harness and model from the user's routing preferences and current quota, runs the task, and hands back a session you can continue.
+Use this when you delegate work; inside T3 Code, follow the section below. It picks the harness and model from the user's routing preferences and current quota, runs the task, and hands back a session you can continue.
+
+## Inside T3 Code
+
+When T3's `delegate_task` is available, use it instead of `spawn`:
+
+1. Run `smart-router route "<task>" --launch --cwd <repo>` (routing flags still apply).
+2. Call `orchestrator_capabilities` once per thread to discover provider instance IDs for Claude/Codex and each model's option names.
+3. Call `delegate_task` with `target.providerInstanceId` for `launch.harness`, `target.model` = `launch.model`, the effort entry in `target.options` = `launch.effort`, `task` = `launch.prompt`, and a short title. Request full-access runtime when `launch.sandbox` requires network (`+network`) or full access (`danger-full-access`); children cannot exceed the parent's permissions.
+
+Follow T3's rules for follow-ups and stopping. There is no smart-router handle or `send`, session record, or dashboard entry. The launch prompt includes the same guardrails and harness notes as spawn; router handle/depth context is omitted because T3 owns the child thread.
 
 ## Delegate
 
@@ -37,6 +47,7 @@ Optional flags:
 - `--model harness:model --effort <level>` skips routing and picks directly, for example `--model harness:model --effort level`; some setups disable it, so use `--hint` for escalation instead.
 - `--no-guardrails` skips the appended operating rules when the prompt already carries its own.
 - `--result-limit <chars>` bounds returned result text while retaining the full result in the session.
+- `--label "<group>:<name>"` and `--phase "<name>"` (one line, at most 80 characters) name the delegation in Claude Code's `/sr` pane, which groups rows by phase and shows each one's model, effort, status and elapsed time. Pass `--label` on every spawn run in the background: the live card under that spawn call finds its session by label, and an unlabeled background spawn gets no card.
 
 Use `spawn --events` or `send --events` for normalized JSONL progress ending in one result or error event. Use `logs <handle> --follow --events` to follow normalized progress from a detached session, optionally starting with `--tail N` raw lines.
 

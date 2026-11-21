@@ -261,6 +261,109 @@ test("route selects, dry-runs, and falls back after a Jev failure", async () => 
   expect(fallback.json.reason).toContain("mock returned 500");
 });
 
+test.each([
+  ["codex", 0, 0, "workspace-write"],
+  ["codex", 1, 0, "workspace-write+network"],
+  ["codex", 0, 1, "danger-full-access"],
+  ["claude", 0, 0, null],
+] as const)(
+  "route --launch matches %s spawn (network %s, full %s)",
+  async (harness, network, fullAccess, sandbox) => {
+    const prompt = "Finish task; stop when verified";
+    await writeFile(
+      join(directory, "config", "guardrails.md"),
+      `## ${harness}\nVerify the result.\n## ${harness}:${harness === "codex" ? "terra" : "opus"}\nStop after verification.\n`,
+    );
+    await writeFile(
+      join(directory, "Package.swift"),
+      "// swift-tools-version: 6.0",
+    );
+    execFileSync("git", ["init", directory], { stdio: "pipe" });
+    execFileSync("git", ["-C", directory, "config", "commit.gpgsign", "true"]);
+    const overrides: Partial<CliDeps> = {
+      routeDeps: (configuration) => {
+        const dependencies = routeDeps(configuration);
+        return {
+          ...dependencies,
+          client: {
+            systemOne: async (request) => {
+              const response = await dependencies.client.systemOne(request);
+              response.answers.model.choice = `${harness}:${harness === "codex" ? "terra" : "opus"}`;
+              response.answers.needsNetwork.noul = network;
+              response.answers.needsFullAccess.noul = fullAccess;
+              return response;
+            },
+          },
+        };
+      },
+    };
+    const args = [
+      prompt,
+      "--cwd",
+      directory,
+      "--hint",
+      "bounded task",
+      "--model",
+      `${harness}:auto`,
+    ];
+    const plain = await cli(["route", ...args], overrides);
+    const launched = await cli(["route", ...args, "--launch"], overrides);
+    expect(launched.exitCode).toBe(0);
+    const { launch, ...decision } = launched.json;
+    expect(decision).toEqual(plain.json);
+    expect(plain.json).not.toHaveProperty("launch");
+    expect(launch).toMatchObject({
+      harness,
+      model: harness === "codex" ? "terra" : "opus",
+      effort: "high",
+      sandbox,
+    });
+    expect(launch.prompt).toContain(
+      "## Operating rules\n\nVerify the result.\n\nStop after verification.",
+    );
+    if (harness === "codex" && sandbox?.startsWith("workspace-write")) {
+      expect(launch.prompt).toContain("--disable-sandbox");
+      expect(launch.prompt).toContain("commit not signed: needs overseer");
+    }
+    expect(runnerArguments).toHaveLength(0);
+    expect(await listSessions()).toEqual([]);
+    runnerOutput = harness === "codex" ? CODEX_OUTPUT : CLAUDE_OUTPUT;
+    const spawned = await cli(["spawn", ...args], overrides);
+    expect(spawned.exitCode).toBe(0);
+    const spawnPrompt = runnerArguments[0]?.find((argument) =>
+      argument.startsWith(prompt),
+    );
+    // T3 owns the child identity; only spawn adds smart-router session context.
+    const sessionContext = /\n\n## Delegation context\n\n[^\n]+/;
+    expect(launch.prompt).toBe(spawnPrompt?.replace(sessionContext, ""));
+    expect(launch.sandbox).toBe(spawned.json.sandbox ?? null);
+  },
+);
+
+test("route --launch rejects a dry-run without launching", async () => {
+  const result = await cli(["route", "task", "--launch", "--dry-run"]);
+  expectJson(
+    result,
+    { error: "--launch cannot be combined with --dry-run" },
+    1,
+  );
+  expect(runnerArguments).toHaveLength(0);
+});
+
+test("route --launch refuses a pick that needs a stated stopping point, like spawn", async () => {
+  routeResponse = "stopping";
+  const refused = await cli(["route", "task", "--launch"]);
+  expectJson(
+    refused,
+    {
+      error:
+        "codex:terra needs a stated stopping point: add success criteria and where to stop to the prompt, then call route --launch again",
+    },
+    1,
+  );
+  expect(runnerArguments).toHaveLength(0);
+});
+
 test("spawn parses Claude and Codex output, flags, and stopping-point refusal", async () => {
   process.env.SMART_ROUTER_DEPTH = "1";
   process.env.SMART_ROUTER_HANDLE = "parent-handle";
@@ -972,6 +1075,48 @@ test("detached spawn supports status, logs, wait, stop, and send refusal", async
   expectJson(status, { usage: { cachedInputTokens: 6, cacheWriteTokens: 2 } });
   const stopped = await cli(["stop", handle]);
   expectJson(stopped, { status: "stopped", running: false });
+});
+
+test("spawn --label and --phase are trimmed, validated and shown by sessions and status", async () => {
+  // prettier-ignore
+  const spawned = await cli(["spawn", "finish task", "--model", "claude:opus", "--label", "  research:dji-mic ", "--phase", "Research"]);
+  const handle = spawned.json.handle;
+  expect(await loadSession(handle)).toMatchObject({
+    label: "research:dji-mic",
+    phase: "Research",
+  });
+  const listed = (await cli(["sessions"])).json.find(
+    (session: { handle: string }) => session.handle === handle,
+  );
+  expect(listed).toMatchObject({
+    label: "research:dji-mic",
+    phase: "Research",
+    resultPreview: "finished work",
+    startedAt: expect.any(String),
+    endedAt: expect.any(String),
+  });
+  expectJson(await cli(["status", handle]), {
+    label: "research:dji-mic",
+    phase: "Research",
+    startedAt: listed.startedAt,
+    endedAt: listed.endedAt,
+  });
+  const before = (await cli(["sessions"])).json.length;
+  for (const [flag, value, error] of [
+    ["--label", "   ", "--label must not be empty"],
+    [
+      "--phase",
+      "one\ntwo",
+      "--phase must be one line without control characters",
+    ],
+    ["--label", "x".repeat(81), "--label must be at most 80 characters"],
+  ])
+    expectJson(
+      await cli(["spawn", "task", "--model", "claude:opus", flag, value]),
+      { error },
+      1,
+    );
+  expect((await cli(["sessions"])).json).toHaveLength(before);
 });
 
 test("send updates done sessions; sessions, rm, and prune honor ownership", async () => {

@@ -1,10 +1,18 @@
 import { expect, mock, test } from "claude-code/testing";
 import {
   conversationFromEvents,
+  formatDuration,
+  groupThreads,
+  hasPendingSpawns,
   parseThread,
-  relativeAge,
+  phaseHeader,
+  resolveSpawnCalls,
+  runFooter,
   selectThreads,
+  spawnCallFromCommand,
+  spawnOutputHandle,
   statusGlyph,
+  threadRow,
 } from "./register";
 import type { CommandRunInput } from "claude-code";
 import type { Thread } from "../types/index";
@@ -94,10 +102,6 @@ test("owner filtering includes nested delegates, sorts newest first and caps onl
   expect(statusGlyph("done")).toBe("✓");
   expect(statusGlyph("failed")).toBe("✗");
   expect(statusGlyph("stopped")).toBe("■");
-  expect(
-    relativeAge(THREAD.createdAt, Date.parse(THREAD.createdAt) + 120000),
-  ).toBe("2m");
-  expect(relativeAge(THREAD.createdAt, 0)).toBe("0s");
 });
 
 test("synthetic Codex and Claude events map to readable conversation items", () => {
@@ -205,7 +209,10 @@ test(
       const ui = await $.ui.mount({ ...PANE, surface });
       expect(
         (await ui.find({ type: "Button", key: THREAD.handle }))?.text,
-      ).toContain("✓ abcdef codex:gpt-6.1-sol@high");
+      ).toContain("✓ Rename a variable · Completed");
+      expect(
+        await ui.find({ type: "Text", text: /Codex · gpt-6.1-sol · high/ }),
+      ).toBeDefined();
       expect(await ui.find({ type: "Button", key: "123abc" })).toBeUndefined();
       await ui.press({ key: "all" });
       expect(await ui.find({ type: "Button", key: "123abc" })).toBeDefined();
@@ -348,5 +355,403 @@ test("empty state and CLI stderr render as one line", async ($, on) => {
   expect((await ui.find({ type: "Text", text: /CLI unavailable/ }))?.text).toBe(
     "CLI unavailable second line",
   );
+  await ui.unmount();
+});
+
+const T0 = Date.parse("2026-01-01T12:00:00.000Z");
+const at = (offset: number) => new Date(T0 + offset).toISOString();
+
+test("rows show label or prompt, colored status, the real model and effort, elapsed and a result preview", () => {
+  const running: Thread = {
+    ...THREAD,
+    label: "research:dji-mic",
+    status: "running",
+    effort: "medium",
+    startedAt: at(0),
+  };
+  expect(threadRow(running, T0 + 506000)).toEqual({
+    title: "research:dji-mic",
+    glyph: "●",
+    status: "Working",
+    color: "suggestion",
+    route: "Codex · gpt-6.1-sol · medium · 8m 26s",
+    preview: "",
+  });
+  const done: Thread = {
+    ...THREAD,
+    harness: "claude",
+    model: "claude-opus-5-5",
+    effort: "xhigh",
+    startedAt: at(0),
+    endedAt: at(3720000),
+    result: "Found\n  three   mounts",
+  };
+  expect(threadRow(done, 0)).toMatchObject({
+    title: "Rename a variable",
+    status: "Completed",
+    color: "success",
+    route: "Claude · claude-opus-5-5 · xhigh · 1h 2m",
+    preview: "Found three mounts",
+  });
+  const failed: Thread = { ...THREAD, status: "failed", error: "boom" };
+  expect(threadRow(failed, 0)).toMatchObject({
+    glyph: "✗",
+    status: "Failed",
+    color: "error",
+    route: "Codex · gpt-6.1-sol · high",
+    preview: "boom",
+  });
+  const long = threadRow({ ...THREAD, promptPreview: "y".repeat(160) }, 0);
+  expect(long.title).toBe(`${"y".repeat(79)}…`);
+  expect(formatDuration(45000)).toBe("45s");
+  expect(formatDuration(-5)).toBe("0s");
+  expect(
+    parseThread({
+      ...THREAD,
+      label: "research:a",
+      phase: "Research",
+      resultPreview: "short",
+      startedAt: at(0),
+      endedAt: null,
+    }),
+  ).toMatchObject({
+    label: "research:a",
+    phase: "Research",
+    result: "short",
+    startedAt: at(0),
+    endedAt: undefined,
+  });
+});
+
+test("threads group under phases with done/total counts and a run footer", () => {
+  const threads: Thread[] = [
+    { ...THREAD, handle: "aaaaa1", phase: "Research", status: "done" },
+    { ...THREAD, handle: "aaaaa2", phase: "Build", status: "running" },
+    { ...THREAD, handle: "aaaaa3", phase: "Research", status: "running" },
+    { ...THREAD, handle: "aaaaa4", status: "failed" },
+  ];
+  const groups = groupThreads(threads);
+  expect(groups.phases.map(phaseHeader)).toEqual([
+    "Research · 1/2",
+    "Build · 0/1",
+  ]);
+  expect(groups.phases[0]?.threads.map((item) => item.handle)).toEqual([
+    "aaaaa1",
+    "aaaaa3",
+  ]);
+  expect(groups.ungrouped.map((item) => item.handle)).toEqual(["aaaaa4"]);
+  expect(runFooter(threads, T0 + 506000)).toBe("Working 8m 26s · 2/4");
+  const finished = threads.map((item) => ({
+    ...item,
+    status: "done" as const,
+    endedAt: at(300000),
+  }));
+  expect(runFooter(finished, T0 + 999999)).toBe("Finished in 5m 0s · 4/4");
+  expect(runFooter([], T0)).toBe("");
+});
+
+test("spawn commands match their session by owner, label and start time, never guessing", () => {
+  expect(
+    spawnCallFromCommand(
+      'smart-router spawn "Research mounts" --label research:mounts --detach',
+      T0,
+    ),
+  ).toEqual({ startedAt: T0, label: "research:mounts" });
+  expect(
+    spawnCallFromCommand(
+      'smart-router spawn "x" --label "  two words " --phase R',
+      T0,
+    )?.label,
+  ).toBe("two words");
+  expect(
+    spawnCallFromCommand("smart-router spawn 'x' --label='quoted'", T0)?.label,
+  ).toBe("quoted");
+  expect(
+    spawnCallFromCommand('smart-router spawn "x" --label "say \\"hi\\""', T0)
+      ?.label,
+  ).toBe('say "hi"');
+  expect(spawnCallFromCommand('smart-router spawn "x"', T0)).toEqual({
+    startedAt: T0,
+  });
+  for (const command of [
+    'smart-router spawn "x" --dry-run --label a',
+    "smart-router spawn a --label x & smart-router spawn b --label y",
+    "smart-router status abcdef",
+  ])
+    expect(spawnCallFromCommand(command, T0)).toBeUndefined();
+  expect(
+    spawnOutputHandle({ stdout: '{"handle":"abc123","harness":"codex"}\n' }),
+  ).toBe("abc123");
+  expect(spawnOutputHandle({ stdout: "Running in background" })).toBe(
+    undefined,
+  );
+  expect(spawnOutputHandle(undefined)).toBeUndefined();
+  expect(
+    spawnOutputHandle({ stdout: '{"handle":"abc123"}\n{"handle":"def456"}' }),
+  ).toBeUndefined();
+
+  const session = (handle: string, label: string, offset: number) => ({
+    ...THREAD,
+    handle,
+    label,
+    status: "running" as const,
+    createdAt: at(offset),
+  });
+  // Two spawns with the same prompt are told apart by their labels.
+  const parallel = resolveSpawnCalls(
+    {
+      first: { startedAt: T0, label: "research:a" },
+      second: { startedAt: T0 + 100, label: "research:b" },
+    },
+    [
+      session("aaaaaa", "research:a", 3000),
+      session("bbbbbb", "research:b", 2500),
+    ],
+    OWNER,
+    T0 + 5000,
+  );
+  expect(parallel.first?.handle).toBe("aaaaaa");
+  expect(parallel.second?.handle).toBe("bbbbbb");
+  // No match: another owner, a session older than the call, or no label.
+  const unmatched = {
+    owned: { startedAt: T0, label: "x" },
+    older: { startedAt: T0, label: "y" },
+    unlabeled: { startedAt: T0 },
+  };
+  expect(
+    resolveSpawnCalls(
+      unmatched,
+      [
+        { ...session("cccccc", "x", 1000), owner: "other" },
+        session("dddddd", "y", -5000),
+        session("eeeeee", "z", 1000),
+      ],
+      OWNER,
+      T0 + 5000,
+    ),
+  ).toEqual(unmatched);
+  // Two spawns with the same label in flight: neither gets a card.
+  const duplicate = {
+    first: { startedAt: T0, label: "dup" },
+    second: { startedAt: T0 + 100, label: "dup" },
+  };
+  expect(
+    resolveSpawnCalls(duplicate, [session("ffffff", "dup", 3000)], OWNER, T0),
+  ).toEqual(duplicate);
+  // A label reused after the first call was pinned matches the new session.
+  const sequential = resolveSpawnCalls(
+    {
+      first: { startedAt: T0, label: "dup", handle: "ffffff" },
+      second: { startedAt: T0 + 60000, label: "dup" },
+    },
+    [session("ffffff", "dup", 3000), session("999999", "dup", 63000)],
+    OWNER,
+    T0 + 65000,
+  );
+  expect(sequential.second?.handle).toBe("999999");
+  // Past the match window a call stops matching and stops polling.
+  const stale = { old: { startedAt: T0 - 11 * 60000, label: "late" } };
+  expect(
+    resolveSpawnCalls(stale, [session("777777", "late", 0)], OWNER, T0),
+  ).toEqual(stale);
+  expect(hasPendingSpawns(stale, [], T0)).toBe(false);
+  expect(
+    hasPendingSpawns({ open: { startedAt: T0, label: "a" } }, [], T0),
+  ).toBe(true);
+  const pinned = { done: { startedAt: T0, label: "a", handle: "aaaaaa" } };
+  expect(hasPendingSpawns(pinned, [session("aaaaaa", "a", 0)], T0)).toBe(true);
+  expect(
+    hasPendingSpawns(
+      pinned,
+      [{ ...session("aaaaaa", "a", 0), status: "done" }],
+      T0,
+    ),
+  ).toBe(false);
+});
+
+test(
+  "the session pane groups phases with a footer; a background spawn row gets a live card that opens /sr",
+  { timeoutMs: 20000 },
+  async ($, on) => {
+    const clock = mock.clock(on, { now: T0 });
+    let placed = false;
+    let opened = 0;
+    let toolUseId = "";
+    const sessions: Thread[] = [];
+    on("command.register", () => ({ value: { command: "sr" } }));
+    on("session.start", (_, event) => ({ cwd: event.cwd }));
+    on("session.id", () => ({ value: OWNER }));
+    on("ui.open", () => {
+      opened++;
+      placed = true;
+      return { value: { isPlaced: true } };
+    });
+    on("ui.panes", () => ({
+      value: placed
+        ? [
+            {
+              id: "smart-router",
+              title: "Smart Router",
+              isPlaced: true,
+              isFocused: true,
+              isShown: true,
+            },
+          ]
+        : [],
+    }));
+    on("tool.call", (_, event) => {
+      toolUseId = event.tool_use_id;
+      return { result: { stdout: "Running in background", stderr: "" } };
+    });
+    on("process.run", (_, event) => {
+      if (event.argv[1] === "sessions") return output(JSON.stringify(sessions));
+      if (event.argv[1] === "status")
+        return output(JSON.stringify(sessions[0]));
+      return output("");
+    });
+    await $.session.start({
+      cwd: "/",
+      surface: "terminal",
+      isInteractive: true,
+    });
+    const spawnCommand =
+      'smart-router spawn "Research DJI mics" --label research:dji-mic --phase Research';
+    await $.tool.call({ tool: "Bash", command: spawnCommand });
+    expect(toolUseId).not.toBe("");
+    const card = (surface: "terminal" | "desktop") =>
+      $.ui.mount({
+        plugin: "smart-router-threads",
+        surface,
+        component: "ToolUse",
+        requestId: toolUseId,
+        props: {
+          tool_use_id: toolUseId,
+          tool: "Bash",
+          input: { command: spawnCommand, run_in_background: true },
+          isRunning: false,
+          isErrored: false,
+          isInterrupted: false,
+          output: { stdout: "Running in background", stderr: "" },
+        },
+      });
+    // Before the session exists there is no card.
+    let ui = await card("terminal");
+    expect(
+      await ui.find({ type: "Button", key: "card-abc123" }),
+    ).toBeUndefined();
+    await ui.unmount();
+    sessions.push(
+      {
+        ...THREAD,
+        handle: "abc123",
+        label: "research:dji-mic",
+        phase: "Research",
+        status: "running",
+        effort: "medium",
+        createdAt: at(-1000),
+        startedAt: at(-1000),
+      },
+      {
+        ...THREAD,
+        handle: "def456",
+        label: "research:iphone-duo",
+        phase: "Research",
+        harness: "claude",
+        model: "claude-opus-5-5",
+        effort: "xhigh",
+        createdAt: at(-500),
+        startedAt: at(-500),
+        endedAt: at(58500),
+        result: "Apple announced iPhone Duo in September 2026",
+      },
+    );
+    await clock.advance(5000);
+    for (const surface of ["terminal", "desktop"] as const) {
+      ui = await card(surface);
+      expect(
+        (await ui.find({ type: "Button", key: "card-abc123" }))?.text,
+      ).toContain("● research:dji-mic · Working");
+      expect(
+        await ui.find({
+          type: "Text",
+          text: /Codex · gpt-6.1-sol · medium · 2s/,
+        }),
+      ).toBeDefined();
+      await ui.unmount();
+    }
+    ui = await card("terminal");
+    await ui.press({ key: "card-abc123" });
+    expect(opened).toBe(1);
+    await ui.unmount();
+
+    await $.command.run(command());
+    const pane = await $.ui.mount({ ...PANE, surface: "desktop" });
+    expect(
+      await pane.find({ type: "Text", text: "Research · 1/2" }),
+    ).toBeDefined();
+    expect(
+      (await pane.find({ type: "Button", key: "def456" }))?.text,
+    ).toContain("✓ research:iphone-duo · Completed");
+    expect(
+      await pane.find({
+        type: "Text",
+        text: /Claude · claude-opus-5-5 · xhigh · 59s/,
+      }),
+    ).toBeDefined();
+    expect(
+      await pane.find({ type: "Text", text: /Apple announced iPhone Duo/ }),
+    ).toBeDefined();
+    expect(
+      await pane.find({ type: "Text", text: "Working 6s · 1/2" }),
+    ).toBeDefined();
+    await pane.press({ key: "all" });
+    expect(
+      await pane.find({ type: "Text", text: /Research ·/ }),
+    ).toBeUndefined();
+    expect(await pane.find({ type: "Button", key: "abc123" })).toBeDefined();
+    await pane.unmount();
+  },
+);
+
+test("a failed foreground spawn is forgotten and never gets a card", async ($, on) => {
+  const clock = mock.clock(on, { now: T0 });
+  let toolUseId = "";
+  let fetches = 0;
+  on("session.start", (_, event) => ({ cwd: event.cwd }));
+  on("command.register", () => ({ value: { command: "sr" } }));
+  on("session.id", () => ({ value: OWNER }));
+  on("ui.panes", () => ({ value: [] }));
+  on("tool.call", (_, event) => {
+    toolUseId = event.tool_use_id;
+    return { isError: true, result: "Exit code 1" };
+  });
+  on("process.run", () => {
+    fetches++;
+    return output(
+      JSON.stringify([
+        { ...THREAD, handle: "abc123", label: "x", createdAt: at(1000) },
+      ]),
+    );
+  });
+  await $.session.start({ cwd: "/", surface: "terminal", isInteractive: true });
+  const spawnCommand = "smart-router spawn task --label x";
+  await $.tool.call({ tool: "Bash", command: spawnCommand });
+  await clock.advance(10000);
+  expect(fetches).toBe(0);
+  const ui = await $.ui.mount({
+    plugin: "smart-router-threads",
+    surface: "terminal",
+    component: "ToolUse",
+    requestId: toolUseId,
+    props: {
+      tool_use_id: toolUseId,
+      tool: "Bash",
+      input: { command: spawnCommand },
+      isRunning: false,
+      isErrored: true,
+      isInterrupted: false,
+    },
+  });
+  expect(await ui.find({ type: "Button", key: "card-abc123" })).toBeUndefined();
   await ui.unmount();
 });

@@ -4,6 +4,8 @@ import type {
   ConversationItem,
   PaneState,
   Scope,
+  SpawnCall,
+  SpawnCalls,
   Thread,
   ThreadStatus,
 } from "../types/index";
@@ -18,6 +20,16 @@ const ITEM_LIMIT = 40;
 const PREVIEW_LIMIT = 160;
 const TOOL_OUTPUT_LINES = 3;
 const PROCESS_TIMEOUT = 15000;
+const TITLE_LIMIT = 80;
+// A background spawn's session must appear within this window after its Bash call starts.
+const SPAWN_MATCH_WINDOW = 10 * 60 * 1000;
+const CLOCK_SKEW = 2000;
+const SPAWN_COMMAND = /\bsmart-router\s+spawn\b/g;
+const DRY_RUN_FLAG = /\s--dry-run\b/;
+const LABEL_ARGUMENT =
+  /\s--label(?:=|\s+)(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([^\s"';&|]+))/;
+// `spawn` and `spawn --detach` print one JSON line that starts with the handle.
+const SPAWN_OUTPUT_HANDLE = /^\{"handle":"([a-f0-9]{6})"/gm;
 const pane = atom(
   { plugin: "smart-router-threads", key: "pane" } as const,
   {
@@ -28,6 +40,11 @@ const pane = atom(
     error: "",
   } satisfies PaneState,
   { shape: "pane-1" },
+);
+const spawns = atom(
+  { plugin: "smart-router-threads", key: "spawns" } as const,
+  {} as SpawnCalls,
+  { shape: "spawns-1" },
 );
 
 function object(value: unknown): Record<string, unknown> {
@@ -81,6 +98,10 @@ export function parseThread(value: unknown): Thread {
     depth,
     createdAt,
     promptPreview: requiredString(record.promptPreview),
+    label: optionalString(record.label),
+    phase: optionalString(record.phase),
+    startedAt: optionalString(record.startedAt),
+    endedAt: optionalString(record.endedAt),
     cwd: optionalString(record.cwd),
     routePick: optionalString(route.pick),
     inputTokens: optionalNumber(usage.inputTokens),
@@ -88,7 +109,9 @@ export function parseThread(value: unknown): Thread {
     costUsd: optionalNumber(usage.costUsd),
     lastAction: optionalString(record.lastAction),
     error: optionalString(record.error),
-    result: optionalString(record.result ?? record.lastResult),
+    result: optionalString(
+      record.result ?? record.lastResult ?? record.resultPreview,
+    ),
   };
 }
 export function selectThreads(
@@ -108,15 +131,195 @@ export function statusGlyph(status: ThreadStatus): string {
     status
   ];
 }
-export function relativeAge(createdAt: string, now: number): string {
-  const seconds = Math.max(0, Math.floor((now - Date.parse(createdAt)) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  return `${Math.floor(seconds / 86400)}d`;
-}
 export function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+export function statusText(status: ThreadStatus): string {
+  return {
+    running: "Working",
+    done: "Completed",
+    failed: "Failed",
+    stopped: "Stopped",
+    unknown: "Unknown",
+  }[status];
+}
+export function statusColor(status: ThreadStatus): string {
+  return {
+    running: "suggestion",
+    done: "success",
+    failed: "error",
+    stopped: "warning",
+    unknown: "inactive",
+  }[status];
+}
+export function formatDuration(milliseconds: number): string {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+  return `${seconds}s`;
+}
+function threadEnd(thread: Thread, now: number): number | undefined {
+  if (thread.endedAt) return Date.parse(thread.endedAt);
+  if (thread.status === "running") return now;
+  return undefined;
+}
+export function threadElapsed(thread: Thread, now: number): string {
+  const end = threadEnd(thread, now);
+  if (end === undefined) return "";
+  return formatDuration(end - Date.parse(thread.startedAt ?? thread.createdAt));
+}
+function truncate(text: string, limit: number): string {
+  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+}
+export type ThreadRow = {
+  title: string;
+  glyph: string;
+  status: string;
+  color: string;
+  route: string;
+  preview: string;
+};
+export function threadRow(thread: Thread, now: number): ThreadRow {
+  const harness =
+    thread.harness.charAt(0).toUpperCase() + thread.harness.slice(1);
+  return {
+    title: truncate(thread.label ?? oneLine(thread.promptPreview), TITLE_LIMIT),
+    glyph: statusGlyph(thread.status),
+    status: statusText(thread.status),
+    color: statusColor(thread.status),
+    route: [harness, thread.model, thread.effort, threadElapsed(thread, now)]
+      .filter(Boolean)
+      .join(" · "),
+    preview: oneLine(thread.result ?? thread.error ?? ""),
+  };
+}
+export type PhaseGroup = {
+  phase: string;
+  done: number;
+  total: number;
+  threads: Thread[];
+};
+function progress(threads: Thread[]) {
+  return {
+    done: threads.filter((thread) => thread.status !== "running").length,
+    total: threads.length,
+  };
+}
+export function groupThreads(threads: Thread[]): {
+  phases: PhaseGroup[];
+  ungrouped: Thread[];
+} {
+  const phases = new Map<string, Thread[]>();
+  const ungrouped: Thread[] = [];
+  for (const thread of threads) {
+    if (!thread.phase) {
+      ungrouped.push(thread);
+      continue;
+    }
+    phases.set(thread.phase, [...(phases.get(thread.phase) ?? []), thread]);
+  }
+  return {
+    phases: [...phases].map(([phase, members]) => ({
+      phase,
+      threads: members,
+      ...progress(members),
+    })),
+    ungrouped,
+  };
+}
+export function phaseHeader(group: PhaseGroup): string {
+  return `${group.phase} · ${group.done}/${group.total}`;
+}
+export function runFooter(threads: Thread[], now: number): string {
+  if (threads.length === 0) return "";
+  const { done, total } = progress(threads);
+  const start = Math.min(
+    ...threads.map((thread) => Date.parse(thread.createdAt)),
+  );
+  if (done < total)
+    return `Working ${formatDuration(now - start)} · ${done}/${total}`;
+  const end = Math.max(
+    ...threads.map((thread) => Date.parse(thread.endedAt ?? thread.createdAt)),
+  );
+  return `Finished in ${formatDuration(end - start)} · ${done}/${total}`;
+}
+// One spawn per command; a dry run creates no session.
+export function spawnCallFromCommand(
+  command: string,
+  startedAt: number,
+): SpawnCall | undefined {
+  const spawnCount = command.match(SPAWN_COMMAND)?.length ?? 0;
+  if (spawnCount !== 1 || DRY_RUN_FLAG.test(command)) return undefined;
+  const match = LABEL_ARGUMENT.exec(command);
+  const label = (
+    match?.[1]?.replace(/\\(.)/g, "$1") ??
+    match?.[2] ??
+    match?.[3]
+  )?.trim();
+  return label ? { startedAt, label } : { startedAt };
+}
+export function spawnOutputHandle(output: unknown): string | undefined {
+  if (typeof output !== "object" || output === null || !("stdout" in output))
+    return undefined;
+  if (typeof output.stdout !== "string") return undefined;
+  const handles = new Set(
+    [...output.stdout.matchAll(SPAWN_OUTPUT_HANDLE)].map((match) => match[1]),
+  );
+  return handles.size === 1 ? [...handles][0] : undefined;
+}
+function isOpenSpawn(call: SpawnCall, now: number): boolean {
+  return (
+    !call.handle && !!call.label && now - call.startedAt < SPAWN_MATCH_WINDOW
+  );
+}
+function couldBeSpawn(call: SpawnCall, thread: Thread, owner: string): boolean {
+  return (
+    thread.owner === owner &&
+    thread.label === call.label &&
+    Date.parse(thread.createdAt) >= call.startedAt - CLOCK_SKEW
+  );
+}
+// Pin a call to a session only when each is the other's sole candidate.
+export function resolveSpawnCalls(
+  calls: SpawnCalls,
+  threads: Thread[],
+  owner: string,
+  now: number,
+): SpawnCalls {
+  const pinned = new Set(Object.values(calls).map((call) => call.handle));
+  const unpinned = threads.filter((thread) => !pinned.has(thread.handle));
+  const open = Object.entries(calls).filter(([, call]) =>
+    isOpenSpawn(call, now),
+  );
+  const resolved = { ...calls };
+  for (const [id, call] of open) {
+    const candidates = unpinned.filter((thread) =>
+      couldBeSpawn(call, thread, owner),
+    );
+    const thread = candidates[0];
+    if (candidates.length !== 1 || !thread) continue;
+    const rivals = open.filter(([, other]) =>
+      couldBeSpawn(other, thread, owner),
+    );
+    if (rivals.length === 1) resolved[id] = { ...call, handle: thread.handle };
+  }
+  return resolved;
+}
+export function hasPendingSpawns(
+  calls: SpawnCalls,
+  threads: Thread[],
+  now: number,
+): boolean {
+  return Object.values(calls).some(
+    (call) =>
+      isOpenSpawn(call, now) ||
+      threads.some(
+        (thread) =>
+          thread.handle === call.handle && thread.status === "running",
+      ),
+  );
 }
 export function conversationFromEvents(
   jsonl: string,
@@ -228,15 +431,27 @@ let generation = 0;
 let listDue = 0;
 let threadDue = 0;
 
+function stopTimer() {
+  timer?.cancel();
+  timer = undefined;
+}
 async function refresh($: EngineInterface, force = false) {
   if (busy) return;
-  const placed = await isPlaced($);
-  if (!placed || busy) return;
   busy = true;
   const started = generation;
   try {
+    const placed = await isPlaced($);
     const current = await read($, pane);
     const now = await $.clock.now();
+    const watching = hasPendingSpawns(
+      await read($, spawns),
+      current.threads,
+      now,
+    );
+    if (!placed && !watching) {
+      stopTimer();
+      return;
+    }
     if (force || now >= listDue) {
       listDue = now + LIST_INTERVAL;
       const value: unknown = JSON.parse(await cli($, ["sessions", "--all"]));
@@ -252,8 +467,12 @@ async function refresh($: EngineInterface, force = false) {
       });
       if (started !== generation) return;
       await update($, pane, (state) => ({ ...state, threads, now, error: "" }));
+      const owner = await $.session.id();
+      await update($, spawns, (calls) =>
+        resolveSpawnCalls(calls, threads, owner, now),
+      );
     }
-    if (current.view.kind !== "thread") return;
+    if (!placed || current.view.kind !== "thread") return;
     const { handle, record } = current.view;
     const shouldFetch =
       force ||
@@ -302,6 +521,58 @@ async function navigate($: EngineInterface, scope: Scope, handle?: string) {
   }));
   await refresh($, true);
 }
+async function openPane(
+  $: EngineInterface,
+  scope: Scope,
+  handle?: string,
+): Promise<string | undefined> {
+  const opened = await $.ui.open({
+    id: PANE,
+    title: "Smart Router",
+    focus: true,
+  });
+  if (!opened.isPlaced) return opened.reason;
+  startTimer($);
+  await navigate($, scope, handle);
+  return undefined;
+}
+function bashCommand(tool: string, input: unknown): string | undefined {
+  if (tool !== "Bash" || typeof input !== "object" || input === null)
+    return undefined;
+  if (!("command" in input) || typeof input.command !== "string")
+    return undefined;
+  return input.command;
+}
+type Elements = ReturnType<EngineInterface["ui"]["resolve"]>;
+function rowView(
+  { Box, Text, Button }: Elements,
+  row: ThreadRow,
+  key: string,
+  indent: string,
+  onPress: () => unknown,
+) {
+  return (
+    <Box flexDirection="column">
+      <Button key={key} plain onPress={onPress}>
+        {indent}
+        <Text color={row.color}>{row.glyph}</Text> {row.title} ·{" "}
+        <Text color={row.color}>{row.status}</Text>
+      </Button>
+      <Text dimColor wrap="truncate-end">
+        {indent}
+        {"  "}
+        {row.route}
+      </Text>
+      {row.preview && (
+        <Text dimColor wrap="truncate-end">
+          {indent}
+          {"  "}
+          {row.preview}
+        </Text>
+      )}
+    </Box>
+  );
+}
 export const register: Register = (on, _options) => {
   on("session.start", async ($, e, next) => {
     await $.command.register({
@@ -309,47 +580,78 @@ export const register: Register = (on, _options) => {
       description: "Browse smart-router threads",
       argumentHint: "[all|handle]",
     });
-    if (await isPlaced($)) {
-      startTimer($);
-      await refresh($, true);
-    }
+    // The timer stops itself when no pane is placed and no spawn card is live.
+    startTimer($);
+    if (await isPlaced($)) await refresh($, true);
     return next(e);
   });
   on("command.run", { command: "sr" }, async ($, e) => {
     const argument = e.args.trim();
     if (argument && argument !== "all" && !/^[a-f0-9]{6}$/.test(argument))
       return { text: "Usage: /sr [all|handle]" };
-    const opened = await $.ui.open({
-      id: PANE,
-      title: "Smart Router",
-      focus: true,
-    });
-    if (!opened.isPlaced) return { text: `Smart Router: ${opened.reason}` };
-    startTimer($);
-    await navigate(
+    const reason = await openPane(
       $,
       argument === "all" ? "all" : "session",
       argument && argument !== "all" ? argument : undefined,
     );
+    if (reason) return { text: `Smart Router: ${reason}` };
     return { text: "Smart Router pane opened." };
   });
   on("ui.close", { id: PANE }, async ($, e, next) => {
     const result = await next(e);
-    if (!(await isPlaced($))) {
-      generation++;
-      timer?.cancel();
-      timer = undefined;
-    }
+    if (!(await isPlaced($))) generation++;
     return result;
   });
   on("session.end", async (_$, e, next) => {
     generation++;
-    timer?.cancel();
-    timer = undefined;
+    stopTimer();
     return next(e);
   });
+  on("tool.call", { tool: "Bash" }, async ($, e, next) => {
+    const call = spawnCallFromCommand(e.command, await $.clock.now());
+    if (!call) return next(e);
+    await update($, spawns, (calls) => ({ ...calls, [e.tool_use_id]: call }));
+    startTimer($);
+    const result = await next(e);
+    // A spawn that failed in the foreground created no session to match.
+    if (result.deny !== undefined || result.isError)
+      await update(
+        $,
+        spawns,
+        ({ [e.tool_use_id]: _failed, ...calls }) => calls,
+      );
+    return result;
+  });
+  on("ui.render", { component: "ToolUse" }, async ($, e, next) => {
+    const row = await next(e);
+    const command = bashCommand(e.props.tool, e.props.input);
+    if (command === undefined || !spawnCallFromCommand(command, 0)) return row;
+    const call = (await read($, spawns))[e.props.tool_use_id];
+    const handle = spawnOutputHandle(e.props.output) ?? call?.handle;
+    const state = await read($, pane);
+    const thread = state.threads.find((item) => item.handle === handle);
+    if (!thread) return row;
+    const elements = $.ui.resolve(e);
+    const { Box } = elements;
+    return (
+      <Box flexDirection="column" borderStyle="round">
+        {row}
+        {rowView(
+          elements,
+          threadRow(thread, state.now),
+          `card-${thread.handle}`,
+          "",
+          async () => {
+            const reason = await openPane($, "session", thread.handle);
+            if (reason) $.ui.toast(`Smart Router: ${reason}`);
+          },
+        )}
+      </Box>
+    );
+  });
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e);
+    const elements = $.ui.resolve(e);
+    const { Box, Text, Button } = elements;
     const state = await read($, pane);
     const width = Math.max(1, e.props.bodyColumns);
     const view = state.view;
@@ -362,6 +664,19 @@ export const register: Register = (on, _options) => {
         state.scope,
         await $.session.id(),
       );
+      const isSessionScope = state.scope === "session";
+      const groups = groupThreads(threads);
+      const footer = runFooter(threads, state.now);
+      const rows = (items: Thread[]) =>
+        items.map((thread) =>
+          rowView(
+            elements,
+            threadRow(thread, state.now),
+            thread.handle,
+            "  ".repeat(Math.min(thread.depth - 1, Math.floor(width / 4))),
+            () => navigate($, state.scope, thread.handle),
+          ),
+        );
       return (
         <Box flexDirection="column" width={width}>
           <Box flexDirection="row" flexWrap="wrap">
@@ -391,27 +706,15 @@ export const register: Register = (on, _options) => {
                 : "No smart-router threads"}
             </Text>
           )}
-          {threads.map((thread) => (
-            <Box flexDirection="column">
-              <Button
-                key={thread.handle}
-                plain
-                onPress={() => navigate($, state.scope, thread.handle)}
-              >
-                <Text wrap="truncate-end">
-                  {"  ".repeat(
-                    Math.min(thread.depth - 1, Math.floor(width / 4)),
-                  )}
-                  {statusGlyph(thread.status)} {thread.handle} {thread.harness}:
-                  {thread.model}@{thread.effort}{" "}
-                  {relativeAge(thread.createdAt, state.now)}
-                </Text>
-              </Button>
-              <Text dimColor wrap="truncate-end">
-                {oneLine(thread.promptPreview)}
-              </Text>
-            </Box>
-          ))}
+          {isSessionScope &&
+            groups.phases.map((group) => (
+              <Box flexDirection="column">
+                <Text bold>{phaseHeader(group)}</Text>
+                {rows(group.threads)}
+              </Box>
+            ))}
+          {rows(isSessionScope ? groups.ungrouped : threads)}
+          {isSessionScope && footer && <Text dimColor>{footer}</Text>}
         </Box>
       );
     }

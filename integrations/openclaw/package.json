@@ -1,6 +1,6 @@
 {
   "name": "@markset/openclaw-smart-router",
-  "version": "0.8.24",
+  "version": "0.8.25",
   "type": "module",
   "private": true,
   "openclaw": {

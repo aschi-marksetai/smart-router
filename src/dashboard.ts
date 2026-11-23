@@ -1,3 +1,4 @@
+import { T3_NO_LOG } from "./t3.ts";
 import { dashboardHtml } from "./assets.ts";
 import {
   sessionEvents,
@@ -105,6 +106,8 @@ export function startDashboard({
           return json({ owner, sessions });
         }
         const session = await loadSession(match[1]);
+        if (match[2] && session.runner === "t3")
+          return json({ error: T3_NO_LOG }, 400);
         if (match[2]) return json(await sessionEvents(session));
         return json(sessionStatus(session));
       } catch (error) {

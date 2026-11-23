@@ -1,8 +1,10 @@
 export type ThreadStatus =
-  "running" | "done" | "failed" | "stopped" | "unknown";
+  "launched" | "running" | "done" | "failed" | "stopped" | "unknown";
 export type Scope = "session" | "all";
 export type Thread = {
   handle: string;
+  runner?: "t3";
+  warning?: string;
   owner?: string;
   status: ThreadStatus;
   harness: string;
@@ -23,6 +25,8 @@ export type Thread = {
   lastAction?: string;
   error?: string;
   result?: string;
+  waiting?: string;
+  silentSeconds?: number;
 };
 export type ConversationItem = {
   kind: "user" | "assistant" | "tool" | "output" | "result" | "error";

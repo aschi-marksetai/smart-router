@@ -1,3 +1,12 @@
+import { refreshT3Sessions } from "./t3.ts";
+import {
+  claimWake,
+  recoverWakes,
+  cancelPendingWakes,
+  hasUnsettledWakes,
+  type Wake,
+} from "./wakes.ts";
+import { sampleActivity, type ActivitySample } from "./activity.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -36,12 +45,17 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
 const SPAWN_LOCK_DIRECTORY = ".spawn.lock";
 const LOCK_RETRY_INTERVAL_MS = 20;
 const LOCK_STALE_TIMEOUT_MS = 30_000;
+export const LOCK_RECLAIM_STALE_TIMEOUT_MS = 5_000;
+export const CHILD_EXIT_OWNER_GRACE_MS = 2 * 60 * 1_000;
+export const LOCK_ARTIFACT_MAX_AGE_MS = 10 * 60 * 1_000;
+let lockOwnerStartTime: string | undefined;
 const PROCESS_STOP_POLL_INTERVAL_MS = 50;
 export const PROCESS_STOP_GRACE_PERIOD_MS = 5_000;
 export const DELEGATE_EXIT_ERROR =
   "delegate process exited without reporting (killed; likely out of memory or the pids limit)";
 
 export const SESSION_STATUS = {
+  launched: "launched",
   running: "running",
   done: "done",
   failed: "failed",
@@ -66,6 +80,16 @@ export type SessionTurn = {
 
 export type Session = {
   handle: string;
+  runner?: "t3";
+  t3ThreadId?: string;
+  t3Revision?: number;
+  t3LatestRunId?: string;
+  t3ExpectedRunId?: string;
+  t3BaselineRunCount?: number;
+  t3UpdatedAt?: string;
+  t3ResultKey?: string;
+  warning?: string;
+  needsInput?: boolean;
   harness: HarnessName;
   model: string;
   effort: string;
@@ -86,7 +110,9 @@ export type Session = {
   phase?: string;
   status: SessionStatus;
   pid?: number;
+  childExitedAt?: string;
   supervisorPid?: number;
+  supervisorProcessStartTime?: string;
   wrapperPid?: number;
   wrapperProcessStartTime?: string;
   processStartTime?: string;
@@ -103,6 +129,14 @@ export type Session = {
   turns?: SessionTurn[];
   turnLogOffset?: number;
   route?: unknown;
+  wakes?: Wake[];
+  activity?: {
+    runtimeSeconds: number;
+    silentSeconds: number;
+    cpuSeconds: number | null;
+  };
+  activitySample?: ActivitySample;
+  stuck?: { reason: string; since: string } | null;
 };
 
 export type CreateSessionOptions = Omit<
@@ -149,6 +183,9 @@ export async function createSession(
   const handle = options.handle ?? createSessionHandle();
   const session: Session = {
     handle,
+    runner: options.runner,
+    t3ThreadId: options.t3ThreadId,
+    t3Revision: options.runner === "t3" ? 0 : undefined,
     harness: options.harness,
     model: options.model,
     effort: options.effort,
@@ -169,6 +206,8 @@ export async function createSession(
     phase: options.phase,
     status: options.status,
     pid: options.pid,
+    supervisorPid: options.supervisorPid,
+    supervisorProcessStartTime: options.supervisorProcessStartTime,
     wrapperPid: options.wrapperPid,
     wrapperProcessStartTime: options.wrapperProcessStartTime,
     processStartTime: options.processStartTime,
@@ -195,7 +234,60 @@ export async function loadSession(handle: string): Promise<Session> {
   return JSON.parse(await readFile(sessionPath(handle), "utf8"));
 }
 
-export async function saveSession(session: Session): Promise<void> {
+export async function saveSession(
+  session: Session,
+  write:
+    | "session"
+    | "wakes"
+    | "activity"
+    | "claim"
+    | "terminal"
+    | "owner-terminal" = "session",
+): Promise<void> {
+  const replaceWakes = write === "wakes" || write === "claim";
+  const metadataOnly = write === "wakes" || write === "activity";
+  return withSessionsLock(
+    async () => {
+      const stored = await loadSession(session.handle).catch(() => undefined);
+      if (write === "terminal" || write === "owner-terminal") {
+        if (!stored) return;
+        if (
+          stored.status !== SESSION_STATUS.running ||
+          !sameTurn(stored, session, write === "owner-terminal")
+        ) {
+          Object.assign(session, stored);
+          return;
+        }
+      }
+      if (metadataOnly && !stored) return;
+      if (
+        write === "activity" &&
+        stored &&
+        (stored.status !== SESSION_STATUS.running || !sameTurn(stored, session))
+      ) {
+        Object.assign(session, stored);
+        return;
+      }
+      if (metadataOnly && stored) {
+        const metadata = replaceWakes
+          ? { wakes: session.wakes }
+          : {
+              childExitedAt: session.childExitedAt,
+              activity: session.activity,
+              activitySample: session.activitySample,
+              stuck: session.stuck,
+            };
+        Object.assign(session, stored, metadata);
+      }
+      if (!replaceWakes) session.wakes = stored?.wakes ?? session.wakes;
+      await writeSession(session);
+    },
+    stat,
+    `.session-${session.handle}.lock`,
+  );
+}
+
+async function writeSession(session: Session): Promise<void> {
   // Every terminal transition (done, failed, stopped, swept) saves here, so close an open turn once.
   const turn = session.turns?.at(-1);
   if (session.status !== SESSION_STATUS.running && turn?.endedAt === null) {
@@ -425,15 +517,28 @@ export function logActivity(
 
 export async function sweepSessions(
   getProcessStartTime = processStartTime,
+  requestedHandles: string[] = [],
 ): Promise<Session[]> {
-  const sessions = await listSessions();
+  await cleanupLockArtifacts();
+  const sessions = await refreshT3Sessions(
+    await listSessions(),
+    new Set(requestedHandles),
+  );
   for (const session of sessions) {
-    if (session.status !== SESSION_STATUS.running || !session.pid) continue;
-    const childRunning = isTrackedProcessRunning(
-      session.pid,
-      session.processStartTime,
-      getProcessStartTime,
-    );
+    if (hasUnsettledWakes(session))
+      await withSessionsLock(async () => {
+        const stored = await loadSession(session.handle).catch(() => undefined);
+        if (stored) {
+          await recoverWakes(stored);
+          Object.assign(session, stored);
+        }
+      });
+    if (session.runner === "t3") continue;
+    if (session.status !== SESSION_STATUS.running) {
+      session.stuck = null;
+      continue;
+    }
+
     const orphaned =
       session.wrapperPid &&
       !isTrackedProcessRunning(
@@ -441,8 +546,14 @@ export async function sweepSessions(
         session.wrapperProcessStartTime,
         getProcessStartTime,
       );
+    if (orphaned && !session.pid) {
+      session.status = SESSION_STATUS.failed;
+      session.error =
+        "calling smart-router process exited before registering its child pid";
+      await saveTerminalSession(session);
+      continue;
+    }
     if (orphaned) {
-      await stopSession(session, "SIGTERM", sessions);
       session.error =
         "stopped: its calling smart-router process exited (likely killed by the caller)";
       const output = await readFile(
@@ -450,10 +561,44 @@ export async function sweepSessions(
         "utf8",
       ).catch(() => "");
       Object.assign(session, logActivity(output));
-      await saveSession(session);
+      await stopSession(session, "SIGTERM", sessions);
       continue;
     }
-    if (childRunning) continue;
+    if (!session.pid) continue;
+    const childRunning = isTrackedProcessRunning(
+      session.pid,
+      session.processStartTime,
+      getProcessStartTime,
+    );
+    if (childRunning) {
+      session.childExitedAt = undefined;
+      await sampleActivity(session);
+      await saveSession(session, "activity");
+      continue;
+    }
+    const ownerRunning = isTrackedProcessRunning(
+      session.wrapperPid,
+      session.wrapperProcessStartTime,
+      getProcessStartTime,
+    );
+    if (ownerRunning) {
+      const observed = { ...session };
+      const childExitedAt = session.childExitedAt ?? new Date().toISOString();
+      session.childExitedAt = childExitedAt;
+      await sampleActivity(session);
+      session.stuck = {
+        reason: "child exited; owner still finishing",
+        since: session.childExitedAt,
+      };
+      await saveSession(session, "activity");
+      if (
+        !sameTurn(session, observed) ||
+        session.status !== SESSION_STATUS.running
+      )
+        continue;
+      if (Date.now() - Date.parse(childExitedAt) < CHILD_EXIT_OWNER_GRACE_MS)
+        continue;
+    }
     if (!isProcessRunning(session.pid)) await terminateSessionProcess(session);
     const completed = await completeSessionFromLog(
       session,
@@ -469,18 +614,32 @@ export async function sweepSessions(
 export async function withSessionsLock<T>(
   action: () => Promise<T>,
   getLockStat: (path: string) => Promise<{ mtimeMs: number }> = stat,
+  lockName = SPAWN_LOCK_DIRECTORY,
 ): Promise<T> {
   await mkdir(sessionsDir(), { recursive: true });
-  const lockPath = join(sessionsDir(), SPAWN_LOCK_DIRECTORY);
+  const lockPath = join(sessionsDir(), lockName);
+  const owner = newLockOwner();
+  const readOwner = () => readLockOwner(lockPath);
   while (true) {
     try {
       await mkdir(lockPath);
+      try {
+        await publishLockOwner(lockPath, owner);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          error.code === "ENOENT"
+        )
+          continue;
+        throw error;
+      }
       break;
     } catch (error) {
       if (!(
         error instanceof Error &&
         "code" in error &&
-        error.code === "EEXIST"
+        (error.code === "EEXIST" || error.code === "ENOTEMPTY")
       ))
         throw error;
       const lockStat = await getLockStat(lockPath).catch(
@@ -495,17 +654,85 @@ export async function withSessionsLock<T>(
         },
       );
       if (!lockStat) continue;
-      const lockAge = Date.now() - lockStat.mtimeMs;
-      if (lockAge > LOCK_STALE_TIMEOUT_MS)
-        await rm(lockPath, { recursive: true });
+      const holder = await readOwner().catch(() => undefined);
+      const deadOwner = lockOwnerDead(holder);
+      if (
+        deadOwner ||
+        (!holder && Date.now() - lockStat.mtimeMs > LOCK_STALE_TIMEOUT_MS)
+      )
+        await reclaimSessionLock(lockPath, holder?.token);
       await Bun.sleep(LOCK_RETRY_INTERVAL_MS);
     }
   }
   try {
     return await action();
   } finally {
-    await rm(lockPath, { recursive: true, force: true });
+    await releaseLock(lockPath, owner.token);
   }
+}
+
+function newLockOwner() {
+  return {
+    pid: process.pid,
+    startTime: (lockOwnerStartTime ??= processStartTime(process.pid)),
+    token: randomUUID(),
+  };
+}
+async function readLockOwner(path: string) {
+  return record(JSON.parse(await readFile(join(path, "owner.json"), "utf8")));
+}
+function lockOwnerDead(owner: Record<string, unknown> | undefined): boolean {
+  return (
+    typeof owner?.pid === "number" &&
+    (!isProcessRunning(owner.pid) ||
+      (typeof owner.startTime === "string" &&
+        !!processStartTime(owner.pid) &&
+        processStartTime(owner.pid) !== owner.startTime))
+  );
+}
+async function publishLockOwner(
+  path: string,
+  owner: ReturnType<typeof newLockOwner>,
+): Promise<void> {
+  const temporaryPath = join(path, `owner.${owner.token}.tmp`);
+  await writeFile(temporaryPath, JSON.stringify(owner));
+  await rename(temporaryPath, join(path, "owner.json"));
+}
+async function releaseLock(path: string, token: string): Promise<void> {
+  if ((await readLockOwner(path).catch(() => undefined))?.token !== token)
+    return;
+  const trash = `${path}.${token}.release`;
+  try {
+    await rename(path, trash);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      return;
+    throw error;
+  }
+  await rm(trash, { recursive: true, force: true });
+}
+async function cleanupLockArtifacts(): Promise<void> {
+  const entries = await readdir(sessionsDir(), { withFileTypes: true }).catch(
+    () => [],
+  );
+  await Promise.all(
+    entries
+      .filter(
+        (entry) =>
+          entry.isDirectory() &&
+          (/^\.spawn\.lock\..+\.(acquire|trash|release)$/.test(entry.name) ||
+            /^\.session-.+\.lock\.(?!reclaim$).+/.test(entry.name)),
+      )
+      .map(async (entry) => {
+        const path = join(sessionsDir(), entry.name);
+        const modified = await stat(path).catch(() => undefined);
+        if (
+          modified &&
+          Date.now() - modified.mtimeMs >= LOCK_ARTIFACT_MAX_AGE_MS
+        )
+          await rm(path, { recursive: true, force: true });
+      }),
+  );
 }
 
 async function failureMessage(
@@ -559,7 +786,7 @@ export async function completeSessionFromLog(
         : await failureMessage(session, parseError);
     Object.assign(session, logActivity(output));
   }
-  await saveSession(session);
+  await saveTerminalSession(session);
   return session;
 }
 
@@ -574,7 +801,23 @@ export async function terminateSessionProcess(
     !isTrackedProcessRunning(session.pid, session.processStartTime)
   )
     return;
-  let target = -session.pid;
+  // A watched job may share the delegate process group after its parent exits.
+  const group = (pid: number) => {
+    try {
+      return execFileSync("ps", ["-o", "pgid=", "-p", String(pid)], {
+        encoding: "utf8",
+      }).trim();
+    } catch {
+      return undefined;
+    }
+  };
+  const watchedGroup = session.wakes?.some(
+    (wake) =>
+      wake.state === "pending" &&
+      isTrackedProcessRunning(wake.pid, wake.startTime) &&
+      group(wake.pid) === String(session.pid),
+  );
+  let target = watchedGroup ? session.pid : -session.pid;
   if (!isProcessRunning(target)) target = session.pid;
   if (!isProcessRunning(target)) return;
   const sendSignal = (nextSignal: NodeJS.Signals) => {
@@ -615,11 +858,13 @@ async function stopDescendants(
     }
   }
   for (const descendant of descendants.reverse()) {
-    if (descendant.status !== SESSION_STATUS.running) continue;
+    const running = descendant.status === SESSION_STATUS.running;
+    if (running && descendant.runner !== "t3")
+      descendant.error = `stopped because ancestor ${handle} stopped`;
+    if (!(await markStopped(descendant, running && descendant.runner !== "t3")))
+      continue;
+    if (!running || descendant.runner === "t3") continue;
     await terminateSessionProcess(descendant);
-    descendant.status = SESSION_STATUS.stopped;
-    descendant.error = `stopped because ancestor ${handle} stopped`;
-    await saveSession(descendant);
   }
 }
 
@@ -628,9 +873,165 @@ export async function stopSession(
   signal: NodeJS.Signals = "SIGTERM",
   knownSessions?: Session[],
 ): Promise<Session> {
+  if (!(await markStopped(session))) return session;
   await stopDescendants(session.handle, knownSessions);
   await terminateSessionProcess(session, signal);
-  session.status = SESSION_STATUS.stopped;
-  await saveSession(session);
   return session;
+}
+
+function sameTurn(left: Session, right: Session, ownerWrite = false): boolean {
+  return (
+    (ownerWrite || left.pid === right.pid) &&
+    left.turns?.at(-1)?.startedAt === right.turns?.at(-1)?.startedAt
+  );
+}
+
+export async function saveTerminalSession(
+  session: Session,
+  match: "pid-and-turn" | "owner-turn" = "pid-and-turn",
+): Promise<void> {
+  await withSessionsLock(() =>
+    saveSession(
+      session,
+      match === "owner-turn" ? "owner-terminal" : "terminal",
+    ),
+  );
+}
+
+async function markStopped(session: Session, stop = true): Promise<boolean> {
+  return withSessionsLock(() =>
+    withSessionsLock(
+      async () => {
+        const stored = await loadSession(session.handle).catch(() => undefined);
+        if (!stored) return false;
+        if (!sameTurn(stored, session) || stored.status !== session.status) {
+          Object.assign(session, stored);
+          return false;
+        }
+        cancelPendingWakes(stored);
+        if (stop) stored.status = SESSION_STATUS.stopped;
+        stored.sessionId = session.sessionId ?? stored.sessionId;
+        stored.error = session.error ?? stored.error;
+        stored.lastMessage = session.lastMessage ?? stored.lastMessage;
+        stored.lastAction = session.lastAction ?? stored.lastAction;
+        await writeSession(stored);
+        Object.assign(session, stored);
+        return true;
+      },
+      stat,
+      `.session-${session.handle}.lock`,
+    ),
+  );
+}
+
+export async function reclaimSessionLock(
+  lockPath: string,
+  expectedToken: unknown,
+): Promise<boolean> {
+  const mutexPath = `${lockPath}.reclaim`;
+  const owner = newLockOwner();
+  try {
+    await mkdir(mutexPath);
+    await publishLockOwner(mutexPath, owner);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST"))
+      throw error;
+    const holder = await readLockOwner(mutexPath).catch(() => undefined);
+    const mutexStat = await stat(mutexPath).catch(() => undefined);
+    if (
+      lockOwnerDead(holder) ||
+      (!holder &&
+        mutexStat &&
+        Date.now() - mutexStat.mtimeMs >= LOCK_RECLAIM_STALE_TIMEOUT_MS)
+    ) {
+      const trash = `${mutexPath}.${randomUUID()}.trash`;
+      try {
+        await rename(mutexPath, trash);
+        const moved = await readLockOwner(trash).catch(() => undefined);
+        if (moved?.token === holder?.token)
+          await rm(trash, { recursive: true, force: true });
+      } catch {}
+    }
+    return false;
+  }
+  try {
+    const holder = await readFile(join(lockPath, "owner.json"), "utf8")
+      .then((value) => record(JSON.parse(value)))
+      .catch(() => undefined);
+    if (holder?.token !== expectedToken) return false;
+    if (expectedToken === undefined) {
+      const current = await stat(lockPath).catch(() => undefined);
+      if (!current || Date.now() - current.mtimeMs < LOCK_STALE_TIMEOUT_MS)
+        return false;
+    }
+    const trashPath = `${lockPath}.${randomUUID()}.trash`;
+    try {
+      await rename(lockPath, trashPath);
+    } catch {
+      return false;
+    }
+    await rm(trashPath, { recursive: true });
+    return true;
+  } finally {
+    await releaseLock(mutexPath, owner.token);
+  }
+}
+
+export async function saveT3Session(
+  next: Session,
+  expected: Session,
+  wakeId?: string,
+): Promise<boolean> {
+  return withSessionsLock(() =>
+    withSessionsLock(
+      async () => {
+        const stored = await loadSession(next.handle).catch(() => undefined);
+        if (
+          !stored ||
+          stored.runner !== "t3" ||
+          stored.t3Revision !== expected.t3Revision ||
+          stored.t3ThreadId !== expected.t3ThreadId
+        ) {
+          if (stored) Object.assign(next, stored);
+          return false;
+        }
+        next.wakes = structuredClone(stored.wakes);
+        if (wakeId) claimWake(next, wakeId);
+        if (JSON.stringify(next) === JSON.stringify(stored)) {
+          Object.assign(expected, next);
+          return true;
+        }
+        next.t3Revision = (stored.t3Revision ?? 0) + 1;
+        await writeSession(next);
+        Object.assign(expected, next);
+        return true;
+      },
+      stat,
+      `.session-${next.handle}.lock`,
+    ),
+  );
+}
+
+export async function expireT3Launch(session: Session): Promise<boolean> {
+  return withSessionsLock(() =>
+    withSessionsLock(
+      async () => {
+        const stored = await loadSession(session.handle).catch(() => undefined);
+        if (!stored) return true;
+        if (
+          stored.runner !== "t3" ||
+          stored.status !== "launched" ||
+          stored.t3ThreadId ||
+          stored.t3Revision !== session.t3Revision
+        ) {
+          Object.assign(session, stored);
+          return false;
+        }
+        await removeSession(session.handle);
+        return true;
+      },
+      stat,
+      `.session-${session.handle}.lock`,
+    ),
+  );
 }

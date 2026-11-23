@@ -1,3 +1,4 @@
+import { armWake } from "../src/wakes.ts";
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -24,6 +25,7 @@ import {
   loadSession,
   processStartTime,
   saveSession,
+  sweepSessions,
   sessionLogPath,
   sessionPath,
   sessionSocketPath,
@@ -37,6 +39,8 @@ import { runForeground } from "../src/runner.ts";
 import { getQuota, runCodexbar } from "../src/quota.ts";
 import { getAdapter } from "../src/harness/index.ts";
 
+const TEST_T3_THREAD_ID =
+  "thread:delegated-task:command%3Amcp%3A88e0911f-136c-4cff-a770-b45d4445e762%3Adelegate-task%3A6d558d53-1fee-496d-8fd6-80a6c093db42";
 const OWNER = "cli-test-owner";
 const foregroundChildren = new Set<Session>();
 const foregroundChildPids: number[] = [];
@@ -326,16 +330,28 @@ test.each([
       expect(launch.prompt).toContain("commit not signed: needs overseer");
     }
     expect(runnerArguments).toHaveLength(0);
-    expect(await listSessions()).toEqual([]);
+    expect((await loadSession(launch.handle)).status).toBe("launched");
     runnerOutput = harness === "codex" ? CODEX_OUTPUT : CLAUDE_OUTPUT;
     const spawned = await cli(["spawn", ...args], overrides);
     expect(spawned.exitCode).toBe(0);
     const spawnPrompt = runnerArguments[0]?.find((argument) =>
       argument.startsWith(prompt),
     );
+    expect(spawnPrompt).toContain(
+      harness === "codex"
+        ? "Processes you start in the background are stopped"
+        : 'smart-router wake "$SMART_ROUTER_HANDLE"',
+    );
     // T3 owns the child identity; only spawn adds smart-router session context.
     const sessionContext = /\n\n## Delegation context\n\n[^\n]+/;
-    expect(launch.prompt).toBe(spawnPrompt?.replace(sessionContext, ""));
+    expect(launch.prompt.split("\n\nYour smart-router handle is")[0]).toBe(
+      spawnPrompt
+        ?.replace(sessionContext, "")
+        .replace(
+          /\n\n(?:Work that must outlive|Processes you start in the background)[^\n]+/,
+          "",
+        ),
+    );
     expect(launch.sandbox).toBe(spawned.json.sandbox ?? null);
   },
 );
@@ -379,7 +395,9 @@ test("spawn parses Claude and Codex output, flags, and stopping-point refusal", 
   expect(claude.stderr).toContain(
     "Routed to claude:opus@high (caller override)",
   );
-  expect(runnerArguments[0]).toContain("finish task");
+  expect(
+    runnerArguments[0].some((argument) => argument.startsWith("finish task\n")),
+  ).toBe(true);
   expect(runnerArguments[0].join(" ")).not.toContain("## Operating rules");
   expect(runnerArguments[0].join(" ")).not.toContain("## Delegation context");
   expect(runnerEnvironments[0]).toMatchObject({
@@ -899,7 +917,7 @@ test("spawn lock enforces maxRunning and wait-for-slot polls", async () => {
     await saveSession(active);
   }, 20);
   const waitArgs = ["spawn", "waiting", "--model", "claude:opus"];
-  expectJson(await cli([...waitArgs, "--wait-for-slot", "0.1"]), {
+  expectJson(await cli([...waitArgs, "--wait-for-slot", "1"]), {
     result: "finished work",
   });
 });
@@ -1699,7 +1717,7 @@ if (${JSON.stringify(harness)} === "codex") {
   await appendFile(${JSON.stringify(receivedPath)}, line + "\\n");
   if (event.type === "control_request") continue;
   emit({type:"user", message:event.message, isReplay:true});
-  if (event.message.content === "wait") continue;
+  if (event.message.content.startsWith("wait")) continue;
   emit({type:"result", result:event.message.content, session_id:"claude-session"});
 }
 `,
@@ -1797,7 +1815,7 @@ test("detached claude spawns run under the supervisor", async () => {
     "__supervise",
     "--",
     json.handle,
-    "count",
+    expect.stringContaining("count\n\nWork that must outlive"),
   ]);
   expect(detachedArgv).toContain("--input-format");
   expect((await loadSession(json.handle)).supervisorPid).toBe(DETACHED_PID);
@@ -2637,4 +2655,332 @@ test("OpenClaw variadic denials retain the automatic routed model and confined r
   expect(runnerArguments[1]).toContain(
     'mcp_servers.openclaw.disabled_tools=["pay","send","delete"]',
   );
+});
+
+test("wake CLI survives watcher crash, sends through resume once, and supports cancel", async () => {
+  const fake = join(directory, "wake-codex"),
+    received = join(directory, "received-wakes");
+  await writeFile(
+    fake,
+    `#!/usr/bin/env bun
+import {appendFileSync} from "node:fs";
+appendFileSync(${JSON.stringify(received)}, process.env.SMART_ROUTER_HANDLE + "\\n");
+console.log(${JSON.stringify(CODEX_OUTPUT)});
+`,
+  );
+  await chmod(fake, 0o755);
+  config.harnesses.codex = { enabled: true, binary: fake };
+  await saveConfig(config);
+  const session = await createSession({
+    harness: "codex",
+    model: "terra",
+    effort: "high",
+    cwd: directory,
+    prompt: "task",
+    status: "done",
+    sessionId: "codex-thread",
+  });
+  const job = Bun.spawn(["sleep", "30"], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  const invoke = (args: string[]) =>
+    Bun.spawnSync(
+      [process.execPath, join(import.meta.dir, "../src/cli.ts"), ...args],
+      { env: process.env },
+    );
+  let watcherPid: number | undefined;
+  try {
+    const armed = invoke([
+      "wake",
+      session.handle,
+      "--after-pid",
+      String(job.pid),
+    ]);
+    expect(armed.exitCode).toBe(0);
+    const value = JSON.parse(armed.stdout.toString());
+    watcherPid = value.watcherPid;
+    process.kill(watcherPid!, "SIGKILL");
+    await Bun.sleep(100);
+    await cli(["status", session.handle]);
+    const recovered = (await loadSession(session.handle)).wakes![0];
+    watcherPid = recovered.watcherPid;
+    expect(watcherPid).not.toBe(value.watcherPid);
+    job.kill();
+    await job.exited;
+    const waited = await cli(["wait", session.handle, "--timeout", "8"]);
+    expect(waited.exitCode).toBe(0);
+    expect((await loadSession(session.handle)).wakes![0].state).toBe("sent");
+    expect(await readFile(received, "utf8")).toBe(`${session.handle}\n`);
+    await cli(["status", session.handle]);
+    expect(await readFile(received, "utf8")).toBe(`${session.handle}\n`);
+    expect(
+      (await cli(["wake", session.handle, "--cancel", value.id])).exitCode,
+    ).toBe(0);
+    const cancelled = invoke([
+      "wake",
+      session.handle,
+      "--after-pid",
+      String(process.pid),
+      "--message",
+      "custom",
+    ]);
+    expect(cancelled.exitCode).toBe(0);
+    const pending = JSON.parse(cancelled.stdout.toString());
+    watcherPid = pending.watcherPid;
+    expect(
+      (await cli(["wait", session.handle, "--timeout", "0"])).exitCode,
+    ).toBe(124);
+    await cli(["wake", session.handle, "--cancel"]);
+    expect(
+      (await cli(["wait", session.handle, session.handle])).json,
+    ).toHaveLength(2);
+    for (const args of [
+      ["--after-pid", "-1"],
+      ["--after-pid", "999999"],
+      [],
+      ["--cancel", "--after-pid", "1"],
+      ["--cancel", "missing"],
+    ])
+      expect((await cli(["wake", session.handle, ...args])).exitCode).toBe(1);
+  } finally {
+    job.kill();
+    await job.exited;
+    if (watcherPid) {
+      try {
+        process.kill(watcherPid, "SIGTERM");
+      } catch {}
+    }
+  }
+}, 15000);
+
+test("internal wake delivers with capacity reservation and handle environment, failing safely after claim", async () => {
+  for (const fail of [false, true]) {
+    const session = await createSession({
+      harness: "codex",
+      model: "terra",
+      effort: "high",
+      cwd: directory,
+      prompt: "task",
+      status: "done",
+      sessionId: "codex-thread",
+    });
+    session.wakes = [
+      {
+        id: "internal",
+        pid: 999999,
+        startTime: "gone",
+        command: "job",
+        armedAt: new Date().toISOString(),
+        watcherPid: process.pid,
+        watcherStartTime: processStartTime(process.pid),
+        state: "pending",
+      },
+    ];
+    await saveSession(session, "claim");
+    const result = await cli(["__wake", session.handle, "internal"], {
+      runForeground: async (_argv, _cwd, env) => {
+        expect(env?.SMART_ROUTER_HANDLE).toBe(session.handle);
+        expect((await loadSession(session.handle)).wakes![0].state).toBe(
+          "sending",
+        );
+        if (fail) throw new Error("launch failed");
+        return CODEX_OUTPUT;
+      },
+    });
+    expect(result.exitCode).toBe(fail ? 1 : 0);
+    expect((await loadSession(session.handle)).wakes![0].state).toBe(
+      fail ? "failed" : "sent",
+    );
+  }
+});
+
+test("wake arm reports failure with exit 1", async () => {
+  const session = await createSession({
+    harness: "codex",
+    model: "terra",
+    effort: "high",
+    cwd: directory,
+    prompt: "task",
+    status: "done",
+  });
+  const result = await cli(
+    ["wake", session.handle, "--after-pid", String(process.pid)],
+    {
+      armWake: (handle, pid, message) =>
+        armWake(handle, pid, message, async () => {
+          throw new Error("launch failed");
+        }),
+    },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.json.state).toBe("failed");
+});
+test("maxDepth capacity exhausts delivery attempts instead of waiting forever", async () => {
+  config.rules.concurrency = { maxRunning: 1, maxPerCaller: 1, maxDepth: 0 };
+  await saveConfig(config);
+  const session = await createSession({
+    harness: "codex",
+    model: "terra",
+    effort: "high",
+    cwd: directory,
+    prompt: "task",
+    status: "done",
+    depth: 1,
+    sessionId: "thread",
+  });
+  session.wakes = [
+    {
+      id: "depth",
+      pid: 999999,
+      startTime: "gone",
+      command: "job",
+      armedAt: new Date().toISOString(),
+      watcherPid: process.pid,
+      watcherStartTime: processStartTime(process.pid),
+      state: "pending",
+    },
+  ];
+  await saveSession(session, "claim");
+  const result = await cli(["__wake", session.handle, "depth"]);
+  expect(result.exitCode).toBe(1);
+  expect((await loadSession(session.handle)).wakes![0].state).toBe("failed");
+}, 45000);
+
+test("T3 route registration, handle commands and capacity exclusion", async () => {
+  const fake = join(directory, "fake-t3");
+  await writeFile(
+    fake,
+    `#!/usr/bin/env bun
+const args=process.argv.slice(2);await Bun.stdin.text();
+console.log(JSON.stringify(args[1]==="send"?{runId:"run"}:{thread:{status:"completed",updatedAt:"2026-01-01T00:00:00Z",latestRunId:"run"},messages:args.at(-1)==="1"?[{role:"assistant",runId:"run",text:"T3 done"}]:[]}));
+`,
+  );
+  await chmod(fake, 0o755);
+  process.env.SMART_ROUTER_T3_CLI = fake;
+  try {
+    const routed = await cli([
+      "route",
+      "task",
+      "--launch",
+      "--label",
+      "child",
+      "--phase",
+      "review",
+    ]);
+    const handle = routed.json.launch.handle;
+    expect(await loadSession(handle)).toMatchObject({
+      runner: "t3",
+      status: "launched",
+      t3ThreadId: "",
+      label: "child",
+      phase: "review",
+    });
+    expect(routed.json.launch.prompt).toContain(
+      `Your smart-router handle is ${handle}`,
+    );
+    expect(
+      (await cli(["attach", handle, "--t3-thread", TEST_T3_THREAD_ID]))
+        .exitCode,
+    ).toBe(0);
+    expectJson(await cli(["status", handle]), { result: "T3 done" });
+    expectJson(await cli(["send", handle, "follow up"]), { sent: true });
+    config.rules.concurrency = { maxRunning: 1, maxPerCaller: 1, maxDepth: 2 };
+    await saveConfig(config);
+    expect(
+      (await cli(["spawn", "local", "--model", "claude:opus"])).exitCode,
+    ).toBe(0);
+    expectJson(await cli(["wait", handle]), {
+      result: "T3 done",
+      resumeCommand: `smart-router send ${handle} "<msg>"`,
+    });
+    expectJson(await cli(["stop", handle]), { error: "stop it in T3" }, 1);
+  } finally {
+    delete process.env.SMART_ROUTER_T3_CLI;
+  }
+});
+
+test("failed pid registration still records the owner's failure", async () => {
+  const result = await cli(["spawn", "task", "--model", "codex:terra"], {
+    runForeground: async (_argv, _cwd, _env, session) => {
+      if (!session) throw new Error("missing session");
+      session.pid = 999999;
+      throw new Error("pid registration failed");
+    },
+  });
+  expect(result.exitCode).toBe(1);
+  expect((await listSessions()).at(0)).toMatchObject({
+    status: "failed",
+    error: "pid registration failed",
+  });
+});
+
+test("a sweep cannot parse a foreground wrapper's partially drained output", async () => {
+  const result = await cli(["spawn", "task", "--model", "claude:opus"], {
+    runForeground: async (_argv, _cwd, _env, session) => {
+      if (!session) throw new Error("missing session");
+      session.pid = 999999;
+      await saveSession(session);
+      await writeFile(sessionLogPath(session.handle), '{"type":');
+      await sweepSessions();
+      expect((await loadSession(session.handle)).status).toBe("running");
+      return CLAUDE_OUTPUT;
+    },
+  });
+  expect(result.exitCode).toBe(0);
+  expect((await loadSession(result.json.handle)).status).toBe("done");
+});
+
+test("route launch does not register a session when prompt construction fails", async () => {
+  await mkdir(join(directory, "config", "guardrails.md"));
+  expect((await cli(["route", "task", "--launch"])).exitCode).toBe(1);
+  expect(await listSessions()).toHaveLength(0);
+});
+test("T3 logs explain how to open the thread", async () => {
+  const session = await createSession({
+    harness: "claude",
+    model: "opus",
+    effort: "high",
+    cwd: directory,
+    prompt: "T3",
+    runner: "t3",
+    status: "launched",
+    t3ThreadId: "",
+  });
+  expectJson(
+    await cli(["logs", session.handle]),
+    { error: "T3 sessions have no smart-router log; open the thread in T3" },
+    1,
+  );
+});
+
+test("wait exits 2 when a T3 thread needs a human answer", async () => {
+  const fake = join(directory, "input-t3");
+  await writeFile(
+    fake,
+    `#!/usr/bin/env bun
+await Bun.stdin.text();console.log(JSON.stringify({thread:{status:"waiting",updatedAt:new Date().toISOString(),pendingRequestCount:1,latestRunId:"run"},messages:[]}));
+`,
+  );
+  await chmod(fake, 0o755);
+  process.env.SMART_ROUTER_T3_CLI = fake;
+  try {
+    const session = await createSession({
+      harness: "claude",
+      model: "opus",
+      effort: "high",
+      cwd: directory,
+      prompt: "T3",
+      runner: "t3",
+      status: "running",
+      t3ThreadId: TEST_T3_THREAD_ID,
+    });
+    expectJson(
+      await cli(["wait", session.handle]),
+      { needsInput: true, warning: "waiting for an answer in T3" },
+      2,
+    );
+  } finally {
+    delete process.env.SMART_ROUTER_T3_CLI;
+  }
 });

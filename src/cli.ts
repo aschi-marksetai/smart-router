@@ -1,4 +1,16 @@
 #!/usr/bin/env bun
+import { attachT3Session, sendT3Session, t3Result, T3_NO_LOG } from "./t3.ts";
+import {
+  armWake,
+  cancelWakes,
+  watchWake,
+  claimWake,
+  hasUnsettledWakes,
+  WAKE_COMMAND,
+  WAIT_POLL_INTERVAL_MS,
+  WakeCapacityError,
+  sessionEnvironment,
+} from "./wakes.ts";
 import { LOG_FOLLOW_INTERVAL_MS } from "./events.ts";
 import {
   createSessionEventStream,
@@ -79,6 +91,7 @@ import {
   pruneSessions,
   removeSession,
   saveSession,
+  saveTerminalSession,
   startSessionTurn,
   finishSessionTurn,
   sessionLogPath,
@@ -144,7 +157,6 @@ type Pick = { harness: HarnessName; model: string; effort: string };
 const MISSING_CONFINED_ALLOWLIST_ERROR =
   "confined session has no stored allowlist; start a new session";
 const RUNNING_SESSION_ERROR = "is still running; wait or stop it first";
-const POLL_INTERVAL_MS = 1_000;
 const DEFAULT_RESULT_LIMIT: number | undefined = undefined;
 const RESULT_LIMIT_FLAG = "--result-limit";
 const RESULT_LIMIT_OPTION = `${RESULT_LIMIT_FLAG} <chars>`;
@@ -276,6 +288,7 @@ export type CliDeps = {
   exit: (code: number) => void;
   runForeground: typeof runForeground;
   verifyConfinedCodex?: typeof verifyConfinedCodex;
+  armWake?: typeof armWake;
   runDetached: typeof runDetached;
   fetch: (url: string) => Promise<Response>;
   now: () => number;
@@ -373,6 +386,7 @@ async function reserveSpawnSession(
   waitForSlot: string | undefined,
   deps: CliDeps,
   existingSession?: Session,
+  wakeId?: string,
 ): Promise<Session | ReturnType<typeof capacityOutput>> {
   const owner = existingSession?.owner ?? sessionOwner();
   const depth = existingSession?.depth ?? currentDepth() + 1;
@@ -391,8 +405,8 @@ async function reserveSpawnSession(
   const deadline = deps.now() + (waitSeconds ?? 0) * 1_000;
   while (true) {
     let capacity: ReturnType<typeof capacityOutput> | undefined;
+    await sweepSessions();
     const session = await withSessionsLock(async () => {
-      await sweepSessions();
       if (existingSession) {
         const stored = await loadSession(existingSession.handle);
         if (stored.status === SESSION_STATUS.running)
@@ -416,7 +430,8 @@ async function reserveSpawnSession(
         ];
       }
       const running = (await listSessions()).filter(
-        ({ status }) => status === SESSION_STATUS.running,
+        ({ status, runner }) =>
+          runner !== "t3" && status === SESSION_STATUS.running,
       );
       const callerSessions = running.filter(
         (session) => session.owner === owner,
@@ -435,15 +450,21 @@ async function reserveSpawnSession(
         return undefined;
       }
       if (existingSession) {
+        existingSession.wakes = (
+          await loadSession(existingSession.handle)
+        ).wakes;
+        if (wakeId) claimWake(existingSession, wakeId);
         await startSessionTurn(existingSession, "resumed");
         existingSession.status = SESSION_STATUS.running;
         existingSession.error = undefined;
         existingSession.pid = undefined;
+        existingSession.childExitedAt = undefined;
         existingSession.supervisorPid = undefined;
+        existingSession.supervisorProcessStartTime = undefined;
         existingSession.processStartTime = undefined;
         existingSession.wrapperPid = process.pid;
         existingSession.wrapperProcessStartTime = processStartTime(process.pid);
-        await saveSession(existingSession);
+        await saveSession(existingSession, wakeId ? "claim" : "session");
         return existingSession;
       }
       return createSession({
@@ -636,9 +657,23 @@ async function buildLaunch(
   return { prompt: spawnPrompt, sandbox, sandboxChoice };
 }
 
+function delegateWaitingNote(
+  harness: HarnessName,
+  handle = '"$SMART_ROUTER_HANDLE"',
+): string {
+  return harness === "codex"
+    ? "Processes you start in the background are stopped when the command that started them ends, so you can't leave work running past your turn. Run long work in the foreground; if it can't finish within your turn, say so in your final message."
+    : `Work that must outlive your turn should, where possible, run as a background task that your harness waits for. If work must be detached (nohup or setsid), run \`smart-router wake ${handle} --after-pid <pid>\` before ending your turn, and say in your final message that a wake is armed.`;
+}
+
 async function routeCommand(
   prompt: string,
-  options: RouteOptions & { model?: string; launch?: boolean },
+  options: RouteOptions & {
+    model?: string;
+    launch?: boolean;
+    label?: string;
+    phase?: string;
+  },
   deps: CliDeps,
 ): Promise<void> {
   const config = await loadConfig();
@@ -660,10 +695,27 @@ async function routeCommand(
       );
     const selected = parsePick(result.pick);
     const launch = await buildLaunch(prompt, selected, options, config, result);
+    const session = await withSessionsLock(() =>
+      createSession({
+        ...selected,
+        runner: "t3",
+        t3ThreadId: "",
+        status: SESSION_STATUS.launched,
+        cwd: resolve(options.cwd ?? process.cwd()),
+        prompt,
+        label: parseDisplayName(options.label, LABEL_FLAG),
+        phase: parseDisplayName(options.phase, PHASE_FLAG),
+        parentHandle: process.env[HANDLE_ENVIRONMENT_VARIABLE],
+        depth: currentDepth() + 1,
+        route: result,
+      }),
+    );
+    launch.prompt += `\n\nYour smart-router handle is ${session.handle}.\n${delegateWaitingNote(selected.harness, session.handle)}`;
     output = {
       ...result,
       launch: {
         ...selected,
+        handle: session.handle,
         prompt: launch.prompt,
         sandbox: launch.sandbox ?? null,
       },
@@ -777,7 +829,10 @@ async function spawnCommand(
     options.guardrails === false
       ? ""
       : `## Delegation context\n\nYour smart-router handle is ${handle} at depth ${depth} of max ${config.rules.concurrency?.maxDepth ?? DEFAULT_MAX_DEPTH}; if that depth equals the maximum you cannot spawn and must do the work yourself. Never wait on, stop, send to or steer your own handle or an ancestor. If you spawn a helper, use --detach and then \`smart-router wait <child> --timeout ${DELEGATE_WAIT_TIMEOUT_SECONDS}\` in a loop, polling, and report what you have if it is still running. A shell command returning early (a yield) is not completion; check status instead.`;
-  const promptWithContext = context ? `${prompt}\n\n${context}` : prompt;
+  const waitingNote = delegateWaitingNote(selected.harness);
+  const promptWithContext = [prompt, context, waitingNote]
+    .filter(Boolean)
+    .join("\n\n");
   const {
     prompt: spawnPrompt,
     sandbox,
@@ -895,15 +950,18 @@ async function spawnCommand(
         { ...environment, ...command.env },
       );
       session.pid = detached.pid;
-      if (supervised) session.supervisorPid = detached.pid;
       session.processStartTime = processStartTime(detached.pid);
+      if (supervised) {
+        session.supervisorPid = detached.pid;
+        session.supervisorProcessStartTime = session.processStartTime;
+      }
       session.errPath = detached.errPath;
       await saveSession(session);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       session.status = SESSION_STATUS.failed;
       session.error = message;
-      await saveSession(session);
+      await saveTerminalSession(session, "owner-turn");
       throw new Error(message);
     }
     if (options.events)
@@ -953,12 +1011,12 @@ async function spawnCommand(
     session.lastResult = parsed.result;
     session.usage = parsed.usage;
     finishSessionTurn(session, parsed.usage);
-    await saveSession(session);
+    await saveTerminalSession(session);
   } catch (error) {
     session.status = SESSION_STATUS.failed;
     session.error = error instanceof Error ? error.message : String(error);
     storeFailureActivity(session, error);
-    await saveSession(session);
+    await saveTerminalSession(session, "owner-turn");
     if (options.events) return stream.finish(session);
     throw error;
   }
@@ -1041,14 +1099,18 @@ async function updateCommand(
 async function sendCommand(
   handle: string,
   message: string,
-  options: PassthroughOptions & { waitForSlot?: string },
+  options: PassthroughOptions & { waitForSlot?: string; wakeId?: string },
   deps: CliDeps,
 ): Promise<void> {
-  rejectOwnOrAncestor("send", handle);
+  if (!options.wakeId) rejectOwnOrAncestor("send", handle);
   const [config, session] = await Promise.all([
     loadConfig(),
     loadSession(handle),
   ]);
+  if (session.runner === "t3") {
+    await sendT3Session(session, message, options.wakeId);
+    return printResult(deps, { handle, sent: true }, "Message queued in T3");
+  }
   if (session.status === SESSION_STATUS.running)
     throw new Error(`session ${handle} ${RUNNING_SESSION_ERROR}`);
   if (!session.sessionId)
@@ -1085,6 +1147,7 @@ async function sendCommand(
     options.waitForSlot,
     deps,
     session,
+    options.wakeId,
   );
   if ("limit" in reservation)
     return printResult(
@@ -1115,7 +1178,10 @@ async function sendCommand(
         session,
         harnessOptions,
         deps,
-        { ...process.env, ...command.env },
+        {
+          ...(await sessionEnvironment(session)),
+          ...command.env,
+        },
         options.events ? stream.line : undefined,
       ),
       adapter.parseResumeOutput,
@@ -1130,12 +1196,12 @@ async function sendCommand(
     session.status = SESSION_STATUS.failed;
     session.error = error instanceof Error ? error.message : String(error);
     storeFailureActivity(session, error);
-    await saveSession(session);
+    await saveTerminalSession(session, "owner-turn");
     if (options.events) return stream.finish(session);
     throw error;
   }
   if (options.browser && session.harness === "claude") session.browser = true;
-  await saveSession(session);
+  await saveTerminalSession(session);
   if (options.events) return stream.finish(session, parsed.usage);
   return printResult(
     deps,
@@ -1384,12 +1450,12 @@ function printPassthroughNotes(
 }
 
 async function refreshSession(handle: string): Promise<Session> {
-  await sweepSessions();
+  await sweepSessions(undefined, [handle]);
   return loadSession(handle);
 }
 
 async function statusCommand(handle: string, deps: CliDeps): Promise<void> {
-  const session = await refreshSession(handle);
+  const session = await t3Result(await refreshSession(handle));
   return printResult(deps, sessionStatus(session), "Session status retrieved");
 }
 
@@ -1475,6 +1541,7 @@ async function logsCommand(
   deps: CliDeps,
 ): Promise<void> {
   const session = await loadSession(handle);
+  if (session.runner === "t3") throw new Error(T3_NO_LOG);
   const logPath = options.err
     ? session.errPath
     : (session.logPath ?? sessionLogPath(handle));
@@ -1483,92 +1550,150 @@ async function logsCommand(
 }
 
 async function waitCommand(
-  handle: string,
-  options: { resultLimit?: string; timeout?: string },
+  handles: string[],
+  options: { timeout?: string; resultLimit?: string },
   deps: CliDeps,
 ): Promise<void> {
-  rejectOwnOrAncestor("wait", handle);
-  const timeoutSeconds =
-    options.timeout === undefined ? undefined : Number(options.timeout);
+  resultLimit(options);
+  for (const handle of handles) rejectOwnOrAncestor("wait", handle);
+  const seconds =
+    options.timeout === undefined ? Infinity : Number(options.timeout);
   if (
-    timeoutSeconds !== undefined &&
-    (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 0)
+    seconds < 0 ||
+    Number.isNaN(seconds) ||
+    (options.timeout !== undefined && !Number.isFinite(seconds))
   )
     throw new Error("--timeout must be a non-negative number");
-  const deadline =
-    timeoutSeconds === undefined
-      ? undefined
-      : Date.now() + timeoutSeconds * 1_000;
-  let session = await refreshSession(handle);
-  while (session.status === SESSION_STATUS.running) {
-    const remaining =
-      deadline === undefined ? POLL_INTERVAL_MS : deadline - Date.now();
-    if (remaining <= 0)
+  const deadline = Date.now() + seconds * 1_000;
+  while (true) {
+    await sweepSessions(undefined, handles);
+    const sessions = await Promise.all(handles.map(loadSession));
+    const isSettled = () =>
+      sessions.every(
+        (session) =>
+          session.status !== SESSION_STATUS.running &&
+          session.status !== SESSION_STATUS.launched &&
+          !hasUnsettledWakes(session),
+      );
+    let settled = isSettled();
+    if (settled)
+      await Promise.all(
+        sessions.map(async (session, index) => {
+          sessions[index] = await t3Result(session);
+        }),
+      );
+    settled =
+      isSettled() &&
+      !sessions.some(
+        (session) =>
+          session.runner === "t3" &&
+          session.status === "done" &&
+          session.warning &&
+          session.t3ResultKey !== session.t3LatestRunId,
+      );
+    if (sessions.some((session) => session.needsInput)) {
+      const states = sessions.map(sessionStatus);
       return printResult(
         deps,
-        {
-          handle,
-          error: "timeout",
-          status: "running",
-          next: `poll with smart-router status ${handle} or wait again; do not start another wait in parallel`,
-        },
-        "Wait timed out",
-        TIMEOUT_EXIT_CODE,
+        states.length === 1 ? states[0] : states,
+        "waiting for an answer in T3",
+        2,
       );
-    await new Promise((resolve) =>
-      setTimeout(resolve, Math.min(POLL_INTERVAL_MS, remaining)),
-    );
-    session = await refreshSession(handle);
-  }
-  if (
-    session.status === SESSION_STATUS.failed ||
-    session.status === SESSION_STATUS.stopped
-  )
-    return printResult(
-      deps,
-      {
-        handle,
-        error: `session ${handle} was ${session.status}: ${session.error ?? session.status}`,
-        lastMessage: session.lastMessage ?? null,
-        lastAction: session.lastAction ?? null,
-      },
-      `Spawn ${session.status}`,
-      ERROR_EXIT_CODE,
-    );
-  const config = await loadConfig();
-  const resumeCommand = session.confined
-    ? `smart-router send ${handle} "<msg>"`
-    : session.sessionId
-      ? getAdapter(session.harness)
-          .buildResume(
-            session.sessionId,
-            '"<msg>"',
-            await harnessOptionsFor(session, session.cwd, config, {}, deps),
+    }
+    if (settled || Date.now() >= deadline) {
+      const outcomes = await Promise.all(
+        sessions.map(async (session) => {
+          const handle = session.handle;
+          if (!settled)
+            return {
+              handle,
+              error: "timeout",
+              status: session.status,
+              ...(session.runner === "t3" ? { warning: session.warning } : {}),
+              next: `poll with smart-router status ${handle} or wait again; do not start another wait in parallel`,
+            };
+          if (
+            session.status === SESSION_STATUS.failed ||
+            session.status === SESSION_STATUS.stopped
           )
-          .argv.join(" ")
-      : undefined;
-  return printResult(
-    deps,
-    {
-      handle: session.handle,
-      harness: session.harness,
-      model: session.model,
-      effort: session.effort,
-      route: session.route,
-      resumeCommand,
-      ...resultOutput(
-        session.lastResult ?? session.result ?? "",
-        resultLimit(options),
-      ),
-      usage: session.usage,
-    },
-    "Spawn completed",
-  );
+            return {
+              handle,
+              error: `session ${handle} was ${session.status}: ${session.error ?? session.status}`,
+              lastMessage: session.lastMessage ?? null,
+              lastAction: session.lastAction ?? null,
+            };
+          const config = await loadConfig();
+          const resumeCommand =
+            session.runner === "t3" || session.confined
+              ? `smart-router send ${handle} "<msg>"`
+              : session.sessionId
+                ? getAdapter(session.harness)
+                    .buildResume(
+                      session.sessionId,
+                      '"<msg>"',
+                      await harnessOptionsFor(
+                        session,
+                        session.cwd,
+                        config,
+                        {},
+                        deps,
+                      ),
+                    )
+                    .argv.join(" ")
+                : undefined;
+          return {
+            handle,
+            harness: session.harness,
+            model: session.model,
+            effort: session.effort,
+            route: session.route,
+            ...(session.runner === "t3" ? { warning: session.warning } : {}),
+            resumeCommand,
+            ...resultOutput(
+              session.lastResult ?? session.result ?? "",
+              resultLimit(options),
+            ),
+            usage: session.usage,
+          };
+        }),
+      );
+      const failed = sessions.some(
+        (session) =>
+          session.status === SESSION_STATUS.failed ||
+          session.status === SESSION_STATUS.stopped,
+      );
+      let exitCode = SUCCESS_EXIT_CODE;
+      let message = "Spawn completed";
+      if (!settled) {
+        exitCode = TIMEOUT_EXIT_CODE;
+        message = "Wait timed out";
+      } else if (failed) {
+        exitCode = ERROR_EXIT_CODE;
+        message = `Spawn ${sessions.find((session) => session.status === SESSION_STATUS.failed || session.status === SESSION_STATUS.stopped)?.status}`;
+      }
+      return printResult(
+        deps,
+        outcomes.length === 1 ? outcomes[0] : outcomes,
+        message,
+        exitCode,
+      );
+    }
+    await Bun.sleep(Math.min(WAIT_POLL_INTERVAL_MS, deadline - Date.now()));
+  }
 }
 
 async function stopCommand(handle: string, deps: CliDeps): Promise<void> {
   rejectOwnOrAncestor("stop", handle);
   const session = await loadSession(handle);
+  if (session.runner === "t3") {
+    await cancelWakes(handle);
+    return printResult(
+      deps,
+      { handle, error: "stop it in T3" },
+      "stop it in T3",
+      ERROR_EXIT_CODE,
+    );
+  }
   return printResult(
     deps,
     { ...(await stopSession(session)), running: false },
@@ -1636,6 +1761,8 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
   program
     .command("route <prompt>")
     .option("--launch")
+    .option("--label <text>")
+    .option("--phase <text>")
     .option("--model <harness:auto>")
     .option("--cwd <dir>")
     .option("--hint <text>")
@@ -1735,6 +1862,72 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
       deps.exit(await superviseSession(handle, prompt, argv)),
     );
   program
+    .command("attach <handle>")
+    .requiredOption("--t3-thread <id>")
+    .action(async (handle, options) =>
+      printResult(
+        deps,
+        await attachT3Session(handle, options.t3Thread),
+        "T3 thread attached",
+      ),
+    );
+  program
+    .command("wake <handle> [wakeId]")
+    .option("--after-pid <pid>")
+    .option("--message <text>")
+    .option("--cancel")
+    .action(async (handle, wakeId, options) => {
+      if (options.cancel && !options.afterPid && !options.message)
+        return printResult(
+          deps,
+          await cancelWakes(handle, wakeId),
+          "Wakes cancelled",
+        );
+      if (options.cancel || wakeId || !options.afterPid)
+        throw new Error("use --after-pid <pid> or --cancel [wake-id]");
+      const wake = await (deps.armWake ?? armWake)(
+        handle,
+        Number(options.afterPid),
+        options.message,
+      );
+      return printResult(
+        deps,
+        wake,
+        wake.state === "failed" ? "Wake failed" : "Wake armed",
+        wake.state === "failed" ? ERROR_EXIT_CODE : SUCCESS_EXIT_CODE,
+      );
+    });
+  program
+    .command(`${WAKE_COMMAND} <handle> <wakeId>`, { hidden: true })
+    .action(async (handle, wakeId) => {
+      await watchWake(handle, wakeId, async (message) => {
+        let exitCode = 0;
+        let capacityLimit: unknown;
+        await sendCommand(
+          handle,
+          message,
+          { wakeId },
+          {
+            ...deps,
+            stdout: (text) => {
+              capacityLimit = record(JSON.parse(text))?.limit;
+              deps.stdout(text);
+            },
+            exit: (code) => {
+              exitCode = code;
+            },
+          },
+        );
+        if (
+          exitCode === CAPACITY_EXIT_CODE &&
+          (capacityLimit === "maxRunning" || capacityLimit === "maxPerCaller")
+        )
+          throw new WakeCapacityError();
+        if (exitCode) throw new Error(`send exited ${exitCode}`);
+      });
+      deps.exit(SUCCESS_EXIT_CODE);
+    });
+  program
     .command("status <handle>")
     .action((handle) => statusCommand(handle, deps));
   program
@@ -1745,7 +1938,7 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .option("--err")
     .action((handle, options) => logsCommand(handle, options, deps));
   program
-    .command("wait <handle>")
+    .command("wait <handles...>")
     .option(WAIT_TIMEOUT_OPTION)
     .option(RESULT_LIMIT_OPTION)
     .action((handle, options) => waitCommand(handle, options, deps));

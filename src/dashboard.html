@@ -266,7 +266,13 @@
       const SCROLL_THRESHOLD = 48;
       const MAX_INDENT_DEPTH = 8;
       const INDENT_PX = 12;
-      const GLYPHS = { running: "●", done: "✓", failed: "✗", stopped: "■" };
+      const GLYPHS = {
+        launched: "○",
+        running: "●",
+        done: "✓",
+        failed: "✗",
+        stopped: "■",
+      };
       const scopeControl = document.getElementById("scope");
       const sessionsPane = document.getElementById("sessions");
       const conversation = document.getElementById("conversation");

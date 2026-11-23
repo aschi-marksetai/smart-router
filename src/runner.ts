@@ -17,6 +17,7 @@ const IGNORE = "ignore";
 const STDERR_LINE_LIMIT = 20;
 const ERROR_LOG_EXTENSION = ".err";
 const SIGNAL_EXIT_CODE_OFFSET = 128;
+export const FOREGROUND_DRAIN_TIMEOUT_MS = 10_000;
 const FOREGROUND_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
 export async function forwardForegroundSignal(
@@ -24,9 +25,8 @@ export async function forwardForegroundSignal(
   signal: (typeof FOREGROUND_SIGNALS)[number],
   exit: (code: number) => void = process.exit,
 ): Promise<void> {
-  await stopSession(session, signal);
   session.error = `stopped because the calling smart-router process received ${signal}`;
-  await saveSession(session);
+  await stopSession(session, signal);
   exit(SIGNAL_EXIT_CODE_OFFSET + constants.signals[signal]);
 }
 
@@ -73,12 +73,26 @@ export async function runForeground(
   });
   const completion = new Promise<number | null>((resolve, reject) => {
     child.on("error", reject);
-    child.on("close", resolve);
+    child.once("exit", (code) => {
+      const drainTimer = setTimeout(() => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        resolve(code);
+      }, FOREGROUND_DRAIN_TIMEOUT_MS);
+      child.once("close", () => {
+        clearTimeout(drainTimer);
+        resolve(code);
+      });
+    });
   });
   if (session && child.pid) {
+    session.childExitedAt = undefined;
     session.pid = child.pid;
-    if (argv.includes(SUPERVISE_COMMAND)) session.supervisorPid = child.pid;
     session.processStartTime = processStartTime(child.pid);
+    if (argv.includes(SUPERVISE_COMMAND)) {
+      session.supervisorPid = child.pid;
+      session.supervisorProcessStartTime = session.processStartTime;
+    }
   }
   const registration = session ? saveSession(session) : Promise.resolve();
   let stopping: Promise<void> | undefined;
@@ -100,6 +114,10 @@ export async function runForeground(
     if (pendingLine) onLine?.(pendingLine);
   } finally {
     for (const { signal, handler } of handlers) process.off(signal, handler);
+    child.stdout?.removeAllListeners("data");
+    child.stderr?.removeAllListeners("data");
+    child.stdout?.destroy();
+    child.stderr?.destroy();
     if (logFile !== undefined) closeSync(logFile);
     if (errFile !== undefined) closeSync(errFile);
   }

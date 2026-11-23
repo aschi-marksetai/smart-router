@@ -15,7 +15,9 @@ When T3's `delegate_task` is available, use it instead of `spawn`:
 2. Call `orchestrator_capabilities` once per thread to discover provider instance IDs for Claude/Codex and each model's option names.
 3. Call `delegate_task` with `target.providerInstanceId` for `launch.harness`, `target.model` = `launch.model`, the effort entry in `target.options` = `launch.effort`, `task` = `launch.prompt`, and a short title. Request full-access runtime when `launch.sandbox` requires network (`+network`) or full access (`danger-full-access`); children cannot exceed the parent's permissions.
 
-Follow T3's rules for follow-ups and stopping. There is no smart-router handle or `send`, session record, or dashboard entry. The launch prompt includes the same guardrails and harness notes as spawn; router handle/depth context is omitted because T3 owns the child thread.
+4. Read `launch.handle`, then run `smart-router attach <handle> --t3-thread <childThreadId>` after delegation. The launch is registered after prompt construction succeeds and removed after 15 minutes if not attached.
+
+Use `status`, `sessions`, `wait`, `send` and `wake` by handle. T3 sends queue without interrupting a busy child. `stop` cancels pending wakes but cannot stop the thread: stop it in T3. The `/sr` All view marks these rows T3. Routine polling reads no messages; settled `status` and `wait` cache the final reply. T3 stuck flags use `updatedAt` silence alone because CPU is unavailable. The CLI defaults to `~/.t3/bin/t3`; override with `SMART_ROUTER_T3_CLI`.
 
 ## Delegate
 
@@ -64,7 +66,7 @@ Pass `--wait-for-slot <seconds>` to wait for capacity while preserving the handl
 
 Killing your own wait, status or shell never stops a detached delegate; use `smart-router stop <handle>` (or steer) and run `smart-router sessions` to find ones you no longer need. Foreground spawns stop when you interrupt them.
 
-Use `smart-router spawn "<task>" --cwd <repo path> --detach` for work that should outlive this command. Then use `smart-router wait <handle> --timeout 90` in a loop, checking status between waits; a timeout means the delegate is still running. Do not wait on, stop, send to or steer your own handle or an ancestor. A shell command returning early is a yield, not completion. Stopped or failed waits exit 1 with the last message and action when available. Use `smart-router logs <handle> --tail 50`; use `smart-router stop <handle>` to end a child delegate.
+Use `smart-router spawn "<task>" --cwd <repo path> --detach` for work that should outlive this command. Claude Code parents should run `smart-router wait <handle>` as a background task. For bounded waits, pass `--timeout 90`; a timeout means the delegate or a wake is still pending. Do not wait on, stop, send to or steer your own handle or an ancestor. A shell command returning early is a yield, not completion. Stopped or failed waits exit 1 with the last message and action when available. Use `smart-router logs <handle> --tail 50`; use `smart-router stop <handle>` to end a child delegate.
 Use `smart-router steer <handle> "<message>"` to redirect a running delegate, detached or foreground. Claude delegates take the message mid-turn, or with `--interrupt` stop the current step first. Codex delegates are always interrupted: the run is stopped and resumed with the message, so any step in progress is lost, and the output is the resumed turn's result.
 Exit code 3 with `error: "capacity"` means the configured concurrency or depth cap was reached. Add `--wait-for-slot <seconds>` on spawn or send to opt into waiting for a running slot; depth-limited delegates must do the work themselves. `running` lists only the caller's blockers; `otherOwnersRunning` counts other owners' running sessions. If only other sessions hold the global slots, retry later or use `--wait-for-slot`.
 
@@ -73,3 +75,15 @@ Use `smart-router sessions` to list your sessions (`--all` includes other owners
 ## Inspect
 
 `smart-router route "<prompt>"` shows the decision without running anything. `smart-router doctor` lists the harnesses and candidate models the router can see, and `smart-router quota` shows remaining subscription quota. If either reports no candidates, ask the user to run `smart-router init`.
+
+### Waiting for detached work
+
+Codex delegates must run long work in the foreground: background processes are stopped when the command that started them ends.
+
+Run `smart-router wake "$SMART_ROUTER_HANDLE" --after-pid <pid>` before ending a delegate turn that started detached work. The watcher makes no model calls while waiting, then sends a follow-up once the process exits and the current turn ends. Use `--message "<text>"` to customize it; `smart-router wake <handle> --cancel [<wake-id>]` cancels pending wakes. Status includes each wake's state. A crash during delivery is reported as failed with an uncertain outcome and is never blindly resent.
+
+`smart-router wait <handle>... [--timeout <seconds>]` waits until all listed sessions are no longer running and have no pending or sending wakes. It prints the result and resume command (an array for multiple handles), exits 0 for successful results, 1 for failed or stopped sessions, 2 when a T3 thread needs an answer, or 124 on timeout. Claude Code parents should run this as a background task when they need notification that a delegate has really finished, including turns started by wakes.
+
+`status`, `sessions` and `/sr` show pending wakes and a separate stuck flag. Running sessions are flagged only after at least 30 minutes of log silence with unchanged process-tree CPU for at least 30 minutes; CPU progress clears the flag. Runtime alone never flags a session.
+
+T3 threads waiting for an answer report `needsInput: true`; `wait` exits 2 so the parent can answer in T3.

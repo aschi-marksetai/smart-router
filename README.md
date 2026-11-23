@@ -81,3 +81,25 @@ Run `bun run coverage` for the coverage report; tests require 97% line and 95% f
 After a release, run `bun run formula v0.1.0 > ../homebrew-tap/Formula/smart-router.rb`.
 
 The eval suite uses the maintainer's model ids and may need adapting for your setup.
+
+### Waiting for detached work
+
+Codex delegates must run long work in the foreground: background processes are stopped when the command that started them ends.
+
+Run `smart-router wake "$SMART_ROUTER_HANDLE" --after-pid <pid>` before ending a delegate turn that started detached work. The watcher makes no model calls while waiting, then sends a follow-up once the process exits and the current turn ends. Use `--message "<text>"` to customize it; `smart-router wake <handle> --cancel [<wake-id>]` cancels pending wakes. Status includes each wake's state. A crash during delivery is reported as failed with an uncertain outcome and is never blindly resent.
+
+`smart-router wait <handle>... [--timeout <seconds>]` waits until all listed sessions are no longer running and have no pending or sending wakes. It prints the result and resume command (an array for multiple handles), exits 0 for successful results, 1 for failed or stopped sessions, 2 when a T3 thread needs an answer, or 124 on timeout. Claude Code parents should run this as a background task when they need notification that a delegate has really finished, including turns started by wakes.
+
+`status`, `sessions` and `/sr` show pending wakes and a separate stuck flag. Running sessions are flagged only after at least 30 minutes of log silence with unchanged process-tree CPU for at least 30 minutes; CPU progress clears the flag. Runtime alone never flags a session.
+
+Wakes armed during a turn started by an older smart-router binary can be lost when that binary saves the session.
+
+### T3 children
+
+In T3 Code, `smart-router route "<task>" --launch --cwd <repo>` registers a session and returns `launch.handle`. After `delegate_task`, run `smart-router attach <handle> --t3-thread <childThreadId>`. Use `status`, `sessions`, `wait`, `send` and `wake` by handle; T3 sends queue when busy. Unattached launches are removed after 15 minutes. `stop` cancels pending wakes and asks you to stop the thread in T3. T3 sessions do not consume smart-router spawn capacity. The CLI defaults to `~/.t3/bin/t3`, overridable with `SMART_ROUTER_T3_CLI`. Routine polling uses zero messages; settled status/wait reads cache the final reply. T3 stuck detection uses `updatedAt` silence alone, without CPU. `/sr` shows a T3 marker.
+
+T3 threads waiting for an answer report `needsInput: true`; `wait` exits 2 so the parent can answer in T3.
+
+A T3 child's own smart-router spawns do not inherit depth limits.
+
+A foreground owner suspended for over two minutes after its child exits can lose its result when the sweep completes the session from the log.

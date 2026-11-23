@@ -2,7 +2,11 @@ import { expect, test } from "bun:test";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runDetached, runForeground } from "../src/runner.ts";
+import {
+  runDetached,
+  runForeground,
+  FOREGROUND_DRAIN_TIMEOUT_MS,
+} from "../src/runner.ts";
 
 test("runs a detached process with stdout and stderr redirected separately", async () => {
   const directory = await mkdtemp(join(tmpdir(), "smart-router-runner-"));
@@ -46,3 +50,29 @@ test("rejects a detached process that cannot launch", async () => {
     ),
   ).rejects.toThrow(/missing-smart-router-command/);
 });
+
+test("foreground drain ends even if a background process holds stdout open", async () => {
+  const started = Date.now();
+  let backgroundPid: number | undefined;
+  try {
+    const output = await runForeground(
+      ["sh", "-c", "sleep 30 & echo $!; echo finished"],
+      process.cwd(),
+    );
+    backgroundPid = Number(output.split("\n")[0]);
+    expect(output).toContain("finished");
+    expect(backgroundPid).toBeGreaterThan(0);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(
+      FOREGROUND_DRAIN_TIMEOUT_MS,
+    );
+    expect(Date.now() - started).toBeLessThan(
+      FOREGROUND_DRAIN_TIMEOUT_MS + 5000,
+    );
+  } finally {
+    if (backgroundPid) {
+      try {
+        process.kill(backgroundPid, "SIGTERM");
+      } catch {}
+    }
+  }
+}, 20000);

@@ -1,3 +1,4 @@
+import { T3_NO_LOG } from "./t3.ts";
 import { readFile } from "node:fs/promises";
 import {
   EVENT_TYPE,
@@ -47,6 +48,19 @@ export function sessionSummary(session: Session) {
     promptPreview,
     label,
     phase,
+    ...(session.runner === "t3"
+      ? {
+          runner: session.runner,
+          t3ThreadId: session.t3ThreadId,
+          warning: session.warning,
+        }
+      : {}),
+    wakes: session.wakes,
+    activity: session.activity,
+    stuck:
+      session.status === SESSION_STATUS.running
+        ? (session.stuck ?? null)
+        : null,
     resultPreview: lastResult?.slice(0, RESULT_PREVIEW_LENGTH),
     ...latestTurnTiming(session),
   };
@@ -59,9 +73,13 @@ export function sessionStatus(session: Session) {
     ...latestTurnTiming(session),
     running:
       session.status === SESSION_STATUS.running &&
-      !!session.pid &&
-      isProcessRunning(session.pid),
+      (session.runner === "t3" ||
+        (!!session.pid && isProcessRunning(session.pid))),
     outcome: session.status,
+    stuck:
+      session.status === SESSION_STATUS.running
+        ? (session.stuck ?? null)
+        : null,
     ...(session.status === SESSION_STATUS.stopped ||
     session.status === SESSION_STATUS.failed
       ? {
@@ -116,6 +134,7 @@ export function createSessionEventStream(
 export async function sessionEvents(
   session: Session,
 ): Promise<NormalizedEvent[]> {
+  if (session.runner === "t3") throw new Error(T3_NO_LOG);
   const events: NormalizedEvent[] = [];
   const stream = createSessionEventStream(
     { ...session, usage: null },

@@ -792,3 +792,51 @@ test("a failed foreground spawn is forgotten and never gets a card", async ($, o
   expect(await ui.find({ type: "Button", key: "card-abc123" })).toBeUndefined();
   await ui.unmount();
 });
+
+test("rows and spawn tracking expose pending wakes and stuck silence", () => {
+  const thread = parseThread({
+    ...THREAD,
+    wakes: [{ state: "pending", pid: 37328, command: "sessions.sh" }],
+    stuck: { reason: "silent", since: THREAD.createdAt },
+    activity: { silentSeconds: 2520 },
+  });
+  expect(threadRow(thread, 0).status).toContain(
+    "waiting on pid 37328 · sessions.sh",
+  );
+  expect(threadRow(thread, 0).status).toContain("silent 42m");
+  expect(
+    hasPendingSpawns(
+      { call: { handle: thread.handle, startedAt: 0 } },
+      [thread],
+      0,
+    ),
+  ).toBe(true);
+  const settled = parseThread({
+    ...THREAD,
+    wakes: [{ state: "sent", pid: 37328, command: "sessions.sh" }],
+    stuck: null,
+  });
+  expect(threadRow(settled, 0).status).toBe("Completed");
+});
+
+test("T3 launched rows have a marker and retain the picked harness", () => {
+  const thread = parseThread({
+    ...THREAD,
+    runner: "t3",
+    status: "launched",
+    label: "T3 child",
+  });
+  const row = threadRow(thread, 0);
+  expect(row.route).toContain("T3 · Codex");
+  expect(row.title).toBe("T3 child");
+  expect(row.status).toBe("Launched");
+});
+
+test("rows expose T3 warnings", () => {
+  const thread = parseThread({
+    ...THREAD,
+    runner: "t3",
+    warning: "waiting for an answer in T3",
+  });
+  expect(threadRow(thread, 0).preview).toContain("waiting for an answer in T3");
+});

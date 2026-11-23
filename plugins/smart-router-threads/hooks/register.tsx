@@ -71,6 +71,7 @@ export function parseThread(value: unknown): Thread {
   const record = object(value);
   const status = record.status ?? "unknown";
   if (
+    status !== "launched" &&
     status !== "running" &&
     status !== "done" &&
     status !== "failed" &&
@@ -88,7 +89,23 @@ export function parseThread(value: unknown): Thread {
     !Number.isFinite(Date.parse(createdAt))
   )
     throw new Error("Invalid smart-router depth or date");
+  const wakes = record.wakes ?? [];
+  if (!Array.isArray(wakes)) throw new Error("Invalid smart-router wakes");
+  const waiting = wakes
+    .map(object)
+    .filter((wake) => wake.state === "pending" || wake.state === "sending")
+    .map(
+      (wake) =>
+        `waiting on pid ${optionalNumber(wake.pid)} · ${requiredString(wake.command)}`,
+    )
+    .join(" · ");
   return {
+    runner: record.runner === "t3" ? "t3" : undefined,
+    warning: optionalString(record.warning),
+    waiting,
+    silentSeconds: record.stuck
+      ? optionalNumber(object(record.activity ?? {}).silentSeconds)
+      : undefined,
     handle: requiredString(record.handle),
     owner: optionalString(record.owner),
     status,
@@ -127,15 +144,21 @@ export function selectThreads(
   return scope === "all" ? selected.slice(0, ALL_LIMIT) : selected;
 }
 export function statusGlyph(status: ThreadStatus): string {
-  return { running: "●", done: "✓", failed: "✗", stopped: "■", unknown: "?" }[
-    status
-  ];
+  return {
+    launched: "○",
+    running: "●",
+    done: "✓",
+    failed: "✗",
+    stopped: "■",
+    unknown: "?",
+  }[status];
 }
 export function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 export function statusText(status: ThreadStatus): string {
   return {
+    launched: "Launched",
     running: "Working",
     done: "Completed",
     failed: "Failed",
@@ -145,6 +168,7 @@ export function statusText(status: ThreadStatus): string {
 }
 export function statusColor(status: ThreadStatus): string {
   return {
+    launched: "warning",
     running: "suggestion",
     done: "success",
     failed: "error",
@@ -162,7 +186,7 @@ export function formatDuration(milliseconds: number): string {
 }
 function threadEnd(thread: Thread, now: number): number | undefined {
   if (thread.endedAt) return Date.parse(thread.endedAt);
-  if (thread.status === "running") return now;
+  if (thread.status === "running" || thread.status === "launched") return now;
   return undefined;
 }
 export function threadElapsed(thread: Thread, now: number): string {
@@ -187,12 +211,30 @@ export function threadRow(thread: Thread, now: number): ThreadRow {
   return {
     title: truncate(thread.label ?? oneLine(thread.promptPreview), TITLE_LIMIT),
     glyph: statusGlyph(thread.status),
-    status: statusText(thread.status),
-    color: statusColor(thread.status),
-    route: [harness, thread.model, thread.effort, threadElapsed(thread, now)]
+    status: [
+      statusText(thread.status),
+      thread.waiting,
+      thread.silentSeconds === undefined
+        ? ""
+        : `silent ${Math.floor(thread.silentSeconds / 60)}m`,
+    ]
       .filter(Boolean)
       .join(" · "),
-    preview: oneLine(thread.result ?? thread.error ?? ""),
+    color: statusColor(thread.status),
+    route: [
+      thread.runner === "t3" ? "T3" : "",
+      harness,
+      thread.model,
+      thread.effort,
+      threadElapsed(thread, now),
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    preview: oneLine(
+      [thread.warning, thread.result ?? thread.error]
+        .filter(Boolean)
+        .join(" · "),
+    ),
   };
 }
 export type PhaseGroup = {
@@ -203,7 +245,9 @@ export type PhaseGroup = {
 };
 function progress(threads: Thread[]) {
   return {
-    done: threads.filter((thread) => thread.status !== "running").length,
+    done: threads.filter(
+      (thread) => thread.status !== "running" && thread.status !== "launched",
+    ).length,
     total: threads.length,
   };
 }
@@ -317,7 +361,8 @@ export function hasPendingSpawns(
       isOpenSpawn(call, now) ||
       threads.some(
         (thread) =>
-          thread.handle === call.handle && thread.status === "running",
+          thread.handle === call.handle &&
+          (thread.status === "running" || !!thread.waiting),
       ),
   );
 }
@@ -476,13 +521,17 @@ async function refresh($: EngineInterface, force = false) {
     const { handle, record } = current.view;
     const shouldFetch =
       force ||
-      (now >= threadDue && (record === null || record.status === "running"));
+      (now >= threadDue &&
+        (record === null ||
+          record.status === "launched" ||
+          record.status === "running" ||
+          !!record.waiting));
     if (!shouldFetch || started !== generation || !(await isPlaced($))) return;
     threadDue = now + THREAD_INTERVAL;
     const thread = parseThread(JSON.parse(await cli($, ["status", handle])));
     if (started !== generation || !(await isPlaced($))) return;
     const items = conversationFromEvents(
-      await cli($, ["logs", handle, "--events"]),
+      thread.runner === "t3" ? "" : await cli($, ["logs", handle, "--events"]),
       thread,
     );
     if (started !== generation) return;
@@ -786,8 +835,9 @@ export const register: Register = (on, _options) => {
         {record && (
           <Box flexDirection="column">
             <Text bold>
-              {record.handle} {statusGlyph(record.status)} {record.status}{" "}
-              {record.harness}:{record.model}@{record.effort}
+              {record.handle} {statusGlyph(record.status)}{" "}
+              {threadRow(record, state.now).status} {record.harness}:
+              {record.model}@{record.effort}
             </Text>
             {record.cwd && <Text wrap="wrap">{record.cwd}</Text>}
             {record.routePick && (
@@ -803,9 +853,9 @@ export const register: Register = (on, _options) => {
             {record.costUsd !== undefined && (
               <Text>Cost: ${record.costUsd.toFixed(4)}</Text>
             )}
-            {(record.error || record.lastAction) && (
+            {(record.warning || record.error || record.lastAction) && (
               <Text color={record.error ? "error" : undefined} wrap="wrap">
-                {record.error || record.lastAction}
+                {record.warning || record.error || record.lastAction}
               </Text>
             )}
           </Box>

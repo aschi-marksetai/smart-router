@@ -125,6 +125,9 @@ test("status and normalized events use the shared CLI projections", async () => 
     usage: null,
   });
   expect(sessionSummary(session)).toEqual({
+    wakes: undefined,
+    activity: undefined,
+    stuck: null,
     handle: "abcdef",
     owner: "dashboard-launcher",
     status: "done",
@@ -257,4 +260,26 @@ test("shared status and event stream handle running, failed and stopped sessions
   );
   stream.finish(session);
   expect(events[0]).toMatchObject({ type: "error", message: "stopped" });
+});
+
+test("T3 events explain the unavailable local log and launched glyph is present", async () => {
+  const t3 = await createSession({
+    harness: "claude",
+    model: "opus",
+    effort: "high",
+    cwd: directory,
+    prompt: "T3",
+    runner: "t3",
+    status: "launched",
+    t3ThreadId: "",
+  });
+  const response = await request(`/api/sessions/${t3.handle}/events`);
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({
+    error: "T3 sessions have no smart-router log; open the thread in T3",
+  });
+  await expect(sessionEvents(t3)).rejects.toThrow(
+    "T3 sessions have no smart-router log",
+  );
+  expect(dashboardHtml).toContain('launched: "○"');
 });

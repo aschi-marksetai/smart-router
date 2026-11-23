@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDetached } from "../src/runner.ts";
@@ -179,6 +187,7 @@ await runForeground(["sh", "-c", ${JSON.stringify(command)}], session.cwd, proce
 test("retries acquisition when the lock disappears before stat", async () => {
   const lockPath = join(directory, "sessions", ".spawn.lock");
   await mkdir(lockPath, { recursive: true });
+  await writeFile(join(lockPath, "owner.json"), "null");
   await withSessionsLock(
     async () => {
       expect((await stat(lockPath)).isDirectory()).toBe(true);
@@ -194,6 +203,7 @@ test("retries acquisition when the lock disappears before stat", async () => {
 test("propagates lock stat errors and recovers a stale lock", async () => {
   const lockPath = join(directory, "sessions", ".spawn.lock");
   await mkdir(lockPath, { recursive: true });
+  await writeFile(join(lockPath, "owner.json"), "null");
   await expect(
     withSessionsLock(
       async () => {},
@@ -202,6 +212,8 @@ test("propagates lock stat errors and recovers a stale lock", async () => {
       },
     ),
   ).rejects.toThrow("lock stat failed");
+  const old = new Date(Date.now() - 60_000);
+  await utimes(lockPath, old, old);
   await withSessionsLock(
     async () => expect((await stat(lockPath)).isDirectory()).toBe(true),
     async () => ({ mtimeMs: 0 }),

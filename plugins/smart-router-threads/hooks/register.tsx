@@ -544,6 +544,44 @@ function bashCommand(tool: string, input: unknown): string | undefined {
   return input.command;
 }
 type Elements = ReturnType<EngineInterface["ui"]["resolve"]>;
+type DrawnCall = {
+  tool_use_id?: string;
+  tool: string;
+  input: unknown;
+  output?: unknown;
+};
+async function spawnThread(
+  $: EngineInterface,
+  call: DrawnCall,
+): Promise<Thread | undefined> {
+  const command = bashCommand(call.tool, call.input);
+  if (command === undefined || !spawnCallFromCommand(command, 0))
+    return undefined;
+  const known = call.tool_use_id
+    ? (await read($, spawns))[call.tool_use_id]
+    : undefined;
+  const handle = spawnOutputHandle(call.output) ?? known?.handle;
+  if (!handle) return undefined;
+  const state = await read($, pane);
+  return state.threads.find((item) => item.handle === handle);
+}
+async function spawnCard(
+  $: EngineInterface,
+  elements: Elements,
+  thread: Thread,
+) {
+  const state = await read($, pane);
+  return rowView(
+    elements,
+    threadRow(thread, state.now),
+    `card-${thread.handle}`,
+    "",
+    async () => {
+      const reason = await openPane($, "session", thread.handle);
+      if (reason) $.ui.toast(`Smart Router: ${reason}`);
+    },
+  );
+}
 function rowView(
   { Box, Text, Button }: Elements,
   row: ThreadRow,
@@ -624,28 +662,37 @@ export const register: Register = (on, _options) => {
   });
   on("ui.render", { component: "ToolUse" }, async ($, e, next) => {
     const row = await next(e);
-    const command = bashCommand(e.props.tool, e.props.input);
-    if (command === undefined || !spawnCallFromCommand(command, 0)) return row;
-    const call = (await read($, spawns))[e.props.tool_use_id];
-    const handle = spawnOutputHandle(e.props.output) ?? call?.handle;
-    const state = await read($, pane);
-    const thread = state.threads.find((item) => item.handle === handle);
+    const thread = await spawnThread($, e.props);
     if (!thread) return row;
     const elements = $.ui.resolve(e);
     const { Box } = elements;
     return (
       <Box flexDirection="column" borderStyle="round">
         {row}
-        {rowView(
-          elements,
-          threadRow(thread, state.now),
-          `card-${thread.handle}`,
-          "",
-          async () => {
-            const reason = await openPane($, "session", thread.handle);
-            if (reason) $.ui.toast(`Smart Router: ${reason}`);
-          },
-        )}
+        {await spawnCard($, elements, thread)}
+      </Box>
+    );
+  });
+  // The terminal folds Bash calls, even a single one, into a ToolGroup line.
+  on("ui.render", { component: "ToolGroup" }, async ($, e, next) => {
+    const group = await next(e);
+    // Unfolded, each call is a ToolUse row with its own card.
+    if (e.props.isExpanded) return group;
+    const threads: Thread[] = [];
+    for (const call of e.props.calls) {
+      const thread = await spawnThread($, call);
+      if (thread) threads.push(thread);
+    }
+    if (threads.length === 0) return group;
+    const elements = $.ui.resolve(e);
+    const { Box } = elements;
+    const cards = [];
+    for (const thread of threads)
+      cards.push(await spawnCard($, elements, thread));
+    return (
+      <Box flexDirection="column" borderStyle="round">
+        {group}
+        {cards}
       </Box>
     );
   });

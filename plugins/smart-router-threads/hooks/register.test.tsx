@@ -683,6 +683,43 @@ test(
     await ui.press({ key: "card-abc123" });
     expect(opened).toBe(1);
     await ui.unmount();
+    const group = (isExpanded: boolean) =>
+      $.ui.mount({
+        plugin: "smart-router-threads",
+        surface: "terminal",
+        component: "ToolGroup",
+        props: {
+          calls: [
+            {
+              tool_use_id: toolUseId,
+              tool: "Bash",
+              input: { command: spawnCommand },
+              isRunning: true,
+              isErrored: false,
+              isInterrupted: false,
+            },
+            {
+              tool: "Bash",
+              input: { command: "ls" },
+              isRunning: false,
+              isErrored: false,
+              isInterrupted: false,
+            },
+          ],
+          isActive: true,
+          isExpanded,
+        },
+      });
+    let folded = await group(false);
+    expect(
+      (await folded.find({ type: "Button", key: "card-abc123" }))?.text,
+    ).toContain("● research:dji-mic · Working");
+    await folded.unmount();
+    folded = await group(true);
+    expect(
+      await folded.find({ type: "Button", key: "card-abc123" }),
+    ).toBeUndefined();
+    await folded.unmount();
 
     await $.command.run(command());
     const pane = await $.ui.mount({ ...PANE, surface: "desktop" });

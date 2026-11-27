@@ -7,7 +7,7 @@ defaultTest:
   assert:
     - type: javascript
       value: >-
-        output.needsBrowser >= 0 && output.needsBrowser <= 1 && typeof output.needsBrowser === 'number' && (output.statesStoppingPoint === null || (typeof output.statesStoppingPoint === 'number' && output.statesStoppingPoint >= 0 && output.statesStoppingPoint <= 1)) && (output.needsNetwork === null || (typeof output.needsNetwork === 'number' && output.needsNetwork >= 0 && output.needsNetwork <= 1)) && (output.needsFullAccess === null || (typeof output.needsFullAccess === 'number' && output.needsFullAccess >= 0 && output.needsFullAccess <= 1)) && (output.fellBack === false || context.vars.allowFallback === true)
+        (output.needsBrowser === null ? (output.fellBack === true && context.vars.allowFallback === true) : (typeof output.needsBrowser === 'number' && output.needsBrowser >= 0 && output.needsBrowser <= 1)) && (output.statesStoppingPoint === null || (typeof output.statesStoppingPoint === 'number' && output.statesStoppingPoint >= 0 && output.statesStoppingPoint <= 1)) && (output.needsNetwork === null || (typeof output.needsNetwork === 'number' && output.needsNetwork >= 0 && output.needsNetwork <= 1)) && (output.needsFullAccess === null || (typeof output.needsFullAccess === 'number' && output.needsFullAccess >= 0 && output.needsFullAccess <= 1)) && (output.fellBack === false || context.vars.allowFallback === true)
 tests:
   - vars:
       prompt: Add the zod package with bun add and use it to validate the config loader

@@ -28,6 +28,7 @@ import {
   sweepSessions,
   sessionLogPath,
   sessionPath,
+  sessionPromptPath,
   sessionSocketPath,
   SESSION_STATUS,
   terminateSessionProcess,
@@ -36,12 +37,13 @@ import {
 import type { DoctorResult } from "../src/doctor.ts";
 import type { RouteDeps } from "../src/route.ts";
 import { runForeground } from "../src/runner.ts";
-import { getQuota, runCodexbar } from "../src/quota.ts";
+import { getQuota, runCodexbar, type QuotaProvider } from "../src/quota.ts";
 import { getAdapter } from "../src/harness/index.ts";
 
 const TEST_T3_THREAD_ID =
   "thread:delegated-task:command%3Amcp%3A88e0911f-136c-4cff-a770-b45d4445e762%3Adelegate-task%3A6d558d53-1fee-496d-8fd6-80a6c093db42";
 const OWNER = "cli-test-owner";
+const PREVIOUS_CODEX_HOME = process.env.CODEX_HOME;
 const foregroundChildren = new Set<Session>();
 const foregroundChildPids: number[] = [];
 const OTHER_OWNER = "someone-else";
@@ -100,16 +102,25 @@ const detection: DoctorResult = {
   availableModels: [],
 };
 
-function routeDeps(config: Config): RouteDeps {
+type JevStub = {
+  choice?: string;
+  effort?: string;
+  needsNetwork?: number;
+  needsFullAccess?: number;
+};
+
+function routeDeps(config: Config, stub: JevStub = {}): RouteDeps {
+  const choice = stub.choice ?? "codex:terra";
   // prettier-ignore
   return {
-    config, doctor: async () => detection, getQuota: async () => ({ error: "quota disabled" }), preferences: "prefer Claude",
+    config, doctor: async () => detection, getQuota: async () => ({ quota: { error: "quota disabled" }, ageMs: 0 }), preferences: "prefer Claude",
+    random: () => 0.99, repoContext: async () => null, recentOutcomes: async () => ({}), savePreferences: async () => {},
     client: { systemOne: async () => {
       if (routeResponse === "offline") throw new Error("mock returned 500");
       return { answers: {
-        model: { choice: "codex:terra", confidence: 0.9, probabilities: {} },
-        effort: { choice: "high", probabilities: { high: 1 } },
-        needsBrowser: { noul: 0 }, needsNetwork: { noul: 0 }, needsFullAccess: { noul: 0 },
+        model: { choice, confidence: 0.9, probabilities: { [choice]: 0.9 } },
+        effort: { choice: stub.effort ?? "high", probabilities: { high: 1 } },
+        needsBrowser: { noul: 0 }, needsNetwork: { noul: stub.needsNetwork ?? 0 }, needsFullAccess: { noul: stub.needsFullAccess ?? 0 },
         statesStoppingPoint: { noul: routeResponse === "stopping" ? 0.1 : 0.9 },
       } };
     } },
@@ -148,7 +159,7 @@ async function cli(
       { name: RELEASE_ASSET, browser_download_url: "https://example.invalid/asset" },
     ] })),
     verifyConfinedCodex: () => { throw new Error("test binary not verified"); },
-    now: Date.now, execPath: "/opt/homebrew/Cellar/smart-router/bin/smart-router", routeDeps,
+    now: Date.now, execPath: "/opt/homebrew/Cellar/smart-router/bin/smart-router", routeDeps: (configuration) => routeDeps(configuration),
     doctor: async () => detection,
     getQuota: (config) => getQuota(
       { ...(config ?? DEFAULT_CONFIG), quota: { ...(config ?? DEFAULT_CONFIG).quota, enabled: quotaEnabled } },
@@ -177,6 +188,8 @@ beforeEach(async () => {
   process.env.SMART_ROUTER_CONFIG_DIR = join(directory, "config");
   process.env.SMART_ROUTER_STATE_DIR = join(directory, "state");
   process.env.CLAUDE_CONFIG_DIR = join(directory, "claude");
+  // install writes Codex's skill and hooks file; keep it out of the real ~/.codex.
+  process.env.CODEX_HOME = join(directory, "codex");
   process.env.SMART_ROUTER_OWNER = OWNER;
   process.env.SMART_ROUTER_NO_UPDATE_CHECK = "1";
   runnerArguments = [];
@@ -207,6 +220,8 @@ afterEach(async () => {
   // prettier-ignore
   for (const name of ["SMART_ROUTER_CONFIG_DIR", "SMART_ROUTER_STATE_DIR", "CLAUDE_CONFIG_DIR", "SMART_ROUTER_OWNER", "SMART_ROUTER_DEPTH", "SMART_ROUTER_HANDLE", "SMART_ROUTER_ANCESTORS", "SMART_ROUTER_NO_UPDATE_CHECK"])
     delete process.env[name];
+  if (PREVIOUS_CODEX_HOME === undefined) delete process.env.CODEX_HOME;
+  else process.env.CODEX_HOME = PREVIOUS_CODEX_HOME;
 });
 
 afterAll(() => {
@@ -227,8 +242,13 @@ test("version, doctor, and install-skill run in-process", async () => {
   const doctorResult = await cli(["doctor"]);
   expectJson(doctorResult, detection);
   expect(doctorResult.stderr).toContain("Doctor completed");
-  const installed = await cli(["install-skill"]);
+  const installed = await cli(["install"]);
   expect(installed.exitCode).toBe(0);
+  expect(installed.json).toMatchObject({
+    codexSkillPath: join(directory, "codex", "skills/smart-router/SKILL.md"),
+    codexHookAdded: true,
+  });
+  expectJson(await cli(["install-skill"]), { codexHookAdded: false });
   expect(installed.json.skillPath).toBe(
     join(directory, "claude", "skills/smart-router/SKILL.md"),
   );
@@ -285,21 +305,12 @@ test.each([
     execFileSync("git", ["init", directory], { stdio: "pipe" });
     execFileSync("git", ["-C", directory, "config", "commit.gpgsign", "true"]);
     const overrides: Partial<CliDeps> = {
-      routeDeps: (configuration) => {
-        const dependencies = routeDeps(configuration);
-        return {
-          ...dependencies,
-          client: {
-            systemOne: async (request) => {
-              const response = await dependencies.client.systemOne(request);
-              response.answers.model.choice = `${harness}:${harness === "codex" ? "terra" : "opus"}`;
-              response.answers.needsNetwork.noul = network;
-              response.answers.needsFullAccess.noul = fullAccess;
-              return response;
-            },
-          },
-        };
-      },
+      routeDeps: (configuration) =>
+        routeDeps(configuration, {
+          choice: `${harness}:${harness === "codex" ? "terra" : "opus"}`,
+          needsNetwork: network,
+          needsFullAccess: fullAccess,
+        }),
     };
     const args = [
       prompt,
@@ -502,19 +513,8 @@ test("harness:auto routes under directModel deny and stores the concrete model o
   config.models[1].efforts = ["low", "high"];
   await saveConfig(config);
   runnerOutput = CODEX_OUTPUT;
-  const scopedRouteDeps = (configuration: Config): RouteDeps => {
-    const deps = routeDeps(configuration);
-    return {
-      ...deps,
-      client: {
-        systemOne: async (request) => {
-          const response = await deps.client.systemOne(request);
-          response.answers.effort.choice = "low";
-          return response;
-        },
-      },
-    };
-  };
+  const scopedRouteDeps = (configuration: Config): RouteDeps =>
+    routeDeps(configuration, { effort: "low" });
   const spawned = await cli(["spawn", "review", "--model", "codex:auto"], {
     routeDeps: scopedRouteDeps,
   });
@@ -2983,4 +2983,933 @@ await Bun.stdin.text();console.log(JSON.stringify({thread:{status:"waiting",upda
   } finally {
     delete process.env.SMART_ROUTER_T3_CLI;
   }
+});
+
+function pool(weeklyUsedPercent: number, paceGap: number): QuotaProvider {
+  return {
+    weeklyUsedPercent,
+    weeklyResetsAt: "2026-11-30T10:00:00Z",
+    fiveHourUsedPercent: null,
+    pace: "test",
+    paceGap,
+    modelWindows: [],
+  };
+}
+
+function quotaRouteDeps(
+  quota: Record<string, QuotaProvider | null>,
+  stub: JevStub = {},
+) {
+  return (configuration: Config): RouteDeps => ({
+    ...routeDeps(configuration, stub),
+    getQuota: async () => ({ quota, ageMs: 0 }),
+  });
+}
+
+async function enableQuota(): Promise<void> {
+  config.quota = {
+    enabled: true,
+    providers: { claude: "claude", codex: "codex" },
+  };
+  await saveConfig(config);
+}
+
+test("a pinned spawn records a pinned route and warns when it works against the balance", async () => {
+  await enableQuota();
+  const overPace = quotaRouteDeps({
+    claude: pool(80, -21),
+    codex: pool(5, 61),
+  });
+  const warning =
+    "Claude is 21 pts over pace while Codex has 61 in reserve; let the router choose instead of pinning";
+  const dryRun = await cli(
+    ["spawn", "task", "--model", "claude:opus", "--dry-run"],
+    { routeDeps: overPace },
+  );
+  expectJson(dryRun, {
+    kind: "pinned",
+    pick: "claude:opus@high",
+    warnings: [warning],
+  });
+  expect(dryRun.stderr).toContain(`Warning: ${warning}`);
+  const spawned = await cli(["spawn", "task", "--model", "claude:opus"], {
+    routeDeps: overPace,
+  });
+  expectJson(spawned, {
+    harness: "claude",
+    route: {
+      version: 2,
+      kind: "pinned",
+      pick: "claude:opus@high",
+      reason: `pinned by caller · ${warning}`,
+      warnings: [warning],
+    },
+  });
+  expect(spawned.stderr).toContain("Route: pinned by caller");
+  expect(spawned.stderr).toContain(`Warning: ${warning}`);
+  const session = await loadSession(spawned.json.handle);
+  expect(session.route).toMatchObject({ kind: "pinned", warnings: [warning] });
+  expect(session.turns?.[0].kind).toBe("pinned");
+  const log = (
+    await readFile(join(directory, "state", "pin-warnings.jsonl"), "utf8")
+  )
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(log).toMatchObject([
+    { model: "claude:opus", warnings: [warning], ran: false },
+    { model: "claude:opus", warnings: [warning], ran: true },
+  ]);
+  const balanced = await cli(["spawn", "task", "--model", "claude:opus"], {
+    routeDeps: quotaRouteDeps({ claude: pool(50, 5), codex: pool(50, 5) }),
+  });
+  expectJson(balanced, { route: { kind: "pinned", warnings: [] } });
+  expect(balanced.stderr).not.toContain("Warning:");
+});
+
+test("a pin to a model excluded for confidential work is refused", async () => {
+  config.rules.confidentialExcludedModels = ["codex:*"];
+  await saveConfig(config);
+  runnerOutput = CODEX_OUTPUT;
+  expectJson(
+    await cli(["spawn", "task", "--model", "codex:terra", "--confidential"]),
+    {
+      error:
+        "codex:terra cannot be pinned for confidential work: excluded for confidential work",
+    },
+    1,
+  );
+  expect(runnerArguments).toHaveLength(0);
+  expectJson(await cli(["spawn", "task", "--model", "codex:terra"]), {
+    harness: "codex",
+  });
+});
+
+test("route --launch saves the sandbox, network and browser it chose", async () => {
+  const launched = await cli(
+    ["route", "Finish; stop when verified", "--launch"],
+    {
+      routeDeps: (configuration) =>
+        routeDeps(configuration, { needsNetwork: 1 }),
+    },
+  );
+  expectJson(launched, {
+    version: 2,
+    kind: "routed",
+    launch: { sandbox: "workspace-write+network", browser: false },
+  });
+  expect(launched.stderr).toContain("Route: Jev: codex:terra 0.90");
+  const session = await loadSession(launched.json.launch.handle);
+  expect(session).toMatchObject({
+    sandbox: "workspace-write",
+    usesNetworkAccess: true,
+    browser: false,
+    route: { kind: "routed", pick: "codex:terra@high" },
+  });
+  expect(await readFile(sessionPromptPath(session.handle), "utf8")).toBe(
+    "Finish; stop when verified",
+  );
+});
+
+test("sessions save the task prompt and its hash, and rm removes the prompt", async () => {
+  const prompt = "finish task; stop when tests pass";
+  const spawned = await cli(["spawn", prompt, "--model", "claude:opus"]);
+  const session = await loadSession(spawned.json.handle);
+  expect(session.promptSha256).toBe(
+    createHash("sha256").update(prompt).digest("hex"),
+  );
+  const promptPath = sessionPromptPath(session.handle);
+  // The task as given, without the delegation context the delegate also received.
+  expect(await readFile(promptPath, "utf8")).toBe(prompt);
+  expect((await stat(promptPath)).mode).toBe(
+    (await stat(sessionPath(session.handle))).mode,
+  );
+  expect((await cli(["rm", session.handle])).exitCode).toBe(0);
+  await expect(stat(promptPath)).rejects.toThrow();
+});
+
+test("retry reruns the saved prompt, escalates with --up and links the sessions", async () => {
+  runnerOutput = CODEX_OUTPUT;
+  const prompt = "fix the parser; stop when tests pass";
+  const first = await cli([
+    "spawn",
+    prompt,
+    "--model",
+    "codex:terra",
+    "--cwd",
+    directory,
+  ]);
+  const original = first.json.handle;
+  runnerOutput = CLAUDE_OUTPUT;
+  let sentState: any;
+  const escalating = (configuration: Config): RouteDeps => {
+    const dependencies = routeDeps(configuration, { choice: "claude:opus" });
+    return {
+      ...dependencies,
+      client: {
+        systemOne: async (request) => {
+          sentState = request.state;
+          return dependencies.client.systemOne(request);
+        },
+      },
+    };
+  };
+  const escalated = await cli(
+    ["retry", original, "--up", "--note", "missed the edge case"],
+    { routeDeps: escalating },
+  );
+  expectJson(escalated, {
+    harness: "claude",
+    model: "opus",
+    route: { kind: "routed", pick: "claude:opus@high" },
+  });
+  expect(sentState.previousAttempt).toEqual({
+    model: "codex:terra",
+    effort: "high",
+    status: "done",
+    error: null,
+    resultTail: "codex done",
+    note: "missed the edge case",
+  });
+  expect(sentState.candidates.map(({ id }: { id: string }) => id)).toEqual([
+    "claude:opus",
+  ]);
+  const retried = await loadSession(escalated.json.handle);
+  expect(retried).toMatchObject({
+    retryOf: original,
+    escalated: true,
+    cwd: directory,
+    promptSha256: (await loadSession(original)).promptSha256,
+  });
+  expect(await readFile(sessionPromptPath(retried.handle), "utf8")).toBe(
+    prompt,
+  );
+  runnerOutput = CODEX_OUTPUT;
+  const plain = await cli(["retry", original]);
+  expectJson(plain, { harness: "codex", route: { kind: "routed" } });
+  const plainSession = await loadSession(plain.json.handle);
+  expect(plainSession.retryOf).toBe(original);
+  expect(plainSession.escalated).toBeUndefined();
+  // retryOf on each retry is the only stored link; status and sessions derive the reverse.
+  expect(await loadSession(original)).not.toHaveProperty("retriedBy");
+  expectJson(await cli(["status", original]), {
+    retriedBy: [escalated.json.handle, plain.json.handle],
+  });
+  const listed = await cli(["sessions"]);
+  expect(
+    listed.json.find(({ handle }: { handle: string }) => handle === original)
+      .retriedBy,
+  ).toEqual([escalated.json.handle, plain.json.handle]);
+  expect(
+    listed.json.find(
+      ({ handle }: { handle: string }) => handle === plain.json.handle,
+    ),
+  ).toMatchObject({ retryOf: original, retriedBy: [] });
+  const launched = await cli(["retry", original, "--up", "--launch"], {
+    routeDeps: escalating,
+  });
+  expectJson(launched, {
+    kind: "routed",
+    launch: { harness: "claude", model: "opus" },
+  });
+  expect(await loadSession(launched.json.launch.handle)).toMatchObject({
+    status: "launched",
+    retryOf: original,
+    escalated: true,
+  });
+  expect((await cli(["status", original])).json.retriedBy).toHaveLength(3);
+  // A retriedBy written by an older version is ignored: only retryOf links count.
+  const untouched = await cli([
+    "spawn",
+    "another task",
+    "--model",
+    "codex:terra",
+  ]);
+  const legacy = await loadSession(untouched.json.handle);
+  await writeFile(
+    sessionPath(legacy.handle),
+    JSON.stringify({ ...legacy, retriedBy: ["stale-handle"] }),
+  );
+  expectJson(await cli(["status", legacy.handle]), { retriedBy: [] });
+  const legacyStats = await cli(["stats", "--json"], {
+    loadPricing: async () => null,
+    codexbarCostUsd: async () => null,
+  });
+  expect(legacyStats.json.models["codex:terra"]).toMatchObject({
+    runs: 3,
+    // Only the first attempt was retried: 1 of 3.
+    retriedPercent: 33.3,
+  });
+  expectJson(
+    await cli(["retry", escalated.json.handle, "--up"]),
+    {
+      error:
+        "no available candidate is stronger than claude:opus@high; give models a higher tier in config or drop --up",
+    },
+    1,
+  );
+  expectJson(
+    await cli(["retry", original, "--up", "--model", "claude:opus"]),
+    {
+      error:
+        "--up lets the router pick a stronger model; drop the --model pin or use harness:auto",
+    },
+    1,
+  );
+  process.env.SMART_ROUTER_HANDLE = original;
+  expectJson(
+    await cli(["retry", original]),
+    {
+      error: `refusing to retry ${original}: it is your own session or an ancestor; report your result instead`,
+    },
+    1,
+  );
+  delete process.env.SMART_ROUTER_HANDLE;
+  await rm(sessionPromptPath(original));
+  expectJson(
+    await cli(["retry", original]),
+    {
+      error: `session ${original} has no saved prompt (it was started before retry existed); spawn the task again`,
+    },
+    1,
+  );
+  await mkdir(sessionPromptPath(original));
+  expect((await cli(["retry", original])).exitCode).toBe(1);
+  const running = await createSession({
+    harness: "codex",
+    model: "terra",
+    effort: "high",
+    cwd: directory,
+    prompt: "still going",
+    status: SESSION_STATUS.running,
+    pid: process.pid,
+    processStartTime: processStartTime(process.pid),
+  });
+  expectJson(
+    await cli(["retry", running.handle]),
+    {
+      error: `session ${running.handle} is still running; wait or stop it first`,
+    },
+    1,
+  );
+});
+
+test("rate records a rating that later turns keep", async () => {
+  runnerOutput = CODEX_OUTPUT;
+  const spawned = await cli(["spawn", "task", "--model", "codex:terra"]);
+  const handle = spawned.json.handle;
+  const rated = await cli([
+    "rate",
+    handle,
+    "bad",
+    "--note",
+    "ignored the spec",
+  ]);
+  expectJson(rated, {
+    handle,
+    rating: { value: "bad", note: "ignored the spec" },
+  });
+  expect(Date.parse(rated.json.rating.at)).not.toBeNaN();
+  expectJson(await cli(["rate", handle, "good"]), {
+    rating: { value: "good", note: null },
+  });
+  expectJson(
+    await cli(["rate", handle, "meh"]),
+    { error: "rating must be good or bad" },
+    1,
+  );
+  expect((await cli(["send", handle, "again"])).exitCode).toBe(0);
+  expectJson(await cli(["status", handle]), { rating: { value: "good" } });
+  const launched = await cli([
+    "route",
+    "Finish; stop when verified",
+    "--launch",
+  ]);
+  const launchHandle = launched.json.launch.handle;
+  expectJson(await cli(["rate", launchHandle, "good"]), {
+    rating: { value: "good" },
+  });
+  // The revision bump makes a concurrent T3 refresh reload instead of dropping the rating.
+  expect((await loadSession(launchHandle)).t3Revision).toBe(1);
+});
+
+test("stats reports balance, pick sources, outcomes and list cost, as text, JSON and an export", async () => {
+  await enableQuota();
+  const quota = { claude: pool(80, -21), codex: pool(5, 61) };
+  runnerOutput = CODEX_OUTPUT;
+  const routed = await cli(
+    [
+      "spawn",
+      "task one; stop when done",
+      "--label",
+      "wave:a",
+      "--phase",
+      "build",
+    ],
+    {
+      routeDeps: quotaRouteDeps(quota),
+    },
+  );
+  runnerOutput = CLAUDE_OUTPUT;
+  const pinned = await cli(["spawn", "task two", "--model", "claude:opus"], {
+    routeDeps: quotaRouteDeps(quota),
+  });
+  await cli(["rate", routed.json.handle, "bad"]);
+  await cli(["retry", routed.json.handle, "--up"], {
+    routeDeps: quotaRouteDeps(quota, { choice: "claude:opus" }),
+  });
+  const statsDeps: Partial<CliDeps> = {
+    getQuota: async () => quota,
+    loadPricing: async () => ({
+      anthropic: {
+        models: {
+          opus: {
+            cost: { input: 4, output: 20, cache_read: 0.2, cache_write: 5 },
+          },
+        },
+      },
+    }),
+    codexbarCostUsd: async (provider) => (provider === "claude" ? 1 : null),
+  };
+  const json = await cli(["stats", "--json"], statsDeps);
+  expect(json.exitCode).toBe(0);
+  expect(json.stderr).toContain("Stats computed");
+  // 3 input, 5 output, 6 cache-read and 2 cache-write tokens at the prices above, per Claude run.
+  const claudeRunCost = (3 * 4 + 5 * 20 + 6 * 0.2 + 2 * 5) / 1_000_000;
+  expect(json.json).toMatchObject({
+    window: { label: "last 7 days", rollingDays: 7 },
+    sessions: 3,
+    unpricedSessions: 1,
+    pools: {
+      claude: {
+        runs: 2,
+        sessionSharePercent: 66.7,
+        // Claude reports its own cost (0.02 a run); Codex reports none and has no list price here.
+        costSharePercent: 100,
+        costSource: "harness",
+        weeklyUsedPercent: 80,
+        paceGap: -21,
+      },
+      codex: {
+        runs: 1,
+        sessionSharePercent: 33.3,
+        weeklyUsedPercent: 5,
+        paceGap: 61,
+      },
+    },
+    pickSources: {
+      routed: 2,
+      pinned: 1,
+      fallback: 0,
+      unrecorded: 0,
+      pinWarningsIssued: 1,
+      pinWarningsRanAnyway: 1,
+    },
+    models: {
+      "codex:terra": {
+        runs: 1,
+        retriedPercent: 100,
+        escalatedFromPercent: 100,
+        ratedBad: 1,
+        unpriced: 1,
+      },
+      "claude:opus": {
+        runs: 2,
+        failedPercent: 0,
+        retriedPercent: 0,
+        ratedGood: 0,
+        unpriced: 0,
+      },
+    },
+    callers: { [OWNER]: { runs: 3 } },
+    // The retry carries no label of its own and counts under the original's.
+    labels: { "wave:a": { runs: 2 }, "(none)": { runs: 1 } },
+    phases: { build: { runs: 2 } },
+    nativeSubagentGuard: {},
+    collapse: null,
+    spendShare: { claude: { totalListCostUsd: 1 } },
+  });
+  expect(json.json).toMatchObject({ costUsd: 0.04, costSource: "harness" });
+  expect(json.json.pools.codex.costSource).toBe("none");
+  expect(json.json.spendShare.claude.smartRouterCostUsd).toBe(0.04);
+  expect(json.json.spendShare).not.toHaveProperty("codex");
+  const features = Object.fromEntries(
+    json.json.features.map((feature: { name: string }) => [
+      feature.name,
+      feature,
+    ]),
+  );
+  expect(features.pinWarnings).toMatchObject({
+    fired: { sessions: 1 },
+    notFired: { sessions: 0, failedPercent: null },
+  });
+  expect(features.retryUp).toMatchObject({
+    fired: { sessions: 1 },
+    notFired: { sessions: 2, retriedPercent: 50, ratedBadPercent: 50 },
+  });
+  expect(features.paceTilt.notFired.sessions).toBe(2);
+  const exportPath = join(directory, "export.jsonl");
+  const text = await cli(
+    ["stats", "--days", "1", "--export", exportPath],
+    statsDeps,
+  );
+  expect(text.stdout).toContain("smart-router stats: last 1 days");
+  expect(text.stdout).toContain("claude: 66.7% of sessions");
+  expect(text.stdout).toContain("pin warnings issued 1, ran anyway 1");
+  expect(text.stdout).toContain("retryUp fired: 1 sessions");
+  expect(text.stdout).toContain(
+    "(100%) went through smart-router".replace(
+      "100%",
+      `${json.json.spendShare.claude.sharePercent}%`,
+    ),
+  );
+  const exported = (await readFile(exportPath, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(exported).toHaveLength(3);
+  expect(
+    exported.find(({ handle }) => handle === routed.json.handle),
+  ).toMatchObject({
+    harness: "codex",
+    label: "wave:a",
+    costUsd: null,
+    costSource: null,
+    listCostUsd: null,
+    route: { version: 2, kind: "routed" },
+    outcome: {
+      status: "done",
+      failed: false,
+      retried: true,
+      rating: "bad",
+      rerun: false,
+    },
+    retriedBy: [expect.any(String)],
+  });
+  expect(
+    exported.find(({ handle }) => handle === pinned.json.handle),
+  ).toMatchObject({
+    costUsd: 0.02,
+    costSource: "harness",
+    // The computed list cost is exported too, so replay compares models on one basis.
+    listCostUsd: expect.closeTo(claudeRunCost, 10),
+    route: { kind: "pinned" },
+    escalated: false,
+    retryOf: null,
+  });
+  const current = await cli(
+    ["stats", "--window", "current", "--json"],
+    statsDeps,
+  );
+  expect(current.json.window).toMatchObject({
+    label: "current quota window",
+    from: "2026-11-23T10:00:00.000Z",
+  });
+  const previous = await cli(
+    ["stats", "--window", "previous", "--json"],
+    statsDeps,
+  );
+  expect(previous.json).toMatchObject({
+    window: {
+      label: "previous quota window",
+      to: "2026-11-23T10:00:00.000Z",
+      rollingDays: null,
+    },
+    sessions: 0,
+    costUsd: 0,
+    costSource: "none",
+    spendShare: {},
+    pools: { claude: { runs: 0, sessionSharePercent: null } },
+  });
+  expectJson(
+    await cli(["stats", "--window", "current"], {
+      getQuota: async () => ({ error: "codexbar not installed" }),
+    }),
+    {
+      error:
+        "--window needs the quota reset times from codexbar; use --days instead",
+    },
+    1,
+  );
+  expectJson(
+    await cli(["stats", "--window", "soon"]),
+    { error: "--window must be current or previous" },
+    1,
+  );
+  expectJson(
+    await cli(["stats", "--window", "current", "--days", "3"]),
+    { error: "use --days or --window, not both" },
+    1,
+  );
+  const defaults = await cli(["stats", "--json"], {
+    ...statsDeps,
+    getQuota: async () => ({ error: "codexbar not installed" }),
+  });
+  expect(defaults.json).toMatchObject({
+    sessions: 3,
+    pools: { claude: { weeklyUsedPercent: null } },
+  });
+});
+
+test("guard subagent decides, logs, and prints each harness's hook output", async () => {
+  await enableQuota();
+  let quotaReads = 0;
+  const overPace = {
+    getQuota: async () => {
+      quotaReads += 1;
+      return { claude: pool(80, -21), codex: pool(5, 61) };
+    },
+  };
+  const plain = await cli(
+    // prettier-ignore
+    ["guard", "subagent", "--harness", "claude", "--subagent-type", "Explore", "--model", "opus", "--session", "s1", "--cwd", "/repo"],
+    overPace,
+  );
+  expectJson(plain, { decision: "deny" });
+  expect(plain.json.message).toContain("smart-router spawn");
+  const event = (tool: object) =>
+    JSON.stringify({ session_id: "s2", cwd: "/repo", tool_input: tool });
+  const claudeHook = await cli(["guard", "subagent", "--hook", "claude"], {
+    ...overPace,
+    readStdin: async () => event({ subagent_type: "Explore", model: "opus" }),
+  });
+  expect(claudeHook.exitCode).toBe(0);
+  expect(claudeHook.json.hookSpecificOutput).toMatchObject({
+    hookEventName: "PreToolUse",
+    permissionDecision: "deny",
+    permissionDecisionReason: plain.json.message,
+  });
+  // Claude is the pool over pace, so a Codex subagent is allowed: no output at all.
+  const codexAllowed = await cli(["guard", "subagent", "--hook", "codex"], {
+    ...overPace,
+    readStdin: async () => event({ agent_type: "reviewer" }),
+  });
+  expect(codexAllowed).toMatchObject({ stdout: "", exitCode: 0 });
+  // One codexbar read served all three decisions from the shared cache.
+  expect(quotaReads).toBe(1);
+  config.rules.nativeSubagentGuard = "warn";
+  await saveConfig(config);
+  const warned = await cli(["guard", "subagent", "--hook", "claude"], {
+    ...overPace,
+    readStdin: async () => event({ subagent_type: "Explore" }),
+  });
+  expect(warned.json.hookSpecificOutput).toEqual({
+    hookEventName: "PreToolUse",
+    additionalContext: plain.json.message,
+  });
+  const allowedType = await cli(["guard", "subagent", "--hook", "claude"], {
+    ...overPace,
+    readStdin: async () => event({ subagent_type: "statusline-setup" }),
+  });
+  expect(allowedType).toMatchObject({ stdout: "", exitCode: 0 });
+  const unreadable = await cli(["guard", "subagent", "--hook", "claude"], {
+    ...overPace,
+    readStdin: async () => "not json",
+  });
+  expect(unreadable).toMatchObject({ stdout: "", exitCode: 0 });
+  const log = (
+    await readFile(join(directory, "state", "native-subagents.jsonl"), "utf8")
+  )
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(
+    log.map(({ harness, subagentType, decision }) => [
+      harness,
+      subagentType,
+      decision,
+    ]),
+  ).toEqual([
+    ["claude", "Explore", "deny"],
+    ["claude", "Explore", "deny"],
+    ["codex", "reviewer", "allow"],
+    ["claude", "Explore", "warn"],
+    ["claude", "statusline-setup", "allow"],
+  ]);
+  expect(log[0]).toMatchObject({
+    model: "opus",
+    sessionId: "s1",
+    cwd: "/repo",
+    guardedGap: -21,
+    otherGap: 61,
+  });
+  const stats = await cli(["stats", "--json"], {
+    ...overPace,
+    loadPricing: async () => null,
+    codexbarCostUsd: async () => null,
+  });
+  expect(stats.json.nativeSubagentGuard).toEqual({
+    claude: { allow: 1, warn: 1, deny: 2 },
+    codex: { allow: 1, warn: 0, deny: 0 },
+  });
+});
+
+test("guard subagent allows when no harness is given or quota is off", async () => {
+  expectJson(await cli(["guard", "subagent"]), {
+    decision: "allow",
+    message: "",
+  });
+  expectJson(await cli(["guard", "subagent", "--harness", "claude"]), {
+    decision: "allow",
+    message: "",
+  });
+});
+
+test("routed spawns pass the route summary on the started event and in session lists", async () => {
+  runnerOutput = CODEX_OUTPUT;
+  const spawned = await cli(["spawn", "task; stop when done", "--detach"]);
+  const events = await cli(["logs", spawned.json.handle, "--events"]);
+  const started = events.stdout
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .find(({ type }) => type === "session.started");
+  expect(started.route).toMatchObject({
+    kind: "routed",
+    pick: "codex:terra@high",
+    warnings: [],
+    tiltChanged: false,
+    lowConfidence: false,
+  });
+  expect(started.route.reason).toContain("Jev: codex:terra 0.90");
+  const listed = await cli(["sessions"]);
+  expect(listed.json[0]).toMatchObject({
+    route: { kind: "routed", pick: "codex:terra@high" },
+  });
+  expect(listed.json[0].route).not.toHaveProperty("inputs");
+});
+
+async function openclawBridge(): Promise<string> {
+  const bridge = join(directory, "bridge.json");
+  await writeFile(
+    bridge,
+    JSON.stringify({
+      mcpServers: {
+        openclaw: { type: "http", url: "http://127.0.0.1:9999/mcp" },
+      },
+    }),
+  );
+  return bridge;
+}
+
+test("a retry inherits the original's confinement, tool limits, permission mode and MCP config", async () => {
+  const bridge = await openclawBridge();
+  const claudePick = (configuration: Config) =>
+    routeDeps(configuration, { choice: "claude:opus" });
+  const original = await cli(
+    // prettier-ignore
+    ["spawn", "task; stop when done", "--confined", "--model", "claude:opus", "--mcp-config", bridge, "--disallowedTools", "Bash", "--permission-mode", "default"],
+  );
+  expect(original.exitCode).toBe(0);
+  const saved = await loadSession(original.json.handle);
+  expect(saved).toMatchObject({
+    confined: true,
+    disallowedTools: ["Bash"],
+    permissionMode: "default",
+  });
+  const retried = await cli(["retry", saved.handle], { routeDeps: claudePick });
+  expect(retried.exitCode).toBe(0);
+  // Never less restricted than the original: same confinement, denials, allow-list, MCP bridge and mode.
+  expect(await loadSession(retried.json.handle)).toMatchObject({
+    retryOf: saved.handle,
+    confined: true,
+    disallowedTools: ["Bash"],
+    allowedTools: saved.allowedTools,
+    mcpConfig: saved.mcpConfig,
+    permissionMode: "default",
+  });
+  const retryArguments = runnerArguments.at(-1) ?? [];
+  expect(retryArguments[retryArguments.indexOf("--permission-mode") + 1]).toBe(
+    "default",
+  );
+  expect(retryArguments.join(" ")).not.toContain("bypassPermissions");
+  // The caller can only add restrictions.
+  const stricter = await cli(
+    ["retry", saved.handle, "--disallowedTools", "mcp__openclaw__send"],
+    { routeDeps: claudePick },
+  );
+  expect((await loadSession(stricter.json.handle)).disallowedTools).toEqual([
+    "Bash",
+    "mcp__openclaw__send",
+  ]);
+  expectJson(
+    await cli(
+      ["retry", saved.handle, "--permission-mode", "bypassPermissions"],
+      { routeDeps: claudePick },
+    ),
+    {
+      error: `session ${saved.handle} ran with --permission-mode default; a retry cannot broaden it to bypassPermissions`,
+    },
+    1,
+  );
+  expectJson(
+    await cli(["retry", saved.handle, "--launch"], { routeDeps: claudePick }),
+    {
+      error: `session ${saved.handle} ran with confinement, tool limits or a permission mode that a T3 launch cannot carry; retry without --launch`,
+    },
+    1,
+  );
+  // A resume keeps the permission mode too, instead of falling back to the configured default.
+  expect((await cli(["send", saved.handle, "again"])).exitCode).toBe(0);
+  const resumeArguments = runnerArguments.at(-1) ?? [];
+  expect(
+    resumeArguments[resumeArguments.indexOf("--permission-mode") + 1],
+  ).toBe("default");
+});
+
+test("a retry keeps an inherited allow-list on Claude and intersects the caller's", async () => {
+  const original = await cli(
+    // prettier-ignore
+    ["spawn", "task; stop when done", "--model", "claude:opus", "--allowed-tools", "Read,Grep", "--browser"],
+  );
+  runnerOutput = CLAUDE_OUTPUT;
+  // Jev prefers Codex, which cannot enforce an allow-list, so the retry stays on Claude.
+  const retried = await cli([
+    "retry",
+    original.json.handle,
+    "--allowed-tools",
+    "Read,Write",
+  ]);
+  expectJson(retried, { harness: "claude" });
+  expect(await loadSession(retried.json.handle)).toMatchObject({
+    harness: "claude",
+    allowedTools: "Read",
+    browser: true,
+  });
+});
+
+test("a retry on Codex runs in the original's sandbox and network setting", async () => {
+  runnerOutput = CODEX_OUTPUT;
+  const networked = await cli(["spawn", "task; stop when done"], {
+    routeDeps: (configuration) => routeDeps(configuration, { needsNetwork: 1 }),
+  });
+  expect(await loadSession(networked.json.handle)).toMatchObject({
+    sandbox: "workspace-write",
+    usesNetworkAccess: true,
+  });
+  // The retry's own task scores say "no network"; the original's setting still applies.
+  const retried = await cli(["retry", networked.json.handle]);
+  expectJson(retried, { sandbox: "workspace-write+network" });
+  expect(await loadSession(retried.json.handle)).toMatchObject({
+    sandbox: "workspace-write",
+    usesNetworkAccess: true,
+  });
+  const readOnly = await cli(
+    // prettier-ignore
+    ["spawn", "task; stop when done", "--model", "codex:terra", "--sandbox", "read-only"],
+  );
+  const readOnlyRetry = await cli(["retry", readOnly.json.handle], {
+    // Scores that would otherwise pick full access.
+    routeDeps: (configuration) =>
+      routeDeps(configuration, { needsFullAccess: 1 }),
+  });
+  expectJson(readOnlyRetry, { sandbox: "read-only" });
+  // As on a resume, an explicit --sandbox from the caller is the one override.
+  const overridden = await cli([
+    "retry",
+    readOnly.json.handle,
+    "--sandbox",
+    "workspace-write",
+  ]);
+  expectJson(overridden, { sandbox: "workspace-write" });
+});
+
+test("retry --up rejects an --effort that is not stronger on the same model", async () => {
+  config.models[0].efforts = ["low", "high"];
+  config.models[1].efforts = ["low", "high", "xhigh"];
+  await saveConfig(config);
+  runnerOutput = CODEX_OUTPUT;
+  const original = await cli(
+    // prettier-ignore
+    ["spawn", "task; stop when done", "--model", "codex:terra", "--effort", "high"],
+  );
+  const handle = original.json.handle;
+  const sessionsBefore = (await listSessions()).length;
+  for (const effort of ["low", "high"])
+    expectJson(
+      await cli(["retry", handle, "--up", "--effort", effort]),
+      {
+        error: `--effort ${effort} is not stronger than the previous attempt (codex:terra@high); pass a higher effort or drop --effort`,
+      },
+      1,
+    );
+  // Nothing ran and nothing was recorded as an escalation.
+  expect(await listSessions()).toHaveLength(sessionsBefore);
+  const stronger = await cli(["retry", handle, "--up", "--effort", "xhigh"]);
+  expectJson(stronger, { model: "terra", effort: "xhigh" });
+  expect(await loadSession(stronger.json.handle)).toMatchObject({
+    effort: "xhigh",
+    escalated: true,
+  });
+  // A higher-tier model is an escalation at any effort.
+  runnerOutput = CLAUDE_OUTPUT;
+  const higherTier = await cli(["retry", handle, "--up", "--effort", "low"], {
+    routeDeps: (configuration) =>
+      routeDeps(configuration, { choice: "claude:opus" }),
+  });
+  expectJson(higherTier, { model: "opus", effort: "low" });
+  // Without --up an effort override is a plain rerun and is not checked.
+  runnerOutput = CODEX_OUTPUT;
+  expectJson(await cli(["retry", handle, "--effort", "low"]), {
+    model: "terra",
+    effort: "low",
+  });
+});
+
+test("a retry may narrow the saved permission mode but never broaden it", async () => {
+  const original = await cli(
+    // prettier-ignore
+    ["spawn", "task; stop when done", "--model", "claude:opus", "--permission-mode", "default"],
+  );
+  const handle = original.json.handle;
+  const claudePick = {
+    routeDeps: (configuration: Config) =>
+      routeDeps(configuration, { choice: "claude:opus" }),
+  };
+  const sessionsBefore = (await listSessions()).length;
+  // plan < default < acceptEdits < bypassPermissions; an unlisted mode cannot be ranked, so it is refused too.
+  for (const broader of ["acceptEdits", "bypassPermissions", "customMode"])
+    expectJson(
+      await cli(["retry", handle, "--permission-mode", broader], claudePick),
+      {
+        error: `session ${handle} ran with --permission-mode default; a retry cannot broaden it to ${broader}`,
+      },
+      1,
+    );
+  expect(await listSessions()).toHaveLength(sessionsBefore);
+  const narrowed = await cli(
+    ["retry", handle, "--permission-mode", "plan"],
+    claudePick,
+  );
+  expect((await loadSession(narrowed.json.handle)).permissionMode).toBe("plan");
+  // The narrowed retry is the new ceiling: its own retry cannot go back up to the first attempt's mode.
+  for (const broader of ["default", "acceptEdits"])
+    expect(
+      (
+        await cli(
+          ["retry", narrowed.json.handle, "--permission-mode", broader],
+          claudePick,
+        )
+      ).exitCode,
+    ).toBe(1);
+  const same = await cli(
+    ["retry", handle, "--permission-mode", "default"],
+    claudePick,
+  );
+  expect((await loadSession(same.json.handle)).permissionMode).toBe("default");
+  // An original with no saved mode ran under the configured default, so any mode may be chosen.
+  const unsaved = await cli([
+    "spawn",
+    "another task",
+    "--model",
+    "claude:opus",
+  ]);
+  expect(
+    (
+      await cli(
+        ["retry", unsaved.json.handle, "--permission-mode", "acceptEdits"],
+        claudePick,
+      )
+    ).exitCode,
+  ).toBe(0);
 });

@@ -17,6 +17,8 @@ When T3's `delegate_task` is available, use it instead of `spawn`:
 
 4. Read `launch.handle`, then run `smart-router attach <handle> --t3-thread <childThreadId>` after delegation. The launch is registered after prompt construction succeeds and removed after 15 minutes if not attached.
 
+To retry a T3 child, run `smart-router retry <handle> --launch` (add `--up` to escalate), call `delegate_task` with the returned `launch` exactly as in step 3, then `attach` the new handle. `attach` records a warning on the route when the thread runs a different model than the pick, so pass `launch.model` through unchanged.
+
 Use `status`, `sessions`, `wait`, `send` and `wake` by handle. T3 sends queue without interrupting a busy child. `stop` cancels pending wakes but cannot stop the thread: stop it in T3. The `/sr` All view marks these rows T3. Routine polling reads no messages; settled `status` and `wait` cache the final reply. T3 stuck flags use `updatedAt` silence alone because CPU is unavailable. The CLI defaults to `~/.t3/bin/t3`; override with `SMART_ROUTER_T3_CLI`.
 
 ## Delegate
@@ -45,13 +47,23 @@ Optional flags:
 
 - `--hint "<text>"` adds context for the routing decision, such as "needs a browser" or "bulk mechanical work".
 - `--browser` enables Claude in Chrome for browser work and persists on `send`.
-- `--confidential` keeps the task off OpenRouter.
-- `--model harness:model --effort <level>` skips routing and picks directly, for example `--model harness:model --effort level`; some setups disable it, so use `--hint` for escalation instead.
+- `--confidential` drops the models the user excluded for confidential work, for routed picks and for pins.
+- `--model harness:model --effort <level>` skips routing and picks directly; some setups disable it. Do not pin to get around quota: limits and the pace tilt are enforced in code, and a pin that works against the balance runs with a warning that is recorded and counted. To stay on one harness, pass `--model <harness>:auto` and let the router choose within it.
 - `--no-guardrails` skips the appended operating rules when the prompt already carries its own.
 - `--result-limit <chars>` bounds returned result text while retaining the full result in the session.
 - `--label "<group>:<name>"` and `--phase "<name>"` (one line, at most 80 characters) name the delegation in Claude Code's `/sr` pane, which groups rows by phase and shows each one's model, effort, status and elapsed time. Pass `--label` on every spawn run in the background: the live card under that spawn call finds its session by label, and an unlabeled background spawn gets no card.
 
 Use `spawn --events` or `send --events` for normalized JSONL progress ending in one result or error event. Use `logs <handle> --follow --events` to follow normalized progress from a detached session, optionally starting with `--tail N` raw lines.
+
+## Balance and escalation
+
+The router enforces quota itself. A pool or model window at its cutoff is excluded, and each candidate is weighted by how far its pool is ahead of or behind its weekly pace, so the pick can differ from the model you expected. `route.reason` says why; relay it with `route.pick`, and relay any `route.warnings`.
+
+- **Escalate with `smart-router retry <handle> --up --note "<what was wrong>"`**, not by spawning again with `--model` one rung up. It reruns the saved prompt on a stronger model or a higher effort, tells the router what the last attempt did, and links the two sessions. Without `--up` it reruns on whatever the router now picks. Spawn's flags apply (`--detach`, `--label`, `--cwd`). A retry keeps the original's confinement, tool limits, permission mode and sandbox, and your flags can only tighten them; with `--up`, an `--effort` on the same model must be higher than before.
+- **Rate every delegate once you have judged its result:** `smart-router rate <handle> good` or `bad --note "<why>"`. Ratings are the only quality signal the router's statistics get.
+- **Check balance with `smart-router stats`** (`--window current` for this quota week): each pool's share of sessions and cost against its pace, how often picks were pinned or fell back, per-model failure and retry rates, and the share of spend that bypassed smart-router.
+
+When a pool is over pace and another has reserve, native subagents (Claude Code's Agent tool, Codex's `spawn_agent`) are denied by a hook with a message telling you to delegate through smart-router instead. Do that; do not look for another way to start the subagent.
 
 ## Continue
 
@@ -74,7 +86,7 @@ Use `smart-router sessions` to list your sessions (`--all` includes other owners
 
 ## Inspect
 
-`smart-router route "<prompt>"` shows the decision without running anything. `smart-router doctor` lists the harnesses and candidate models the router can see, and `smart-router quota` shows remaining subscription quota. If either reports no candidates, ask the user to run `smart-router init`.
+`smart-router route "<prompt>"` shows the decision without running anything, as the full route record: Jev's probabilities, the pace weights, every excluded candidate with its reason, and the shadow picks of the other policies. `smart-router doctor` lists the harnesses and candidate models the router can see, and `smart-router quota` shows each pool's usage, its pace gap (positive is reserve) and any model-specific windows. If either reports no candidates, ask the user to run `smart-router init`.
 
 ### Waiting for detached work
 

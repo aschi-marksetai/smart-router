@@ -1,0 +1,40 @@
+[
+  {
+    "rateWindowLabels": {
+      "secondary": "Weekly"
+    },
+    "usage": {
+      "secondary": {
+        "usedPercent": 55,
+        "windowMinutes": 10080,
+        "resetsAt": "2026-11-29T10:00:00Z",
+        "resetDescription": "Nov 29 at 2:00AM"
+      },
+      "primary": null,
+      "tertiary": null,
+      "updatedAt": "2026-11-27T08:26:46Z",
+      "extraRateWindows": [
+        {
+          "title": "Fable only",
+          "window": {
+            "windowMinutes": 10080,
+            "resetsAt": "2026-11-29T09:59:59Z",
+            "usedPercent": 32
+          },
+          "id": "claude-weekly-scoped-fable"
+        }
+      ]
+    },
+    "source": "web",
+    "pace": {
+      "secondary": {
+        "expectedUsedPercent": 71,
+        "willLastToReset": true,
+        "summary": "16% in reserve | Expected 71% used | Lasts until reset",
+        "stage": "farBehind",
+        "deltaPercent": -16
+      }
+    },
+    "provider": "claude"
+  }
+]

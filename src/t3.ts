@@ -36,6 +36,7 @@ type ThreadView = {
   latestRunId?: string;
   runCount?: number;
   pendingRequestCount?: number;
+  model?: string;
   messages: { role: string; text: string; runId?: string }[];
 };
 
@@ -123,6 +124,7 @@ async function showThread(id: string, messages: 0 | 1): Promise<ThreadView> {
         ? runCount
         : undefined,
     pendingRequestCount,
+    model: text(thread?.model),
     messages: entries.map((entry) => {
       const message = record(entry);
       const role = text(message?.role),
@@ -185,6 +187,16 @@ export async function attachT3Session(
     throw new Error("session is not an unattached T3 launch");
   const view = await showThread(threadId, 0);
   const attached = { ...session, t3ThreadId: threadId, ...t3State(view) };
+  // delegate_task takes the model from the caller, so the thread may not run the planned pick.
+  if (view.model && view.model !== session.model && attached.route)
+    attached.route = {
+      ...attached.route,
+      warnings: [
+        // A route record saved before warnings existed has none.
+        ...(attached.route.warnings ?? []),
+        `T3 thread runs ${view.model}, not the planned ${session.model}`,
+      ],
+    };
   if (!(await saveT3Session(attached, session)))
     throw new Error("session changed while attaching; retry");
   return attached;

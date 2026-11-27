@@ -746,3 +746,54 @@ test("a failed view does not reuse needsInput from an older read", async () => {
   await view({ pendingRequestCount: 1 });
   expect(cli(["wait", session.handle]).exitCode).toBe(2);
 });
+
+test("attach records a warning when the T3 thread runs a different model than planned", async () => {
+  const planned = await createSession({
+    ...session,
+    handle: undefined,
+    prompt: "planned",
+    route: {
+      version: 2,
+      kind: "routed",
+      pick: "claude:test@high",
+      warnings: ["earlier warning"],
+    } as Session["route"],
+  });
+  await view({ model: "claude-other" });
+  const mismatched = await attachT3Session(planned.handle, TEST_T3_THREAD_ID);
+  expect(mismatched.route?.warnings).toEqual([
+    "earlier warning",
+    "T3 thread runs claude-other, not the planned test",
+  ]);
+  expect((await loadSession(planned.handle)).route?.warnings).toHaveLength(2);
+  await view({ model: "test" });
+  const matching = await createSession({
+    ...planned,
+    handle: undefined,
+    t3ThreadId: "",
+    prompt: "matching",
+  });
+  expect(
+    (await attachT3Session(matching.handle, TEST_T3_THREAD_ID)).route?.warnings,
+  ).toEqual(["earlier warning"]);
+  // A launch saved without a route record has nowhere to keep the warning.
+  await view({ model: "claude-other" });
+  expect(
+    (await attachT3Session(session.handle, TEST_T3_THREAD_ID)).route,
+  ).toBeUndefined();
+});
+
+test("attach handles a route record saved before warnings existed", async () => {
+  const legacy = await createSession({
+    ...session,
+    handle: undefined,
+    prompt: "legacy",
+    route: { pick: "claude:test@high", reason: "old" } as Session["route"],
+  });
+  await view({ model: "claude-other" });
+  const attached = await attachT3Session(legacy.handle, TEST_T3_THREAD_ID);
+  expect(attached.route?.warnings).toEqual([
+    "T3 thread runs claude-other, not the planned test",
+  ]);
+  expect(attached.t3ThreadId).toBe(TEST_T3_THREAD_ID);
+});

@@ -19,6 +19,8 @@ export type Thread = {
   endedAt?: string;
   cwd?: string;
   routePick?: string;
+  routeDetails?: string[];
+  retryLinks?: { label: string; handle: string }[];
   inputTokens?: number;
   outputTokens?: number;
   costUsd?: number;
@@ -46,6 +48,7 @@ export type PaneState = {
   threads: Thread[];
   now: number;
   error: string;
+  poolBalance?: string;
 };
 
 // A Bash call running `smart-router spawn`, keyed by its tool_use_id.

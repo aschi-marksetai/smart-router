@@ -1,5 +1,6 @@
 import { T3_NO_LOG } from "./t3.ts";
 import { dashboardHtml } from "./assets.ts";
+import { retriesByOriginal } from "./outcomes.ts";
 import {
   sessionEvents,
   sessionStatus,
@@ -98,8 +99,10 @@ export function startDashboard({
       try {
         await refresh();
         if (!match) {
-          const sessions = (await listSessions()).map((session) => ({
-            ...sessionSummary(session),
+          const allSessions = await listSessions();
+          const retries = retriesByOriginal(allSessions);
+          const sessions = allSessions.map((session) => ({
+            ...sessionSummary(session, retries.get(session.handle)),
             cwd: session.cwd,
             lastAction: session.lastAction,
           }));
@@ -109,7 +112,12 @@ export function startDashboard({
         if (match[2] && session.runner === "t3")
           return json({ error: T3_NO_LOG }, 400);
         if (match[2]) return json(await sessionEvents(session));
-        return json(sessionStatus(session));
+        return json(
+          sessionStatus(
+            session,
+            retriesByOriginal(await listSessions()).get(session.handle),
+          ),
+        );
       } catch (error) {
         if (
           error instanceof Error &&

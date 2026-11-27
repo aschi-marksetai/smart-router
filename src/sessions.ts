@@ -7,7 +7,7 @@ import {
   type Wake,
 } from "./wakes.ts";
 import { sampleActivity, type ActivitySample } from "./activity.ts";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
@@ -21,6 +21,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import type { HarnessName } from "./config.ts";
+import type { RouteRecord } from "./route.ts";
 import { getAdapter } from "./harness/index.ts";
 import { sessionsDir } from "./paths.ts";
 import {
@@ -35,6 +36,7 @@ import {
 const HANDLE_BYTES = 3;
 const PROMPT_PREVIEW_LENGTH = 160;
 const SESSION_FILE_SUFFIX = ".json";
+const PROMPT_FILE_SUFFIX = ".prompt.md";
 const LOG_FILE_SUFFIX = ".log";
 const ERR_FILE_SUFFIX = ".err";
 const SOCKET_FILE_SUFFIX = ".sock";
@@ -78,6 +80,12 @@ export type SessionTurn = {
   usage: Usage | null;
 };
 
+export type SessionRating = {
+  value: "good" | "bad";
+  note: string | null;
+  at: string;
+};
+
 export type Session = {
   handle: string;
   runner?: "t3";
@@ -101,6 +109,8 @@ export type Session = {
   strictMcpConfig?: boolean;
   sandbox?: string;
   usesNetworkAccess?: boolean;
+  // Set only when the caller chose a Claude permission mode; resume and retry keep it.
+  permissionMode?: string;
   cwd: string;
   owner: string;
   sessionId?: string;
@@ -128,7 +138,13 @@ export type Session = {
   usage?: Usage | null;
   turns?: SessionTurn[];
   turnLogOffset?: number;
-  route?: unknown;
+  // Sessions saved before route record v2 hold an older shape or null; read it with isRouteRecord.
+  route?: RouteRecord | null;
+  promptSha256?: string;
+  // The only stored retry link; the reverse direction is derived (see retriedBy in outcomes.ts).
+  retryOf?: string;
+  escalated?: boolean;
+  rating?: SessionRating;
   wakes?: Wake[];
   activity?: {
     runtimeSeconds: number;
@@ -142,7 +158,13 @@ export type Session = {
 export type CreateSessionOptions = Omit<
   Session,
   "handle" | "owner" | "createdAt" | "promptPreview"
-> & { prompt: string; handle?: string; turnKind?: SessionTurn["kind"] };
+> & {
+  prompt: string;
+  // The caller's task as given, before guardrails and delegation context; defaults to prompt.
+  taskPrompt?: string;
+  handle?: string;
+  turnKind?: SessionTurn["kind"];
+};
 
 export function createSessionHandle(): string {
   return randomBytes(HANDLE_BYTES).toString("hex");
@@ -154,6 +176,10 @@ export function sessionPath(handle: string): string {
 
 export function sessionLogPath(handle: string): string {
   return join(sessionsDir(), `${handle}${LOG_FILE_SUFFIX}`);
+}
+
+export function sessionPromptPath(handle: string): string {
+  return join(sessionsDir(), `${handle}${PROMPT_FILE_SUFFIX}`);
 }
 
 export function sessionMcpPath(handle: string): string {
@@ -181,6 +207,7 @@ export async function createSession(
 ): Promise<Session> {
   await mkdir(sessionsDir(), { recursive: true });
   const handle = options.handle ?? createSessionHandle();
+  const taskPrompt = options.taskPrompt ?? options.prompt;
   const session: Session = {
     handle,
     runner: options.runner,
@@ -197,6 +224,7 @@ export async function createSession(
     strictMcpConfig: options.strictMcpConfig,
     sandbox: options.sandbox,
     usesNetworkAccess: options.usesNetworkAccess,
+    permissionMode: options.permissionMode,
     cwd: options.cwd,
     owner: sessionOwner(),
     sessionId: options.sessionId,
@@ -224,8 +252,12 @@ export async function createSession(
     turns: options.turns,
     turnLogOffset: options.turnLogOffset,
     route: options.route,
+    promptSha256: createHash("sha256").update(taskPrompt).digest("hex"),
+    retryOf: options.retryOf,
+    escalated: options.escalated,
   };
   if (options.turnKind) await startSessionTurn(session, options.turnKind);
+  await writeFile(sessionPromptPath(handle), taskPrompt);
   await saveSession(session);
   return session;
 }
@@ -280,11 +312,37 @@ export async function saveSession(
         Object.assign(session, stored, metadata);
       }
       if (!replaceWakes) session.wakes = stored?.wakes ?? session.wakes;
+      // rate annotates a session from another process; keep what it stored.
+      session.rating = stored?.rating ?? session.rating;
       await writeSession(session);
     },
     stat,
     `.session-${session.handle}.lock`,
   );
+}
+
+// Changes one stored session under its lock, for annotations made by a process that does not own the run.
+export async function updateSession(
+  handle: string,
+  change: (session: Session) => void,
+): Promise<Session> {
+  return withSessionsLock(
+    async () => {
+      const session = await loadSession(handle);
+      change(session);
+      // Makes a concurrent T3 refresh reload instead of writing its older copy back.
+      if (session.runner === "t3")
+        session.t3Revision = (session.t3Revision ?? 0) + 1;
+      await writeSession(session);
+      return session;
+    },
+    stat,
+    `.session-${handle}.lock`,
+  );
+}
+
+export async function readSessionPrompt(handle: string): Promise<string> {
+  return readFile(sessionPromptPath(handle), "utf8");
 }
 
 async function writeSession(session: Session): Promise<void> {
@@ -390,6 +448,7 @@ export async function removeSession(handle: string): Promise<void> {
       sessionErrPath(handle),
       sessionSocketPath(handle),
       sessionMcpPath(handle),
+      sessionPromptPath(handle),
     ].map((path) => rm(path, { force: true })),
   );
 }

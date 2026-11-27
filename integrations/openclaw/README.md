@@ -107,6 +107,12 @@ select that full ID in the agent's `model`:
 "smart-router/codex:auto": { "agentRuntime": { "id": "smart-router" } }
 ```
 
+## Routing decisions
+
+Every routed, pinned or fallback run reports its routing decision. smart-router puts a route summary on the `session.started` event (`kind`, `pick`, `reason`, `warnings`, `tiltChanged`, `lowConfidence`). The plugin logs it through the plugin logger (warnings at warn level) and keeps it in the transcript as a `smart_router_route` tool event: the summary is the tool arguments and `<pick> (<kind>): <reason>` is the result. OpenClaw renders tool events from a CLI backend without treating them as host tool execution, so nothing is run or gated by it. The full record, with the quota snapshot and every excluded candidate, stays on the smart-router host: `smart-router status <handle>`.
+
+Quota limits and the pace tilt apply to OpenClaw runs like any other. A pinned model that works against the quota balance still runs, and its warning appears in the summary.
+
 Optional plugin config keys: `smartRouterBinary` selects the executable; `cwd` overrides the session workspace; `hint` and `confidential` pass to spawn; positive integer `resultLimit` bounds returned text on spawn and send. Otherwise OpenClaw supplies the workspace at execution time, and smart-router preserves it for resume.
 
 OpenClaw supplies the tools allowed by its **subagent policy** through a per-attempt loopback MCP server. Its [CLI backend bridge](https://docs.openclaw.ai/plugins/cli-backend-plugins) injects `--strict-mcp-config --mcp-config <file>` on spawn and resume, plus `OPENCLAW_MCP_TOKEN` and `OPENCLAW_MCP_CLI_CAPTURE_KEY`. smart-router references those environment variables when it launches Claude or Codex. The plugin does not copy credentials or construct an MCP server.

@@ -47,7 +47,8 @@ beforeEach(async () => {
     result: "done",
     lastAction: "Bash",
     depth: 1,
-    route: { pick: "claude:opus@high", reason: "test" },
+    // A record saved before route v2: the dashboard still shows its pick and reason.
+    route: { pick: "claude:opus@high", reason: "test" } as Session["route"],
   });
   session.createdAt = "2026-01-01T00:00:00Z";
   await saveSession(session);
@@ -125,6 +126,12 @@ test("status and normalized events use the shared CLI projections", async () => 
     usage: null,
   });
   expect(sessionSummary(session)).toEqual({
+    // The fixture holds a pre-v2 route shape, which has no summary.
+    route: undefined,
+    retryOf: undefined,
+    retriedBy: [],
+    escalated: undefined,
+    rating: undefined,
     wakes: undefined,
     activity: undefined,
     stuck: null,

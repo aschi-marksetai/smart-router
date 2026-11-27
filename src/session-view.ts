@@ -7,6 +7,7 @@ import {
   type NormalizedEvent,
 } from "./events.ts";
 import { getAdapter } from "./harness/index.ts";
+import { routeSummary } from "./route.ts";
 import {
   isProcessRunning,
   sessionLogPath,
@@ -21,7 +22,8 @@ function latestTurnTiming({ turns }: Session) {
   return { startedAt: turn?.startedAt, endedAt: turn?.endedAt };
 }
 
-export function sessionSummary(session: Session) {
+// retriedBy is derived from the other sessions' retryOf; pass retriesByOriginal(sessions).get(handle).
+export function sessionSummary(session: Session, retriedBy: string[] = []) {
   const {
     handle,
     owner,
@@ -55,6 +57,11 @@ export function sessionSummary(session: Session) {
           warning: session.warning,
         }
       : {}),
+    route: routeSummary(session.route),
+    retryOf: session.retryOf,
+    retriedBy,
+    escalated: session.escalated,
+    rating: session.rating,
     wakes: session.wakes,
     activity: session.activity,
     stuck:
@@ -66,10 +73,12 @@ export function sessionSummary(session: Session) {
   };
 }
 
-export function sessionStatus(session: Session) {
+export function sessionStatus(session: Session, retriedBy: string[] = []) {
   const handle = session.handle;
   return {
     ...session,
+    // After the spread, so a retriedBy saved by an older version is not shown.
+    retriedBy,
     ...latestTurnTiming(session),
     running:
       session.status === SESSION_STATUS.running &&

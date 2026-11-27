@@ -32,6 +32,7 @@ import {
   DEFAULT_MAX_RUNNING,
   harnessBinary,
   jevApiKeyEnv,
+  DEFAULT_JEV_MODELS,
   loadConfig,
   OPENROUTER_API_KEY_ENV,
   type Config,
@@ -395,12 +396,10 @@ async function runRules(
         }),
         deps,
       )) ?? "";
-    if (cutoff) cutoffPercent[harness] = Number(cutoff);
-    if (!cutoff) delete cutoffPercent[harness];
+    // null, not a missing key: a pool left out would load its default cutoff back.
+    cutoffPercent[harness] = cutoff ? Number(cutoff) : null;
   }
-  next.rules.quotaCutoffPercent = Object.keys(cutoffPercent).length
-    ? cutoffPercent
-    : undefined;
+  next.rules.quotaCutoffPercent = cutoffPercent;
   const confidentialGlobs =
     (await prompt(
       deps.prompts.text({
@@ -442,7 +441,7 @@ async function runRules(
     (await prompt(
       deps.prompts.text({
         message:
-          "Confidence floor, 0 to 1 (below it the default model runs; 0.35 recommended)",
+          "Confidence floor, 0 to 1 (picks below it are flagged low confidence; 0.35 recommended)",
         initialValue: (
           next.rules.confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR
         ).toString(),
@@ -632,6 +631,7 @@ export async function runInit(
   let config = options.reset
     ? structuredClone(DEFAULT_CONFIG)
     : await loadConfig();
+  const previousJevDefault = DEFAULT_JEV_MODELS[config.jev.provider];
   config.jev.provider = await prompt(
     deps.prompts.select({
       message: "Jev provider",
@@ -643,6 +643,9 @@ export async function runInit(
     }),
     deps,
   );
+  // Each provider has its own id for the pinned release; a model the user chose is left alone.
+  if (config.jev.model === previousJevDefault)
+    config.jev.model = DEFAULT_JEV_MODELS[config.jev.provider];
   const keyEnvironmentVariable = jevApiKeyEnv(config);
   if (!deps.env[keyEnvironmentVariable]) {
     const apiKey = await prompt(

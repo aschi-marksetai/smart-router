@@ -1,1 +1,17 @@
-{ "modules": ["./register.tsx"] }
+{
+  "modules": ["./register.tsx"],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Agent|Task)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "smart-router guard subagent --hook claude",
+            "timeout": 6
+          }
+        ]
+      }
+    ]
+  }
+}

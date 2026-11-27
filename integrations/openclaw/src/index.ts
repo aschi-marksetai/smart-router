@@ -7,6 +7,8 @@ import manifest from "../openclaw.plugin.json";
 
 const BACKEND_ID = "smart-router";
 const EVENT_VERSION = 1;
+// OpenClaw keeps tool events in the transcript, so the routing decision is reported as one.
+const ROUTE_TOOL_NAME = "smart_router_route";
 
 type Backend = Parameters<OpenClawPluginApi["registerCliBackend"]>[0];
 type Provider = Parameters<OpenClawPluginApi["registerProvider"]>[0];
@@ -19,7 +21,16 @@ type ParsedUsage = Extract<ParsedEvent, { kind: "result" }>["usage"];
 type RegistrationApi = Pick<
   OpenClawPluginApi,
   "pluginConfig" | "registerCliBackend" | "registerProvider"
->;
+> &
+  Partial<Pick<OpenClawPluginApi, "logger">>;
+export type RouteSummary = {
+  kind: string;
+  pick: string;
+  reason: string;
+  warnings: string[];
+  tiltChanged: boolean;
+  lowConfidence: boolean;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -46,6 +57,27 @@ function parseUsage(value: unknown): ParsedUsage {
   };
 }
 
+// The route summary on session.started; undefined from smart-router versions that predate it.
+export function parseRouteSummary(value: unknown): RouteSummary | undefined {
+  if (!isRecord(value)) return undefined;
+  const { kind, pick, reason, warnings, tiltChanged, lowConfidence } = value;
+  if (
+    typeof kind !== "string" ||
+    typeof pick !== "string" ||
+    typeof reason !== "string" ||
+    !Array.isArray(warnings)
+  )
+    return undefined;
+  return {
+    kind,
+    pick,
+    reason,
+    warnings: warnings.filter((warning) => typeof warning === "string"),
+    tiltChanged: tiltChanged === true,
+    lowConfidence: lowConfidence === true,
+  };
+}
+
 export const parseSmartRouterEvent: EventParser = (line) => {
   let event: unknown;
   try {
@@ -55,9 +87,29 @@ export const parseSmartRouterEvent: EventParser = (line) => {
   }
   if (!isRecord(event) || event.v !== EVENT_VERSION) return null;
   switch (event.type) {
-    case "session.started":
+    case "session.started": {
       if (typeof event.handle !== "string") return null;
-      return { kind: "sessionId", sessionId: event.handle };
+      const session = { kind: "sessionId", sessionId: event.handle } as const;
+      const route = parseRouteSummary(event.route);
+      if (!route) return session;
+      const toolCallId = `route:${event.handle}`;
+      return [
+        session,
+        {
+          kind: "toolStart",
+          toolCallId,
+          name: ROUTE_TOOL_NAME,
+          args: route,
+        },
+        {
+          kind: "toolResult",
+          toolCallId,
+          name: ROUTE_TOOL_NAME,
+          isError: false,
+          result: `${route.pick} (${route.kind}): ${route.reason}`,
+        },
+      ];
+    }
     case "text.delta":
     case "message":
       if (typeof event.text !== "string") return null;
@@ -155,7 +207,21 @@ export function registerSmartRouter(api: RegistrationApi): void {
         args.push("--model", context.modelId);
       return args;
     },
-    parseJsonlEvent: parseSmartRouterEvent,
+    parseJsonlEvent(line, context) {
+      const parsed = parseSmartRouterEvent(line, context);
+      const routeEvent = Array.isArray(parsed)
+        ? parsed.find((event) => event.kind === "toolStart")
+        : undefined;
+      const route = parseRouteSummary(routeEvent?.args);
+      if (route) {
+        api.logger?.info(
+          `smart-router routed to ${route.pick} (${route.kind}): ${route.reason}`,
+        );
+        for (const warning of route.warnings)
+          api.logger?.warn(`smart-router route warning: ${warning}`);
+      }
+      return parsed;
+    },
     bundleMcp: true,
     bundleMcpMode: "claude-config-file",
     nativeToolMode: "none",

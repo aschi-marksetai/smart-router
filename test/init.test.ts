@@ -178,6 +178,8 @@ test("selects OpenRouter Jev, prompts for its key, and confirms routing ZDR", as
   expect(saved.jev).toMatchObject({
     provider: "openrouter",
     zdr: true,
+    // The pinned default follows the provider, which names the release differently.
+    model: "typesafe/jev-1.14-20261014",
   });
   expect(saved.jev.apiKeyEnv).toBeUndefined();
   expect(await readFile(join(directory, ".env"), "utf8")).toBe(
@@ -279,7 +281,7 @@ test("rules handle blank and numeric cutoffs, validation, globs, floor, stopping
       answer("codex cutoff percent used (blank = none)", "60", (options) => expect(validate(options, "Infinity")).toBe("Enter a finite number")),
       answer("Confidential path globs, comma-separated (blank = none)", " **/secret/**, *.key "),
       answer("Confidential excluded model patterns, comma-separated", "pi:openrouter/*, pi:google/*"),
-      answer("Confidence floor, 0 to 1 (below it the default model runs; 0.35 recommended)", "", (options) => expect(validate(options, "NaN")).toBe("Enter a finite number")),
+      answer("Confidence floor, 0 to 1 (picks below it are flagged low confidence; 0.35 recommended)", "", (options) => expect(validate(options, "NaN")).toBe("Enter a finite number")),
     ],
     confirm: [answer("Require zero data retention for confidential OpenRouter models?", false), answer("Check for updates once a day?", false), answer("Choose the Codex sandbox automatically from the task?", false), answer("Allow automatic Codex full-access sandbox?", false)],
     multiselect: [answer("Models that must be given a stopping point", ["claude:sonnet"], (options) => { expect((options.options as { value: string }[]).map(({ value }) => value)).toEqual(["claude:sonnet", "codex:sol"]); expect(options.initialValues).toEqual(["claude:sonnet"]); })],
@@ -288,7 +290,8 @@ test("rules handle blank and numeric cutoffs, validation, globs, floor, stopping
   const saved = await loadConfig();
   expect(saved.rules).toMatchObject({
     concurrency: { maxRunning: 7, maxPerCaller: 4, maxDepth: 3 },
-    quotaCutoffPercent: { codex: 60 },
+    // Blank means no cutoff: saved as null so the default does not come back on load.
+    quotaCutoffPercent: { claude: null, codex: 60 },
     confidentialPathGlobs: ["**/secret/**", "*.key"],
     confidentialExcludedModels: ["pi:openrouter/*", "pi:google/*"],
     confidenceFloor: 0.35,
@@ -353,6 +356,8 @@ test.each(["editor", "claude", "codex", "skip"] as const)(
 test("existing preferences use refinement prompt and Keep as is leaves config unchanged", async () => {
   await setup(modelConfig());
   await writeFile(join(directory, "preferences.md"), "custom");
+  // Loading fills the model tier defaults, so save once to compare like with like.
+  await saveConfig(await loadConfig());
   const before = await readFile(join(directory, "config.json"), "utf8");
   const kept = scripted({ select: [answer("Authentication", "keep")] });
   await runInit({ section: "auth" }, kept.deps);

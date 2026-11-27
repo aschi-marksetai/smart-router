@@ -13,6 +13,7 @@ import type {
 // Pane ids accept letters, digits, underscores and hyphens; titles accept spaces.
 const PANE = "smart-router";
 const LIST_INTERVAL = 5000;
+const QUOTA_INTERVAL = 5 * 60 * 1000;
 const THREAD_INTERVAL = 3000;
 const TICK_INTERVAL = 1000;
 const ALL_LIMIT = 30;
@@ -81,6 +82,48 @@ export function parseThread(value: unknown): Thread {
     throw new Error("Invalid smart-router status");
   const usage = object(record.usage ?? {});
   const route = object(record.route ?? {});
+  const routeDetails: string[] = [];
+  for (const [label, value] of [
+    ["Kind", route.kind],
+    ["Reason", route.reason],
+  ] as const) {
+    const text = optionalString(value);
+    if (text) routeDetails.push(`${label}: ${text}`);
+  }
+  const warnings = route.warnings ?? [];
+  if (!Array.isArray(warnings)) throw new Error("Invalid route warnings");
+  routeDetails.push(
+    ...warnings.map((warning) => `Warning: ${requiredString(warning)}`),
+  );
+  for (const [label, value] of [
+    ["Tilt changed", route.tiltChanged],
+    ["Low confidence", route.lowConfidence],
+    ["Escalated", record.escalated],
+  ] as const) {
+    if (value !== undefined && typeof value !== "boolean")
+      throw new Error("Invalid route flag");
+    if (value) routeDetails.push(label);
+  }
+  const retryLinks: NonNullable<Thread["retryLinks"]> = [];
+  // The CLI keeps retry links on the session: one original, any number of retries.
+  const retriedBy = record.retriedBy ?? [];
+  if (!Array.isArray(retriedBy)) throw new Error("Invalid retriedBy");
+  for (const [label, value] of [
+    ["Retry of", record.retryOf],
+    ...retriedBy.map((handle) => ["Retried by", handle] as const),
+  ] as const) {
+    const handle = optionalString(value);
+    if (handle) retryLinks.push({ label, handle });
+  }
+  if (record.rating != null) {
+    const rating = object(record.rating);
+    const value = rating.value;
+    if (typeof value !== "string" && typeof value !== "number")
+      throw new Error("Invalid rating");
+    routeDetails.push(
+      `Rating: ${value} · ${requiredString(rating.at)}${rating.note ? ` · ${requiredString(rating.note)}` : ""}`,
+    );
+  }
   const depth = optionalNumber(record.depth) ?? 1;
   const createdAt = requiredString(record.createdAt);
   if (
@@ -121,6 +164,8 @@ export function parseThread(value: unknown): Thread {
     endedAt: optionalString(record.endedAt),
     cwd: optionalString(record.cwd),
     routePick: optionalString(route.pick),
+    routeDetails,
+    retryLinks,
     inputTokens: optionalNumber(usage.inputTokens),
     outputTokens: optionalNumber(usage.outputTokens),
     costUsd: optionalNumber(usage.costUsd),
@@ -475,6 +520,22 @@ let busy = false;
 let generation = 0;
 let listDue = 0;
 let threadDue = 0;
+let quotaDue = 0;
+
+export function poolBalance(value: unknown): string {
+  const quota = object(value);
+  return (["claude", "codex"] as const)
+    .map((harness) => {
+      const pool = object(quota[harness]);
+      const used = optionalNumber(pool.weeklyUsedPercent);
+      const gap = optionalNumber(pool.paceGap);
+      if (used === undefined || gap === undefined)
+        throw new Error("Invalid quota");
+      const reserve = Math.round(gap);
+      return `${harness === "claude" ? "Claude" : "Codex"} ${Math.round(used)}% (${reserve >= 0 ? "+" : ""}${reserve} reserve)`;
+    })
+    .join(" · ");
+}
 
 function stopTimer() {
   timer?.cancel();
@@ -496,6 +557,17 @@ async function refresh($: EngineInterface, force = false) {
     if (!placed && !watching) {
       stopTimer();
       return;
+    }
+    if (placed && now >= quotaDue) {
+      quotaDue = now + QUOTA_INTERVAL;
+      let balance = "";
+      try {
+        balance = poolBalance(JSON.parse(await cli($, ["quota"])));
+      } catch {
+        // Quota is optional.
+      }
+      if (started !== generation) return;
+      await update($, pane, (state) => ({ ...state, poolBalance: balance }));
     }
     if (force || now >= listDue) {
       listDue = now + LIST_INTERVAL;
@@ -790,6 +862,7 @@ export const register: Register = (on, _options) => {
             />
             {refreshButton}
           </Box>
+          {state.poolBalance && <Text dimColor>{state.poolBalance}</Text>}
           {state.error && (
             <Text color="error" wrap="truncate-end">
               {state.error}
@@ -831,6 +904,7 @@ export const register: Register = (on, _options) => {
             {state.error}
           </Text>
         )}
+        {state.poolBalance && <Text dimColor>{state.poolBalance}</Text>}
         {!record && !state.error && <Text>Loading {view.handle}…</Text>}
         {record && (
           <Box flexDirection="column">
@@ -843,6 +917,16 @@ export const register: Register = (on, _options) => {
             {record.routePick && (
               <Text wrap="wrap">Route: {record.routePick}</Text>
             )}
+            {record.routeDetails?.map((detail) => (
+              <Text wrap="wrap">{detail}</Text>
+            ))}
+            {record.retryLinks?.map((link) => (
+              <Button
+                key={`retry-${link.handle}`}
+                label={`${link.label}: ${link.handle}`}
+                onPress={() => navigate($, state.scope, link.handle)}
+              />
+            ))}
             {(record.inputTokens !== undefined ||
               record.outputTokens !== undefined) && (
               <Text>

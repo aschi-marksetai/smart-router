@@ -1,0 +1,31 @@
+[
+  {
+    "usage": {
+      "updatedAt": "2026-11-27T08:26:48Z",
+      "secondary": {
+        "windowMinutes": 10080,
+        "resetDescription": "Dec 3 at 5:30\u202fPM",
+        "usedPercent": 2,
+        "resetsAt": "2026-12-04T01:30:30Z"
+      },
+      "dataConfidence": "exact",
+      "tertiary": null,
+      "primary": null
+    },
+    "source": "oauth",
+    "provider": "codex",
+    "version": "0.169.0",
+    "pace": {
+      "secondary": {
+        "willLastToReset": true,
+        "stage": "slightlyBehind",
+        "deltaPercent": -2,
+        "summary": "2% in reserve | Expected 4% used | Lasts until reset",
+        "expectedUsedPercent": 4
+      }
+    },
+    "rateWindowLabels": {
+      "secondary": "Weekly"
+    }
+  }
+]

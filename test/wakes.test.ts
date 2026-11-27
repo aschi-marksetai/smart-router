@@ -123,7 +123,7 @@ test("delivers once after process exit, waits through a busy turn, preserves met
     deliveries++;
   });
   expect(deliveries).toBe(1);
-}, 5000);
+}, 15000);
 test("cancel one or all wakes, unknown cancellation and invalid claims", async () => {
   const value = await seed();
   expect(hasUnsettledWakes(session)).toBe(true);

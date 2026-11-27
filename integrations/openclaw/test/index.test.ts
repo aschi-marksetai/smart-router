@@ -217,3 +217,83 @@ test("OpenClaw model pins reach spawn while auto routes and resumes retain the s
     ).toEqual(baseArgs);
   }
 });
+
+test("a started event's route summary is kept as a tool event and logged", () => {
+  const route = {
+    kind: "routed",
+    pick: "claude:claude-sonnet-5-5@medium",
+    reason: "Jev: claude:claude-sonnet-5-5 0.87 · Codex 40 pts over pace",
+    warnings: ["T3 thread runs another model"],
+    tiltChanged: true,
+    lowConfidence: false,
+  };
+  const started = JSON.stringify({
+    v: 1,
+    type: "session.started",
+    handle: "abc123",
+    model: "claude-sonnet-5-5",
+    effort: "medium",
+    route,
+  });
+  expect(parse(started)).toEqual([
+    { kind: "sessionId", sessionId: "abc123" },
+    {
+      kind: "toolStart",
+      toolCallId: "route:abc123",
+      name: "smart_router_route",
+      args: route,
+    },
+    {
+      kind: "toolResult",
+      toolCallId: "route:abc123",
+      name: "smart_router_route",
+      isError: false,
+      result: `${route.pick} (routed): ${route.reason}`,
+    },
+  ]);
+  const logged: string[] = [];
+  const backends: Backend[] = [];
+  registerSmartRouter({
+    pluginConfig: {},
+    registerCliBackend: (registered) => backends.push(registered),
+    registerProvider: () => {},
+    logger: {
+      info: (message) => logged.push(`info ${message}`),
+      warn: (message) => logged.push(`warn ${message}`),
+      error: () => {},
+    },
+  });
+  const context = { backendId: backend.id, backend: backend.config };
+  expect(backends[0]!.parseJsonlEvent?.(started, context)).toHaveLength(3);
+  expect(logged).toEqual([
+    `info smart-router routed to ${route.pick} (routed): ${route.reason}`,
+    "warn smart-router route warning: T3 thread runs another model",
+  ]);
+  // Without a logger, or with an event from an older smart-router, nothing is logged or added.
+  expect(backend.parseJsonlEvent?.(started, context)).toHaveLength(3);
+  const older = JSON.stringify({
+    v: 1,
+    type: "session.started",
+    handle: "abc123",
+  });
+  expect(backends[0]!.parseJsonlEvent?.(older, context)).toEqual({
+    kind: "sessionId",
+    sessionId: "abc123",
+  });
+  for (const broken of [
+    { ...route, pick: 1 },
+    { ...route, warnings: "x" },
+    "x",
+  ])
+    expect(
+      parse(
+        JSON.stringify({
+          v: 1,
+          type: "session.started",
+          handle: "h",
+          route: broken,
+        }),
+      ),
+    ).toEqual({ kind: "sessionId", sessionId: "h" });
+  expect(logged).toHaveLength(2);
+});

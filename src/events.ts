@@ -1,4 +1,5 @@
 import type { Session } from "./sessions.ts";
+import { routeSummary, type RouteSummary } from "./route.ts";
 import {
   record,
   parseJsonLines,
@@ -19,7 +20,12 @@ export const EVENT_TYPE = {
 export const EVENT_TEXT_LIMIT = 2000;
 export const LOG_FOLLOW_INTERVAL_MS = 100;
 type Payloads = {
-  "session.started": { model: string; effort: string; sessionId?: string };
+  "session.started": {
+    model: string;
+    effort: string;
+    sessionId?: string;
+    route?: RouteSummary;
+  };
   "text.delta": { text: string };
   message: { role: "assistant"; text: string };
   "tool.started": { toolId: string; name: string; input: string };
@@ -39,7 +45,7 @@ type EventPayload = {
 }[keyof Payloads];
 export type EventState = Pick<
   Session,
-  "handle" | "harness" | "model" | "effort" | "usage"
+  "handle" | "harness" | "model" | "effort" | "usage" | "route"
 > & {
   ts: string;
   text?: string;
@@ -83,12 +89,14 @@ export function translateEvents(
     event.type === "thread.started" ||
     (event.type === "system" && event.subtype === "init") ||
     (state.harness === "pi" && typeof sessionId === "string");
+  const route = routeSummary(state.route);
   if (initialization)
     emit({
       type: EVENT_TYPE.started,
       model: state.model,
       effort: state.effort,
       ...(typeof sessionId === "string" ? { sessionId } : {}),
+      ...(route ? { route } : {}),
     });
   const message = record(event.message);
   const item = record(event.item);

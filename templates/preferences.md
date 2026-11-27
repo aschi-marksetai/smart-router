@@ -19,7 +19,12 @@ Start at the cheapest model that could plausibly do the task and climb only when
 
 ## Quota
 
-How you weigh subscription quota against quality. Name any provider that is effectively free for you and any whose weekly window you want protected. The router sees current usage percentages and reset times alongside these rules.
+How you weigh subscription quota against quality. Name any provider that is effectively free for you and any whose weekly window you want protected. The router sees current usage percentages, reset times and each pool's pace alongside these rules. Hard cutoffs and the pace tilt are enforced in code (`rules.quotaCutoffPercent`, `rules.paceTilt`); the rules here steer the choice among what is left.
+
+Write the balance rule in both directions, for example:
+
+- When Claude is tight and Codex has headroom, move work to Codex rather than only down the Claude ladder.
+- When Codex is tight and Claude has headroom, move work to Claude rather than only down the Codex ladder.
 
 ## Confidentiality
 

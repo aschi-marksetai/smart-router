@@ -5,6 +5,7 @@ import {
   groupThreads,
   hasPendingSpawns,
   parseThread,
+  poolBalance,
   phaseHeader,
   resolveSpawnCalls,
   runFooter,
@@ -192,7 +193,19 @@ test(
           JSON.stringify({
             ...THREAD,
             cwd: "/project",
-            route: { pick: "codex:gpt-6.1-sol@high" },
+            route: {
+              pick: "codex:gpt-6.1-sol@high",
+              version: 2,
+              kind: "fallback",
+              reason: "Quota reserve",
+              warnings: ["Limited headroom"],
+              tiltChanged: true,
+              lowConfidence: true,
+            },
+            escalated: true,
+            retryOf: "abc123",
+            retriedBy: ["fedcba"],
+            rating: { value: 1, note: "Useful", at: "2026-01-01T12:00:00Z" },
             usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.25 },
             lastAction: "Finished",
           }),
@@ -231,6 +244,23 @@ test(
       expect((await ui.find({ type: "Text", text: /Cost:/ }))?.text).toBe(
         "Cost: $0.2500",
       );
+      for (const text of [
+        /Kind: fallback/,
+        /Reason: Quota reserve/,
+        /Warning: Limited headroom/,
+        /Tilt changed/,
+        /Low confidence/,
+        /Escalated/,
+        /Rating: 1.*Useful/,
+      ]) {
+        expect(await ui.find({ type: "Text", text })).toBeDefined();
+      }
+      expect(
+        await ui.find({ type: "Button", key: "retry-abc123" }),
+      ).toBeDefined();
+      expect(
+        await ui.find({ type: "Button", key: "retry-fedcba" }),
+      ).toBeDefined();
       await ui.press({ key: "back" });
       expect(await ui.find({ type: "Button", key: "123abc" })).toBeDefined();
       await $.command.run(command(THREAD.handle));
@@ -277,6 +307,13 @@ test(
     on("process.run", (_, event) => {
       const command = event.argv[1] ?? "";
       commands.push(command);
+      if (command === "quota")
+        return output(
+          JSON.stringify({
+            claude: { weeklyUsedPercent: 53, paceGap: 17 },
+            codex: { weeklyUsedPercent: 1, paceGap: 3 },
+          }),
+        );
       if (command === "sessions")
         return output(JSON.stringify([{ ...THREAD, status }]));
       if (command === "status")
@@ -291,11 +328,18 @@ test(
     await clock.advance(6000);
     expect(commands).toEqual([]);
     await $.command.run(command(THREAD.handle));
-    expect(commands).toEqual(["sessions", "status", "logs"]);
+    expect(commands).toEqual(["quota", "sessions", "status", "logs"]);
     await clock.advance(2999);
-    expect(commands).toHaveLength(3);
+    expect(commands).toHaveLength(4);
     await clock.advance(1);
-    expect(commands).toEqual(["sessions", "status", "logs", "status", "logs"]);
+    expect(commands).toEqual([
+      "quota",
+      "sessions",
+      "status",
+      "logs",
+      "status",
+      "logs",
+    ]);
     await clock.advance(2000);
     expect(commands.filter((command) => command === "sessions")).toHaveLength(
       2,
@@ -314,6 +358,12 @@ test(
     expect(
       await ui.find({ type: "Button", key: "all", text: "[All]" }),
     ).toBeDefined();
+    expect(
+      await ui.find({ type: "Text", text: /Claude 53%.*Codex 1%/ }),
+    ).toBeDefined();
+    expect(commands.filter((item) => item === "quota")).toHaveLength(1);
+    await clock.advance(300000);
+    expect(commands.filter((item) => item === "quota")).toHaveLength(2);
     await clock.advance(5000);
     expect(commands.length).toBeGreaterThan(count);
     await ui.unmount();
@@ -839,4 +889,15 @@ test("rows expose T3 warnings", () => {
     warning: "waiting for an answer in T3",
   });
   expect(threadRow(thread, 0).preview).toContain("waiting for an answer in T3");
+});
+
+test("pool balance validates CLI numbers and shows reserve or deficit", () => {
+  expect(
+    poolBalance({
+      claude: { weeklyUsedPercent: 53, paceGap: 17 },
+      codex: { weeklyUsedPercent: 1, paceGap: -3 },
+    }),
+  ).toBe("Claude 53% (+17 reserve) · Codex 1% (-3 reserve)");
+  expect(() => poolBalance({ claude: {} })).toThrow();
+  expect(() => poolBalance(null)).toThrow();
 });

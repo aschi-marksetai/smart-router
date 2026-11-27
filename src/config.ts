@@ -7,13 +7,29 @@ export const CONFIG_VERSION = 1;
 export const DEFAULT_EFFORT = "medium";
 export const DEFAULT_CLAUDE_PERMISSION_MODE = "bypassPermissions";
 export const DEFAULT_CODEX_SANDBOX = "workspace-write";
-export const DEFAULT_JEV_MODEL = "jev-latest";
+// Pinned so routing does not change when the jev-latest alias moves; bump deliberately.
+// The two providers name the same release differently, and OpenRouter rejects TypeSafe's id.
+export const DEFAULT_JEV_MODELS = {
+  typesafe: "jev-1.14.0",
+  openrouter: "typesafe/jev-1.14-20261014",
+} as const;
 export const TYPESAFE_API_KEY_ENV = "TYPESAFE_API_KEY";
 export const OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
 export const DEFAULT_CONFIDENTIAL_EXCLUDED_MODELS: string[] = [];
 export const DEFAULT_MAX_RUNNING = 6;
 export const DEFAULT_MAX_PER_CALLER = 3;
 export const DEFAULT_MAX_DEPTH = 2;
+export const DEFAULT_QUOTA_CUTOFF_PERCENT = 95;
+export const DEFAULT_PACE_TILT = 1;
+export const ROUTE_POLICY_JEV = "jev";
+export const ROUTE_POLICY_JUDGMENTS = "judgments";
+// Probability of each experiment's "on" arm; 0 or 1 pins it.
+export const DEFAULT_EXPERIMENTS = { repoContext: 0.5, outcomeFeedback: 0.5 };
+export const NATIVE_SUBAGENT_GUARD_BLOCK = "block";
+export const DEFAULT_NATIVE_SUBAGENT_ALLOW_TYPES = [
+  "claude-code-guide",
+  "statusline-setup",
+];
 export const DIRECT_MODEL_ALLOW = "allow";
 export const DIRECT_MODEL_DENY = "deny";
 export const DEFAULT_HARNESS_CAPABILITIES: Record<HarnessName, string> = {
@@ -22,6 +38,21 @@ export const DEFAULT_HARNESS_CAPABILITIES: Record<HarnessName, string> = {
   pi: "",
 };
 const CONFIG_FILE_NAME = "config.json";
+// Tier 1 is cheapest, 4 strongest. Matched against the model name; the first match wins.
+export const MODEL_TRAIT_DEFAULTS: {
+  match: string;
+  tier: number;
+  taste?: boolean;
+}[] = [
+  { match: "luna", tier: 1 },
+  { match: "haiku", tier: 1 },
+  { match: "terra", tier: 2 },
+  { match: "sonnet", tier: 2 },
+  { match: "sol", tier: 3 },
+  { match: "astra", tier: 4 },
+  { match: "opus", tier: 4, taste: true },
+  { match: "fable", tier: 4, taste: true },
+];
 
 export type HarnessName = "claude" | "codex" | "pi";
 export type HarnessConfig = {
@@ -39,9 +70,14 @@ export type ModelConfig = {
   harness: HarnessName;
   model: string;
   efforts: string[];
+  tier?: number;
+  taste?: boolean;
 };
 export type DirectModelRule =
   typeof DIRECT_MODEL_ALLOW | typeof DIRECT_MODEL_DENY;
+export type RoutePolicy =
+  typeof ROUTE_POLICY_JEV | typeof ROUTE_POLICY_JUDGMENTS;
+export type ExperimentName = keyof typeof DEFAULT_EXPERIMENTS;
 export type ConcurrencyRules = {
   maxRunning: number;
   maxPerCaller: number;
@@ -59,7 +95,14 @@ export type Config = {
   ignoredModels: string[];
   rules: {
     directModel?: DirectModelRule;
-    quotaCutoffPercent?: Partial<Record<HarnessName, number>>;
+    // A pool left out keeps its default; null turns that pool's cutoff off.
+    quotaCutoffPercent?: Partial<Record<HarnessName, number | null>>;
+    modelWindowCutoffPercent?: number;
+    paceTilt?: number;
+    policy?: RoutePolicy;
+    experiments?: Partial<Record<ExperimentName, number>>;
+    nativeSubagentGuard?: typeof NATIVE_SUBAGENT_GUARD_BLOCK | "warn" | "off";
+    nativeSubagentAllowTypes?: string[];
     confidentialExcludedModels?: string[];
     confidentialPathGlobs?: string[];
     confidentialRequireZdr?: boolean;
@@ -97,6 +140,16 @@ export const DEFAULT_CONFIG: Config = {
     confidentialExcludedModels: DEFAULT_CONFIDENTIAL_EXCLUDED_MODELS,
     confidentialRequireZdr: false,
     directModel: DIRECT_MODEL_ALLOW,
+    quotaCutoffPercent: {
+      claude: DEFAULT_QUOTA_CUTOFF_PERCENT,
+      codex: DEFAULT_QUOTA_CUTOFF_PERCENT,
+    },
+    modelWindowCutoffPercent: DEFAULT_QUOTA_CUTOFF_PERCENT,
+    paceTilt: DEFAULT_PACE_TILT,
+    policy: ROUTE_POLICY_JEV,
+    experiments: DEFAULT_EXPERIMENTS,
+    nativeSubagentGuard: NATIVE_SUBAGENT_GUARD_BLOCK,
+    nativeSubagentAllowTypes: DEFAULT_NATIVE_SUBAGENT_ALLOW_TYPES,
     concurrency: {
       maxRunning: DEFAULT_MAX_RUNNING,
       maxPerCaller: DEFAULT_MAX_PER_CALLER,
@@ -114,7 +167,7 @@ export const DEFAULT_CONFIG: Config = {
     allowFullAccess: true,
   },
   jev: {
-    model: DEFAULT_JEV_MODEL,
+    model: DEFAULT_JEV_MODELS.typesafe,
     provider: "typesafe",
     zdr: false,
   },
@@ -132,6 +185,18 @@ export function jevApiKeyEnv(config: Config): string {
   return TYPESAFE_API_KEY_ENV;
 }
 
+function withModelTraitDefaults(model: ModelConfig): ModelConfig {
+  const defaults = MODEL_TRAIT_DEFAULTS.find(({ match }) =>
+    model.model.includes(match),
+  );
+  if (!defaults) return model;
+  return {
+    ...model,
+    tier: model.tier ?? defaults.tier,
+    ...(model.taste === undefined && defaults.taste ? { taste: true } : {}),
+  };
+}
+
 export async function loadConfig(): Promise<Config> {
   try {
     const saved = JSON.parse(await readFile(configPath(), "utf8"));
@@ -147,7 +212,9 @@ export async function loadConfig(): Promise<Config> {
       confidentialExcludedModels,
     };
     delete rules.confidentialExcludedProviders;
-    const jev = { ...DEFAULT_CONFIG.jev, ...saved.jev };
+    const jev: Config["jev"] = { ...DEFAULT_CONFIG.jev, ...saved.jev };
+    if (saved.jev?.model === undefined)
+      jev.model = DEFAULT_JEV_MODELS[jev.provider];
     if (
       jev.apiKeyEnv === TYPESAFE_API_KEY_ENV ||
       jev.apiKeyEnv === OPENROUTER_API_KEY_ENV
@@ -156,9 +223,20 @@ export async function loadConfig(): Promise<Config> {
     return {
       ...DEFAULT_CONFIG,
       ...saved,
+      models: (saved.models ?? DEFAULT_CONFIG.models).map(
+        withModelTraitDefaults,
+      ),
       rules: {
         ...DEFAULT_CONFIG.rules,
         ...rules,
+        quotaCutoffPercent: {
+          ...DEFAULT_CONFIG.rules.quotaCutoffPercent,
+          ...saved.rules?.quotaCutoffPercent,
+        },
+        experiments: {
+          ...DEFAULT_CONFIG.rules.experiments,
+          ...saved.rules?.experiments,
+        },
         concurrency: {
           ...DEFAULT_CONFIG.rules.concurrency,
           ...saved.rules?.concurrency,

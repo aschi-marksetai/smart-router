@@ -325,7 +325,11 @@ test.each([
     const launched = await cli(["route", ...args, "--launch"], overrides);
     expect(launched.exitCode).toBe(0);
     const { launch, ...decision } = launched.json;
-    expect(decision).toEqual(plain.json);
+    // Routing latency differs between the two runs; everything else must match.
+    expect(decision).toEqual({
+      ...plain.json,
+      inputs: { ...plain.json.inputs, routingLatencyMs: expect.any(Number) },
+    });
     expect(plain.json).not.toHaveProperty("launch");
     expect(launch).toMatchObject({
       harness,

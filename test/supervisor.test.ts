@@ -1,3 +1,5 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
+const previousTestState = process.env.SMART_ROUTER_STATE_DIR;
 import { afterEach, expect, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
 import * as fileSystem from "node:fs/promises";
@@ -44,7 +46,7 @@ for await (const line of console) {
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  delete process.env[STATE_DIRECTORY_ENV];
+  restoreEnvironmentVariable(STATE_DIRECTORY_ENV, previousTestState);
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -242,7 +244,6 @@ test("confined supervisor scrubs browser environment again before launching Clau
       forward: "0",
     });
   } finally {
-    if (previous === undefined) delete process.env.CLAUDE_CODE_ENABLE_CFC;
-    else process.env.CLAUDE_CODE_ENABLE_CFC = previous;
+    restoreEnvironmentVariable("CLAUDE_CODE_ENABLE_CFC", previous);
   }
 });

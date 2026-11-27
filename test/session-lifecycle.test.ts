@@ -1,3 +1,5 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
+const previousTestState = process.env.SMART_ROUTER_STATE_DIR;
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   mkdir,
@@ -41,7 +43,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   for (const session of await listSessions()) await stopSession(session);
-  delete process.env.SMART_ROUTER_STATE_DIR;
+  restoreEnvironmentVariable("SMART_ROUTER_STATE_DIR", previousTestState);
   await rm(directory, { recursive: true, force: true });
 });
 

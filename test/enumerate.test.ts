@@ -1,3 +1,4 @@
+import "./environment.ts";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

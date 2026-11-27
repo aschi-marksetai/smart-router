@@ -1,3 +1,4 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -53,9 +54,7 @@ test("GPG signing note respects effective Git config and sandbox", async () => {
     ]);
     expect(codexGpgSigningNote(repository, "workspace-write")).toBe("");
   } finally {
-    if (originalGlobalConfig === undefined)
-      delete process.env.GIT_CONFIG_GLOBAL;
-    else process.env.GIT_CONFIG_GLOBAL = originalGlobalConfig;
+    restoreEnvironmentVariable("GIT_CONFIG_GLOBAL", originalGlobalConfig);
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -128,8 +127,7 @@ test("merges Git metadata roots on spawn and resume only for workspace-write Git
       }
     }
   } finally {
-    if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
-    else process.env.CODEX_HOME = originalCodexHome;
+    restoreEnvironmentVariable("CODEX_HOME", originalCodexHome);
     await rm(directory, { recursive: true, force: true });
   }
 });

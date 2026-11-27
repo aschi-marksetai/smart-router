@@ -1,3 +1,4 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,11 +26,8 @@ beforeEach(async () => {
 afterEach(async () => {
   delete process.env[TEST_ANTHROPIC_KEY];
   delete process.env[TEST_CODEX_KEY];
-  if (previousClaudeDirectory === undefined)
-    delete process.env.CLAUDE_CONFIG_DIR;
-  else process.env.CLAUDE_CONFIG_DIR = previousClaudeDirectory;
-  if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
-  else process.env.CODEX_HOME = previousCodexHome;
+  restoreEnvironmentVariable("CLAUDE_CONFIG_DIR", previousClaudeDirectory);
+  restoreEnvironmentVariable("CODEX_HOME", previousCodexHome);
   await rm(directory, { recursive: true });
 });
 
@@ -109,8 +107,7 @@ test("treats a Claude setup-token in the environment as a subscription login", a
         .authed,
     ).toBe(true);
   } finally {
-    if (previousToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-    else process.env.CLAUDE_CODE_OAUTH_TOKEN = previousToken;
+    restoreEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN", previousToken);
   }
 });
 
@@ -243,15 +240,13 @@ for (const provider of ["openrouter", "typesafe"] as const) {
     };
     try {
       for (const key of [undefined, "", "secret-jev-test-key"]) {
-        if (key === undefined) delete process.env[keyEnv];
-        else process.env[keyEnv] = key;
+        restoreEnvironmentVariable(keyEnv, key);
         const result = await doctor(config, { enumerate: async () => [] });
         expect(result.jev).toEqual({ provider, keyEnv, keySet: Boolean(key) });
         expect(JSON.stringify(result)).not.toContain("secret-jev-test-key");
       }
     } finally {
-      if (previousKey === undefined) delete process.env[keyEnv];
-      else process.env[keyEnv] = previousKey;
+      restoreEnvironmentVariable(keyEnv, previousKey);
     }
   });
 }

@@ -1,3 +1,4 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile, appendFile } from "node:fs/promises";
 import * as fileSystem from "node:fs/promises";
@@ -60,8 +61,7 @@ beforeEach(async () => {
   });
 });
 afterEach(async () => {
-  if (oldState === undefined) delete process.env.SMART_ROUTER_STATE_DIR;
-  else process.env.SMART_ROUTER_STATE_DIR = oldState;
+  restoreEnvironmentVariable("SMART_ROUTER_STATE_DIR", oldState);
   await rm(directory, { recursive: true, force: true });
 });
 function wake(overrides: Partial<Wake> = {}): Wake {

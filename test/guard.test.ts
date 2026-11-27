@@ -1,3 +1,4 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,8 +19,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  if (previousState === undefined) delete process.env[STATE_DIRECTORY_ENV];
-  else process.env[STATE_DIRECTORY_ENV] = previousState;
+  restoreEnvironmentVariable(STATE_DIRECTORY_ENV, previousState);
   await rm(directory, { recursive: true, force: true });
 });
 

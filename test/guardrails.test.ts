@@ -1,3 +1,5 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
+const previousTestConfig = process.env.SMART_ROUTER_CONFIG_DIR;
 import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,7 +32,7 @@ test("returns matching harness and model guardrails", () => {
 
 let directory = "";
 afterEach(async () => {
-  delete process.env.SMART_ROUTER_CONFIG_DIR;
+  restoreEnvironmentVariable("SMART_ROUTER_CONFIG_DIR", previousTestConfig);
   if (directory) await rm(directory, { recursive: true });
 });
 

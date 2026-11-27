@@ -1,3 +1,4 @@
+import { ingestT3Usage } from "./t3-usage.ts";
 import { resetPendingWake } from "./wakes.ts";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
@@ -186,7 +187,13 @@ export async function attachT3Session(
   if (session.runner !== "t3" || session.t3ThreadId)
     throw new Error("session is not an unattached T3 launch");
   const view = await showThread(threadId, 0);
-  const attached = { ...session, t3ThreadId: threadId, ...t3State(view) };
+  const attached = {
+    ...session,
+    t3ThreadId: threadId,
+    t3UpdatedAt: view.updatedAt,
+    t3LatestRunId: view.latestRunId,
+    ...t3State(view),
+  };
   // delegate_task takes the model from the caller, so the thread may not run the planned pick.
   if (view.model && view.model !== session.model && attached.route)
     attached.route = {
@@ -197,6 +204,7 @@ export async function attachT3Session(
         `T3 thread runs ${view.model}, not the planned ${session.model}`,
       ],
     };
+  await ingestT3Usage(attached);
   if (!(await saveT3Session(attached, session)))
     throw new Error("session changed while attaching; retry");
   return attached;
@@ -289,6 +297,7 @@ export async function refreshT3Session(session: Session): Promise<boolean> {
   } catch (error) {
     noteError(next, error);
   }
+  await ingestT3Usage(next);
   await persistView(next, session);
   return true;
 }
@@ -344,6 +353,7 @@ export async function t3Result(session: Session): Promise<Session> {
   } catch (error) {
     noteError(next, error);
   }
+  await ingestT3Usage(next);
   await persistView(next, session);
   return session;
 }

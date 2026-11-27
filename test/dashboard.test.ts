@@ -1,3 +1,4 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -61,10 +62,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await server.stop(true);
-  if (previousState === undefined) delete process.env.SMART_ROUTER_STATE_DIR;
-  else process.env.SMART_ROUTER_STATE_DIR = previousState;
-  if (previousOwner === undefined) delete process.env.SMART_ROUTER_OWNER;
-  else process.env.SMART_ROUTER_OWNER = previousOwner;
+  restoreEnvironmentVariable("SMART_ROUTER_STATE_DIR", previousState);
+  restoreEnvironmentVariable("SMART_ROUTER_OWNER", previousOwner);
   await rm(directory, { recursive: true, force: true });
 });
 

@@ -169,6 +169,7 @@ export function parseThread(value: unknown): Thread {
     inputTokens: optionalNumber(usage.inputTokens),
     outputTokens: optionalNumber(usage.outputTokens),
     costUsd: optionalNumber(usage.costUsd),
+    costSource: optionalString(usage.costSource),
     lastAction: optionalString(record.lastAction),
     error: optionalString(record.error),
     result: optionalString(
@@ -934,8 +935,13 @@ export const register: Register = (on, _options) => {
                 {record.outputTokens ?? 0} out
               </Text>
             )}
-            {record.costUsd !== undefined && (
-              <Text>Cost: ${record.costUsd.toFixed(4)}</Text>
+            {["done", "failed", "stopped"].includes(record.status) && (
+              <Text>
+                Cost:{" "}
+                {record.costUsd === undefined
+                  ? "unknown"
+                  : `$${record.costUsd.toFixed(4)} (${record.costSource === "listPrice" ? "list price" : "harness-reported"})`}
+              </Text>
             )}
             {(record.warning || record.error || record.lastAction) && (
               <Text color={record.error ? "error" : undefined} wrap="wrap">

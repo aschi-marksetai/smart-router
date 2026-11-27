@@ -1,3 +1,4 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
 import { expect, test } from "bun:test";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -273,8 +274,7 @@ test("the shared quota cache serves a recent reading and refetches an old one", 
     expect((await read(ROUTE_QUOTA_MAX_AGE_MS)).ageMs).toBe(0);
     expect(fetches).toBe(3);
   } finally {
-    if (previousState === undefined) delete process.env.SMART_ROUTER_STATE_DIR;
-    else process.env.SMART_ROUTER_STATE_DIR = previousState;
+    restoreEnvironmentVariable("SMART_ROUTER_STATE_DIR", previousState);
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -323,8 +323,7 @@ test("the quota cache never stores an error or a partial reading, and ignores a 
       ),
     ).toEqual({ quota: { error: "quota disabled" }, ageMs: 0 });
   } finally {
-    if (previousState === undefined) delete process.env.SMART_ROUTER_STATE_DIR;
-    else process.env.SMART_ROUTER_STATE_DIR = previousState;
+    restoreEnvironmentVariable("SMART_ROUTER_STATE_DIR", previousState);
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -354,8 +353,7 @@ test("turning quota off takes effect at once, even with a fresh reading in the c
       }),
     ).toEqual({ quota: { error: "quota disabled" }, ageMs: 0 });
   } finally {
-    if (previousState === undefined) delete process.env.SMART_ROUTER_STATE_DIR;
-    else process.env.SMART_ROUTER_STATE_DIR = previousState;
+    restoreEnvironmentVariable("SMART_ROUTER_STATE_DIR", previousState);
     await rm(directory, { recursive: true, force: true });
   }
 });

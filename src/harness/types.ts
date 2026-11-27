@@ -23,10 +23,14 @@ export type HarnessOptions = {
 };
 
 export type Usage = {
+  costSource?: "harness" | "listPrice";
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number | null;
   cacheWriteTokens: number | null;
+  cacheWrite5mTokens?: number;
+  cacheWrite1hTokens?: number;
+  byModel?: Record<string, Usage>;
   costUsd: number | null;
 };
 
@@ -104,7 +108,16 @@ export function usageFrom(
     usage.cache_write_input_tokens ??
     usage.cache_creation_input_tokens ??
     usage.cacheWrite;
+  const cacheCreation = record(usage.cache_creation);
+  const cacheWrite5mTokens = cacheCreation?.ephemeral_5m_input_tokens;
+  const cacheWrite1hTokens = cacheCreation?.ephemeral_1h_input_tokens;
+  const split =
+    typeof cacheWrite5mTokens === "number" &&
+    typeof cacheWrite1hTokens === "number"
+      ? { cacheWrite5mTokens, cacheWrite1hTokens }
+      : {};
   return {
+    ...split,
     inputTokens,
     outputTokens,
     costUsd,

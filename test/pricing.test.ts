@@ -1,3 +1,4 @@
+import "./environment.ts";
 import { expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -130,4 +131,122 @@ test("the long-context tier prices every token at the over-200k rates where a mo
   expect(listCostUsd(flat, catalog, "longContext")).toBe(
     listCostUsd(flat, catalog),
   );
+});
+
+test("Claude cache durations and per-model totals retain correct base and upper prices", () => {
+  const split = {
+    ...usage,
+    cacheWrite5mTokens: 1_000_000,
+    cacheWrite1hTokens: 3_000_000,
+  };
+  const session = {
+    harness: "claude" as const,
+    model: "claude-fable-5-2",
+    usage: split,
+  };
+  expect(listCostUsd(session, catalog)).toBe(8 + 80 + 2 + 10 + 48);
+  const models = {
+    ...catalog,
+    anthropic: {
+      models: {
+        ...catalog.anthropic.models,
+        actual: {
+          cost: {
+            input: 2,
+            output: 10,
+            context_over_200k: { input: 4, output: 20 },
+          },
+        },
+      },
+    },
+  };
+  const total = {
+    ...split,
+    byModel: {
+      "claude-fable-5-2": split,
+      actual: {
+        ...usage,
+        inputTokens: 0,
+        outputTokens: 1_000_000,
+        cachedInputTokens: 0,
+        cacheWriteTokens: 0,
+      },
+    },
+  };
+  expect(
+    listCostUsd({ ...session, model: "planned", usage: total }, models),
+  ).toBe(148 + 10);
+  expect(listCostUsd({ ...session, usage: total }, models, "longContext")).toBe(
+    148 + 20,
+  );
+  expect(listCostUsd({ ...session, usage: total }, catalog)).toBeNull();
+  expect(
+    listCostUsd(
+      {
+        ...session,
+        usage: {
+          ...usage,
+          byModel: {
+            unknown: {
+              ...usage,
+              inputTokens: 0,
+              outputTokens: 0,
+              cachedInputTokens: 0,
+              cacheWriteTokens: 0,
+            },
+          },
+        },
+      },
+      catalog,
+    ),
+  ).toBe(0);
+});
+
+test("upper pricing uses the largest context tier when the legacy long-context field is absent", () => {
+  const session = { harness: "claude" as const, model: "haiku", usage };
+  const tier = {
+    tier: { type: "context", size: 100_000 },
+    input: 0.5,
+    output: 2.5,
+    cache_read: 0.05,
+    cache_write: 0.625,
+  };
+  const models = {
+    anthropic: {
+      models: {
+        haiku: {
+          cost: {
+            input: 0.1,
+            output: 0.5,
+            cache_read: 0.01,
+            cache_write: 0.125,
+            tiers: [
+              null,
+              { tier: { type: "other", size: 1_000_000 } },
+              { ...tier, tier: { type: "context", size: "invalid" } },
+              { ...tier, input: "invalid" },
+              tier,
+              { ...tier, tier: { type: "context", size: 10_000 } },
+            ],
+          },
+        },
+      },
+    },
+  };
+  expect(listCostUsd(session, models)).toBe(1.7);
+  expect(listCostUsd(session, models, "longContext")).toBe(8.5);
+  const legacy = {
+    ...models,
+    anthropic: {
+      models: {
+        haiku: {
+          cost: {
+            ...models.anthropic.models.haiku.cost,
+            context_over_200k: { ...tier, input: 1, output: 5 },
+          },
+        },
+      },
+    },
+  };
+  expect(listCostUsd(session, legacy, "longContext")).toBe(14);
 });

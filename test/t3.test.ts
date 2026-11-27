@@ -1,3 +1,4 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -102,8 +103,7 @@ afterEach(async () => {
     ["SMART_ROUTER_CONFIG_DIR", saved.config],
     ["SMART_ROUTER_T3_CLI", saved.cli],
   ]) {
-    if (value === undefined) delete process.env[name!];
-    else process.env[name!] = value;
+    restoreEnvironmentVariable(name!, value);
   }
   await rm(directory, { recursive: true, force: true });
 });

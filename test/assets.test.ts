@@ -1,3 +1,4 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
 import { expect, test } from "bun:test";
 import { lstatSync, readdirSync } from "node:fs";
 import {
@@ -74,8 +75,7 @@ test("install writes the skill for Claude Code and Codex and adds the Codex guar
       ["CLAUDE_CONFIG_DIR", previous.claude],
       ["CODEX_HOME", previous.codex],
     ] as const) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
+      restoreEnvironmentVariable(name, value);
     }
     await rm(directory, { recursive: true, force: true });
   }

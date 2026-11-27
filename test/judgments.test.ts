@@ -1,3 +1,4 @@
+import "./environment.ts";
 import { expect, test } from "bun:test";
 import { DEFAULT_CONFIG, type Config } from "../src/config.ts";
 import {

@@ -1,3 +1,5 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
+const previousTestState = process.env.SMART_ROUTER_STATE_DIR;
 import { afterEach, expect, test } from "bun:test";
 import {
   chmodSync,
@@ -22,9 +24,8 @@ const originalCodexHome = process.env.CODEX_HOME;
 afterEach(() => {
   for (const path of directories.splice(0))
     rmSync(path, { recursive: true, force: true });
-  delete process.env.SMART_ROUTER_STATE_DIR;
-  if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
-  else process.env.CODEX_HOME = originalCodexHome;
+  restoreEnvironmentVariable("SMART_ROUTER_STATE_DIR", previousTestState);
+  restoreEnvironmentVariable("CODEX_HOME", originalCodexHome);
 });
 
 function fixture() {

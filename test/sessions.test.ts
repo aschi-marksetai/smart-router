@@ -1,3 +1,6 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
+const previousTestState = process.env.SMART_ROUTER_STATE_DIR;
+const previousTestConfig = process.env.SMART_ROUTER_CONFIG_DIR;
 import { afterEach, expect, test } from "bun:test";
 import {
   chmod,
@@ -45,8 +48,8 @@ const TEST_MODEL = [
 ];
 
 afterEach(async () => {
-  delete process.env[STATE_DIRECTORY_ENV];
-  delete process.env[CONFIG_DIRECTORY_ENV];
+  restoreEnvironmentVariable(STATE_DIRECTORY_ENV, previousTestState);
+  restoreEnvironmentVariable(CONFIG_DIRECTORY_ENV, previousTestConfig);
   delete process.env[OWNER_ENVIRONMENT_VARIABLE];
   await Promise.all(
     temporaryDirectories

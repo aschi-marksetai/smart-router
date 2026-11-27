@@ -1,3 +1,5 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
+const previousTestEnvironment = { ...process.env };
 import { armWake } from "../src/wakes.ts";
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
@@ -218,10 +220,10 @@ afterEach(async () => {
   foregroundChildren.clear();
   await rm(directory, { recursive: true, force: true });
   // prettier-ignore
-  for (const name of ["SMART_ROUTER_CONFIG_DIR", "SMART_ROUTER_STATE_DIR", "CLAUDE_CONFIG_DIR", "SMART_ROUTER_OWNER", "SMART_ROUTER_DEPTH", "SMART_ROUTER_HANDLE", "SMART_ROUTER_ANCESTORS", "SMART_ROUTER_NO_UPDATE_CHECK"])
-    delete process.env[name];
-  if (PREVIOUS_CODEX_HOME === undefined) delete process.env.CODEX_HOME;
-  else process.env.CODEX_HOME = PREVIOUS_CODEX_HOME;
+  for (const name of ["SMART_ROUTER_CONFIG_DIR", "SMART_ROUTER_STATE_DIR", "CLAUDE_CONFIG_DIR", "SMART_ROUTER_OWNER", "SMART_ROUTER_DEPTH", "SMART_ROUTER_HANDLE", "SMART_ROUTER_ANCESTORS", "SMART_ROUTER_NO_UPDATE_CHECK"]) {
+    restoreEnvironmentVariable(name, previousTestEnvironment[name]);
+  }
+  restoreEnvironmentVariable("CODEX_HOME", PREVIOUS_CODEX_HOME);
 });
 
 afterAll(() => {
@@ -1511,7 +1513,7 @@ test("sessions --all writes complete JSON to a slow pipe reader", async () => {
   const sessionCount = 4_096;
   const pipeCapacityBytes = 128 * 1_024;
   const readerDelayMilliseconds = 1_000;
-  await Promise.all(
+  const writes = await Promise.allSettled(
     Array.from({ length: sessionCount }, (_, index) =>
       createSession({
         handle: index.toString(16).padStart(6, "0"),
@@ -1524,6 +1526,7 @@ test("sessions --all writes complete JSON to a slow pipe reader", async () => {
       }),
     ),
   );
+  expect(writes.every((write) => write.status === "fulfilled")).toBe(true);
   const child = Bun.spawn(
     [process.execPath, "src/cli.ts", "sessions", "--all"],
     {
@@ -1538,7 +1541,7 @@ test("sessions --all writes complete JSON to a slow pipe reader", async () => {
   expect(await child.exited).toBe(0);
   expect(JSON.parse(stdout)).toHaveLength(sessionCount);
   expect(Buffer.byteLength(stdout)).toBeGreaterThan(pipeCapacityBytes);
-});
+}, 30_000);
 
 test("quota and update return JSON with success and refusal codes", async () => {
   const quota = await cli(["quota"]);
@@ -1975,7 +1978,7 @@ test("dashboard reuses an occupied dashboard port without stopping its server", 
         "--port",
         String(server.port),
       ],
-      { stdout: "pipe", stderr: "pipe" },
+      { env: process.env, stdout: "pipe", stderr: "pipe" },
     );
     expect(await child.exited).toBe(0);
     expect(JSON.parse(await new Response(child.stdout).text())).toEqual({
@@ -3435,7 +3438,9 @@ test("stats reports balance, pick sources, outcomes and list cost, as text, JSON
   });
   expect(json.json).toMatchObject({ costUsd: 0.04, costSource: "harness" });
   expect(json.json.pools.codex.costSource).toBe("none");
-  expect(json.json.spendShare.claude.smartRouterCostUsd).toBe(0.04);
+  expect(json.json.spendShare.claude.smartRouterCostUsd).toBe(
+    claudeRunCost * 2,
+  );
   expect(json.json.spendShare).not.toHaveProperty("codex");
   const features = Object.fromEntries(
     json.json.features.map((feature: { name: string }) => [
@@ -3553,6 +3558,21 @@ test("stats reports balance, pick sources, outcomes and list cost, as text, JSON
     sessions: 3,
     pools: { claude: { weeklyUsedPercent: null } },
   });
+  const running = await createSession({
+    harness: "claude",
+    model: "opus",
+    effort: "high",
+    cwd: directory,
+    prompt: "read only",
+    status: "running",
+    pid: DETACHED_PID,
+  });
+  const beforeStats = await stat(sessionPath(running.handle));
+  await cli(["stats", "--json"], statsDeps);
+  expect((await loadSession(running.handle)).status).toBe("running");
+  expect((await stat(sessionPath(running.handle))).mtimeMs).toBe(
+    beforeStats.mtimeMs,
+  );
 });
 
 test("guard subagent decides, logs, and prints each harness's hook output", async () => {

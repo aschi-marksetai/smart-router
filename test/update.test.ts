@@ -1,3 +1,5 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
+const previousTestState = process.env.SMART_ROUTER_STATE_DIR;
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -12,7 +14,7 @@ import {
 const state = join(process.cwd(), ".tmp-update-test");
 afterEach(async () => {
   await rm(state, { recursive: true, force: true });
-  delete process.env.SMART_ROUTER_STATE_DIR;
+  restoreEnvironmentVariable("SMART_ROUTER_STATE_DIR", previousTestState);
 });
 
 test("compares semantic versions", () => {

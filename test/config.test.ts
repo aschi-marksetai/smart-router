@@ -1,3 +1,5 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
+const previousTestConfig = process.env.SMART_ROUTER_CONFIG_DIR;
 import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +15,7 @@ const temporaryDirectories: string[] = [];
 const CONFIG_DIRECTORY_ENV = "SMART_ROUTER_CONFIG_DIR";
 
 afterEach(async () => {
-  delete process.env[CONFIG_DIRECTORY_ENV];
+  restoreEnvironmentVariable(CONFIG_DIRECTORY_ENV, previousTestConfig);
   await Promise.all(
     temporaryDirectories
       .splice(0)

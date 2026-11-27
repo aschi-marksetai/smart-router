@@ -99,7 +99,7 @@ A retry is never less restricted than its original. It inherits the original's c
 - a warning when one model takes 90% or more of at least 10 routed picks;
 - smart-router's share of all Claude and Codex list spend CodexBar measured, which exposes spend that bypassed it.
 
-A cost is harness-reported or list price, and each row is labelled with its source (see below).
+A cost is harness-reported or list price, and each row is labelled with its source (see below). `stats` reads saved records without sweeping or refreshing sessions. Backfill older finished T3 records first with `status <handle>` or `wait <handle>`; these commands refresh the named handles.
 
 `--window current` is the weekly quota window. Pools reset on different days, so it starts at the earliest pool's current start and covers every pool's window; `previous` is the 7 days before that. Without either flag the report covers the last 7 days.
 
@@ -107,7 +107,7 @@ A session's outcome is derived when read, never stored: its status, whether it w
 
 Each session's cost is what the harness reported when it reports one (Claude Code does; Codex does not), and otherwise its list cost: token usage at list prices from CodexBar's models.dev cache (`~/Library/Caches/codexbar/model-pricing/models-dev-v1.json`), including cache-read and cache-write rates. Every row says which it is: harness-reported, list price, both, or no cost. No price is built in: without that file, or for a model it does not list, a session with no harness cost is counted as having no cost.
 
-List cost has two known gaps. A session stores token totals, not each request's context size, so smart-router cannot tell which requests crossed a long-context price tier; and cache writes are priced at the catalog's single cache-write rate, which undercounts 1-hour cache writes. The report therefore also gives an upper bound: the total if every list-priced token had been billed at the over-200k rate. The export keeps the computed `listCostUsd` beside `costUsd` and `costSource`, so the replay tool compares models on one basis.
+A session stores token totals, not each request's context size, so smart-router cannot tell which requests crossed a long-context price tier. The report gives an upper bound by pricing every token at the catalog's highest context rate. Claude cache writes use separate five-minute and one-hour rates when the duration split is recorded; older records without the split use the catalog's single cache-write rate. The export keeps the computed `listCostUsd` beside `costUsd` and `costSource`, so the replay tool compares models on one basis.
 
 ## Experiments and the judgment policy
 

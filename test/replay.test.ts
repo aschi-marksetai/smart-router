@@ -1,3 +1,4 @@
+import "./environment.ts";
 import { expect, test } from "bun:test";
 import {
   formatReplay,

@@ -1350,7 +1350,6 @@ async function statsCommand(
     quota,
     deps.now(),
   );
-  await sweepSessions();
   const entries = statsEntries(
     await listSessions(),
     window,

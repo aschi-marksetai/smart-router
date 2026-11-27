@@ -1,3 +1,4 @@
+import "./environment.ts";
 import { expect, test } from "bun:test";
 import type { RouteRecord } from "../src/route.ts";
 import type { Session } from "../src/sessions.ts";
@@ -235,6 +236,9 @@ test("pin warnings are counted inside the window, with how many ran anyway", () 
   });
   expect(stats.spendShare).toEqual({
     claude: {
+      pricedSessions: 0,
+      sessions: 0,
+      lowerBound: false,
       smartRouterCostUsd: 0,
       totalListCostUsd: 0,
       sharePercent: null,
@@ -277,7 +281,7 @@ test("the text report and the export cover an empty window", () => {
   const stats = report([]);
   const text = formatStats(stats);
   expect(text).toContain(
-    "0 sessions, $0.00 cost (no cost; at most $0.00 if every list-priced request was billed at the over-200k-context rate), 0 without a cost",
+    "0 sessions, $0.00 cost (no cost; at most $0.00 if every list-priced request was billed at the highest context rate)",
   );
   expect(text).toContain("paceTilt fired: 0 sessions, failed n/a");
   expect(text).not.toContain("WARNING");
@@ -509,16 +513,18 @@ test("a harness-reported cost is preferred over the computed list cost, and each
       "codex:unknown": { costUsd: 0, costSource: "none", unpriced: 1 },
     },
     labels: { mixed: { costUsd: 42, costSource: "mixed" } },
-    spendShare: { claude: { smartRouterCostUsd: 30, sharePercent: 50 } },
+    spendShare: { claude: { smartRouterCostUsd: 24, sharePercent: 40 } },
   });
   const text = formatStats(stats);
   expect(text).toContain("claude:opus: 1 runs");
-  expect(text).toContain("$30.00 (harness-reported), 0 without a cost");
-  expect(text).toContain("$12.00 (list price)");
   expect(text).toContain(
-    "mixed: 2 runs, $42.00 (harness-reported and list price)",
+    "$30.00 (harness-reported; cost coverage 1/1 sessions)",
   );
-  expect(text).toContain("$0.00 (no cost), 1 without a cost");
+  expect(text).toContain("$12.00 (list price; cost coverage 1/1 sessions)");
+  expect(text).toContain(
+    "mixed: 2 runs, $42.00 (harness-reported and list price; cost coverage 2/2 sessions)",
+  );
+  expect(text).toContain("$0.00 (no cost; cost coverage 0/1 sessions)");
   const exported = exportLines(entries)
     .trim()
     .split("\n")
@@ -527,5 +533,74 @@ test("a harness-reported cost is preferred over the computed list cost, and each
     costUsd: 30,
     costSource: "harness",
     listCostUsd: 24,
+  });
+});
+
+test("unknown costs show coverage and list-spend lower bounds in text, JSON and export", () => {
+  const sessions = [
+    session({ harness: "claude", model: "opus" }),
+    session({
+      harness: "claude",
+      model: "opus",
+      usage: {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedInputTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 2,
+        costSource: "listPrice",
+      },
+    }),
+  ];
+  const entries = statsEntries(sessions, window, {
+    anthropic: {
+      models: {
+        opus: {
+          cost: {
+            input: 2,
+            output: 10,
+            context_over_200k: { input: 4, output: 10 },
+          },
+        },
+      },
+    },
+  });
+  const stats = statsReport({
+    entries,
+    window,
+    quota: null,
+    pinWarnings: [],
+    guardDecisions: [],
+    externalCostUsd: { claude: 20 },
+  });
+  expect(stats.costUpperBoundUsd).toBe(4);
+  expect(stats.pools.claude).toMatchObject({
+    runs: 2,
+    pricedSessions: 1,
+    costSource: "listPrice",
+  });
+  expect(stats.models["claude:opus"]).toMatchObject({
+    runs: 2,
+    pricedSessions: 1,
+  });
+  expect(JSON.parse(JSON.stringify(stats)).spendShare.claude).toMatchObject({
+    pricedSessions: 1,
+    sessions: 2,
+    lowerBound: true,
+    smartRouterCostUsd: 2,
+    sharePercent: 10,
+  });
+  expect(formatStats(stats)).toContain("cost coverage 1/2 sessions");
+  expect(formatStats(stats)).toContain("(10%; lower bound)");
+  const exported = exportLines(entries)
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(exported[0]).toMatchObject({
+    costUsd: null,
+  });
+  expect(exported[1]).toMatchObject({
+    costUsd: 2,
+    listCostUsd: 2,
   });
 });

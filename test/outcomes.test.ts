@@ -1,3 +1,4 @@
+import "./environment.ts";
 import { expect, test } from "bun:test";
 import {
   RECENT_OUTCOMES_WINDOW_MS,

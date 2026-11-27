@@ -1,3 +1,4 @@
+import "./environment.ts";
 import { expect, test } from "bun:test";
 import { getAdapter } from "../src/harness/index.ts";
 import type { EventState } from "../src/events.ts";

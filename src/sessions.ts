@@ -96,6 +96,7 @@ export type Session = {
   t3BaselineRunCount?: number;
   t3UpdatedAt?: string;
   t3ResultKey?: string;
+  t3UsageKey?: string;
   warning?: string;
   needsInput?: boolean;
   harness: HarnessName;
@@ -346,6 +347,7 @@ export async function readSessionPrompt(handle: string): Promise<string> {
 }
 
 async function writeSession(session: Session): Promise<void> {
+  const destinationPath = sessionPath(session.handle);
   // Every terminal transition (done, failed, stopped, swept) saves here, so close an open turn once.
   const turn = session.turns?.at(-1);
   if (session.status !== SESSION_STATUS.running && turn?.endedAt === null) {
@@ -367,7 +369,6 @@ async function writeSession(session: Session): Promise<void> {
   }
   if (session.confined && session.status !== SESSION_STATUS.running)
     await rm(sessionMcpPath(session.handle), { force: true });
-  const destinationPath = sessionPath(session.handle);
   const temporaryPath = `${destinationPath}.${randomUUID()}`;
   try {
     await writeFile(temporaryPath, `${JSON.stringify(session, null, 2)}\n`);
@@ -500,6 +501,15 @@ export function addUsage(
       current.cacheWriteTokens,
       next.cacheWriteTokens,
     ),
+    ...(current.cacheWrite5mTokens !== undefined &&
+    next.cacheWrite5mTokens !== undefined
+      ? {
+          cacheWrite5mTokens:
+            current.cacheWrite5mTokens + next.cacheWrite5mTokens,
+          cacheWrite1hTokens:
+            (current.cacheWrite1hTokens ?? 0) + (next.cacheWrite1hTokens ?? 0),
+        }
+      : {}),
     costUsd,
   };
 }

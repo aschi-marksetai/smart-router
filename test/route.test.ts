@@ -1,3 +1,4 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
 import { expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
@@ -156,8 +157,7 @@ test("reads route preferences and treats a missing file as empty", async () => {
     await mkdir(join(directory, "preferences.md"));
     await expect(preferences()).rejects.toThrow();
   } finally {
-    if (previous === undefined) delete process.env.SMART_ROUTER_CONFIG_DIR;
-    else process.env.SMART_ROUTER_CONFIG_DIR = previous;
+    restoreEnvironmentVariable("SMART_ROUTER_CONFIG_DIR", previous);
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -346,8 +346,7 @@ test("requires cached OpenRouter ZDR models for confidential routing", async () 
     );
   } finally {
     globalFetch.mockRestore();
-    if (previousState === undefined) delete process.env.SMART_ROUTER_STATE_DIR;
-    else process.env.SMART_ROUTER_STATE_DIR = previousState;
+    restoreEnvironmentVariable("SMART_ROUTER_STATE_DIR", previousState);
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -403,9 +402,10 @@ test("OpenRouter Jev ZDR client sends the direct endpoint request", async () => 
     expect(JSON.stringify(response)).toBe(JSON.stringify(JSON.parse(fixture)));
   } finally {
     delete process.env.OPENROUTER_API_KEY;
-    if (previousConfigDirectory === undefined)
-      delete process.env.SMART_ROUTER_CONFIG_DIR;
-    else process.env.SMART_ROUTER_CONFIG_DIR = previousConfigDirectory;
+    restoreEnvironmentVariable(
+      "SMART_ROUTER_CONFIG_DIR",
+      previousConfigDirectory,
+    );
     await rm(directory, { recursive: true });
   }
 });
@@ -726,8 +726,7 @@ for (const provider of ["openrouter", "typesafe"] as const) {
       const keyEnv =
         provider === "openrouter" ? "OPENROUTER_API_KEY" : "TYPESAFE_API_KEY";
       const previousKey = process.env[keyEnv];
-      if (key === undefined) delete process.env[keyEnv];
-      else process.env[keyEnv] = key;
+      restoreEnvironmentVariable(keyEnv, key);
       const fetchSpy = spyOn(globalThis, "fetch").mockRejectedValue(
         new Error("unexpected request"),
       );
@@ -757,8 +756,7 @@ for (const provider of ["openrouter", "typesafe"] as const) {
         expect(fetchSpy).not.toHaveBeenCalled();
       } finally {
         fetchSpy.mockRestore();
-        if (previousKey === undefined) delete process.env[keyEnv];
-        else process.env[keyEnv] = previousKey;
+        restoreEnvironmentVariable(keyEnv, previousKey);
       }
     });
   }
@@ -791,8 +789,7 @@ for (const provider of ["openrouter", "typesafe"] as const) {
       ).toBe("Bearer test-jev-key");
     } finally {
       fetchSpy.mockRestore();
-      if (previousKey === undefined) delete process.env[keyEnv];
-      else process.env[keyEnv] = previousKey;
+      restoreEnvironmentVariable(keyEnv, previousKey);
     }
   });
 }
@@ -1224,8 +1221,7 @@ test("a pin passes the confidential filters or fails with a clear error", async 
       inputs: { hint: "why", jevModel: null, preferencesSha256: null },
     });
   } finally {
-    if (previousState === undefined) delete process.env.SMART_ROUTER_STATE_DIR;
-    else process.env.SMART_ROUTER_STATE_DIR = previousState;
+    restoreEnvironmentVariable("SMART_ROUTER_STATE_DIR", previousState);
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -1617,8 +1613,7 @@ test("the default dependencies read recent outcomes from saved sessions", async 
       }).getQuota(),
     ).toEqual({ quota: { error: "quota disabled" }, ageMs: 0 });
   } finally {
-    if (previousState === undefined) delete process.env.SMART_ROUTER_STATE_DIR;
-    else process.env.SMART_ROUTER_STATE_DIR = previousState;
+    restoreEnvironmentVariable("SMART_ROUTER_STATE_DIR", previousState);
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -1671,8 +1666,7 @@ test("a route saves the preferences it was decided with, once per distinct text"
       [`${first}.md`, "dir.md"].sort(),
     );
   } finally {
-    if (previousState === undefined) delete process.env.SMART_ROUTER_STATE_DIR;
-    else process.env.SMART_ROUTER_STATE_DIR = previousState;
+    restoreEnvironmentVariable("SMART_ROUTER_STATE_DIR", previousState);
     await rm(directory, { recursive: true, force: true });
   }
 });

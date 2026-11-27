@@ -70,6 +70,7 @@ type CostSource = "harness" | "listPrice";
 // costSource says where a row's cost came from: "mixed" when it sums both kinds, "none" without any.
 type GroupStats = {
   runs: number;
+  pricedSessions: number;
   costUsd: number;
   costSource: CostSource | "mixed" | "none";
 };
@@ -139,6 +140,9 @@ export type StatsReport = {
   spendShare: Record<
     string,
     {
+      pricedSessions: number;
+      sessions: number;
+      lowerBound: boolean;
       smartRouterCostUsd: number;
       totalListCostUsd: number;
       sharePercent: number | null;
@@ -272,6 +276,7 @@ function costSource(entries: StatsEntry[]): GroupStats["costSource"] {
 function groupCost(entries: StatsEntry[]): GroupStats {
   return {
     runs: entries.length,
+    pricedSessions: count(entries, (entry) => entry.costUsd !== null),
     costUsd: totalCost(entries),
     costSource: costSource(entries),
   };
@@ -344,8 +349,14 @@ function sessionCost(
   if (typeof harnessCost === "number")
     return {
       costUsd: harnessCost,
-      costSource: "harness",
-      costUpperBoundUsd: harnessCost,
+      costSource: session.usage?.costSource ?? "harness",
+      costUpperBoundUsd:
+        session.usage?.costSource === "listPrice"
+          ? Math.max(
+              harnessCost,
+              listCostUsd(session, pricing, "longContext") ?? harnessCost,
+            )
+          : harnessCost,
       listCostUsd: listCost,
     };
   return {
@@ -503,11 +514,22 @@ export function statsReport(input: {
     spendShare: Object.fromEntries(
       Object.entries(input.externalCostUsd).flatMap(([pool, total]) => {
         if (typeof total !== "number") return [];
-        const smartRouterCostUsd = totalCost(byPool.get(pool) ?? []);
+        const group = byPool.get(pool) ?? [];
+        const pricedSessions = count(
+          group,
+          (entry) => entry.listCostUsd !== null,
+        );
+        const smartRouterCostUsd = group.reduce(
+          (sum, entry) => sum + (entry.listCostUsd ?? 0),
+          0,
+        );
         return [
           [
             pool,
             {
+              pricedSessions,
+              sessions: group.length,
+              lowerBound: pricedSessions < group.length,
               smartRouterCostUsd,
               totalListCostUsd: total,
               sharePercent: percent(smartRouterCostUsd, total),
@@ -570,8 +592,13 @@ function ratesLine({ sessions, ...rates }: OutcomeRates): string {
   return `${sessions} sessions, failed ${shown(rates.failedPercent)}, retried ${shown(rates.retriedPercent)}, rated bad ${shown(rates.ratedBadPercent)}, rerun ${shown(rates.rerunPercent)}`;
 }
 
-function costText({ costUsd, costSource: source }: GroupStats): string {
-  return `${dollars(costUsd)} (${COST_SOURCE_LABELS[source]})`;
+function costText({
+  costUsd,
+  costSource: source,
+  pricedSessions,
+  runs,
+}: GroupStats): string {
+  return `${dollars(costUsd)} (${COST_SOURCE_LABELS[source]}; cost coverage ${pricedSessions}/${runs} sessions)`;
 }
 
 function groupLines(title: string, groups: Record<string, GroupStats>) {
@@ -587,7 +614,7 @@ export function formatStats(report: StatsReport): string {
   const sources = report.pickSources;
   return [
     `smart-router stats: ${report.window.label} (${report.window.from} to ${report.window.to})`,
-    `${report.sessions} sessions, ${dollars(report.costUsd)} cost (${COST_SOURCE_LABELS[report.costSource]}; at most ${dollars(report.costUpperBoundUsd)} if every list-priced request was billed at the over-200k-context rate), ${report.unpricedSessions} without a cost`,
+    `${report.sessions} sessions, ${dollars(report.costUsd)} cost (${COST_SOURCE_LABELS[report.costSource]}; at most ${dollars(report.costUpperBoundUsd)} if every list-priced request was billed at the highest context rate), ${report.unpricedSessions} without a cost`,
     ...(report.collapse
       ? [
           `WARNING: ${report.collapse.model} took ${report.collapse.sharePercent}% of ${report.collapse.routed} routed picks; the router is not choosing`,
@@ -605,7 +632,7 @@ export function formatStats(report: StatsReport): string {
     "Models",
     ...Object.entries(report.models).map(
       ([model, stats]) =>
-        `  ${model}: ${stats.runs} runs, failed ${shown(stats.failedPercent)}, retried ${shown(stats.retriedPercent)}, escalated from ${shown(stats.escalatedFromPercent)}, ${stats.followUpSends} follow-up sends, rated ${stats.ratedGood} good / ${stats.ratedBad} bad, ${costText(stats)}, ${stats.unpriced} without a cost`,
+        `  ${model}: ${stats.runs} runs, failed ${shown(stats.failedPercent)}, retried ${shown(stats.retriedPercent)}, escalated from ${shown(stats.escalatedFromPercent)}, ${stats.followUpSends} follow-up sends, rated ${stats.ratedGood} good / ${stats.ratedBad} bad, ${costText(stats)}`,
     ),
     ...groupLines("Callers", report.callers),
     ...groupLines("Labels", report.labels),
@@ -623,7 +650,7 @@ export function formatStats(report: StatsReport): string {
     "Share of all measured list spend",
     ...Object.entries(report.spendShare).map(
       ([pool, share]) =>
-        `  ${pool}: ${dollars(share.smartRouterCostUsd)} of ${dollars(share.totalListCostUsd)} (${shown(share.sharePercent)}) went through smart-router`,
+        `  ${pool}: ${dollars(share.smartRouterCostUsd)} of ${dollars(share.totalListCostUsd)} (${shown(share.sharePercent)}${share.lowerBound ? "; lower bound" : ""}) went through smart-router; list-cost coverage ${share.pricedSessions}/${share.sessions} sessions`,
     ),
     "",
   ].join("\n");

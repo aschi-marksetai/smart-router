@@ -24,6 +24,7 @@ export type Thread = {
   inputTokens?: number;
   outputTokens?: number;
   costUsd?: number;
+  costSource?: string;
   lastAction?: string;
   error?: string;
   result?: string;

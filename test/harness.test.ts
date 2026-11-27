@@ -1,3 +1,4 @@
+import { restoreEnvironmentVariable } from "./environment.ts";
 import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -65,8 +66,7 @@ test("uses preferred OpenClaw environment variables without secrets in Codex arg
     expect(codexMcpOverrides([configPath])).toContain('mcp_servers.openclaw.env_http_headers={"x-openclaw-cli-capture-key"="OTHER_CAPTURE_KEY"}');
   } finally {
     for (const [name, value] of Object.entries(originals)) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
+      restoreEnvironmentVariable(name, value);
     }
   }
 });
@@ -215,9 +215,7 @@ test("uses an isolated Chrome DevTools MCP config for browser commands", async (
       },
     });
   } finally {
-    if (originalDirectory === undefined)
-      delete process.env[environmentVariable];
-    else process.env[environmentVariable] = originalDirectory;
+    restoreEnvironmentVariable(environmentVariable, originalDirectory);
   }
 });
 
@@ -497,8 +495,7 @@ test("confined Claude disables browser injection, settings and slash commands on
     }
   } finally {
     names.forEach((name, index) => {
-      if (previous[index] === undefined) delete process.env[name];
-      else process.env[name] = previous[index];
+      restoreEnvironmentVariable(name, previous[index]);
     });
   }
 });

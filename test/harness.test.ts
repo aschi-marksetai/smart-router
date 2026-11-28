@@ -512,3 +512,22 @@ test("harnesses delimit option-looking prompts from child flags", () => {
     }
   }
 });
+
+// prettier-ignore
+test("detects structured provider refusals without matching task or tool text", () => {
+  const message = "This content was flagged for possible cybersecurity risk. Changed provider suffix.";
+  for (const event of [{ type: "error", message }, { type: "turn.failed", error: { message } }]) {
+    try { codex.parseSpawnOutput(JSON.stringify(event)); throw new Error("expected refusal"); }
+    catch (error) { expect(error).toMatchObject({ failureKind: "provider_refusal" }); }
+  }
+  for (const subtype of ["success", "error_during_execution"]) {
+    try { claude.parseSpawnOutput(JSON.stringify({ type: "result", subtype, stop_reason: "refusal", result: "declined" })); throw new Error("expected refusal"); }
+    catch (error) { expect(error).toMatchObject({ failureKind: "provider_refusal" }); }
+  }
+  expect(claude.parseSpawnOutput(JSON.stringify({ type: "result", subtype: "success", stop_reason: "end_turn", result: message })).result).toBe(message);
+  expect(codex.parseSpawnOutput([
+    { type: "thread.started", thread_id: "thread" },
+    { type: "item.completed", item: { type: "agent_message", text: message } },
+    { type: "turn.completed" },
+  ].map((event) => JSON.stringify(event)).join("\n")).result).toBe(message);
+});

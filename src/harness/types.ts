@@ -45,6 +45,37 @@ export type ParsedOutput = {
   usage: Usage | null;
 };
 
+export class ProviderRefusalError extends Error {
+  readonly failureKind = "provider_refusal";
+}
+
+export function providerRefusal(
+  output: string,
+  harness: string,
+): ProviderRefusalError | undefined {
+  const events = parseJsonLines(output).map(record);
+  if (harness === "claude") {
+    const result = events.findLast((event) => event?.type === "result");
+    // Claude Code carries the final API stop reason on both success and error results.
+    // https://code.claude.com/docs/en/agent-sdk/agent-loop#handle-the-result
+    if (result?.stop_reason === "refusal")
+      return new ProviderRefusalError("Claude declined the request (refusal)");
+  }
+  if (harness === "codex") {
+    for (const event of events) {
+      let message: unknown;
+      if (event?.type === "error") message = event.message;
+      if (event?.type === "turn.failed") message = record(event.error)?.message;
+      if (
+        typeof message === "string" &&
+        /flagged for possible cybersecurity risk/i.test(message)
+      )
+        return new ProviderRefusalError(message);
+    }
+  }
+  return undefined;
+}
+
 export function turnUsage(
   usage: Usage | null,
   { harness, usage: previous }: { harness: string; usage?: Usage | null },

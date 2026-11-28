@@ -42,6 +42,9 @@ export function sessionSummary(session: Session, retriedBy: string[] = []) {
     handle,
     owner,
     status,
+    ...(session.failureKind
+      ? { failureKind: session.failureKind, next: session.next }
+      : {}),
     harness,
     model,
     effort,
@@ -106,6 +109,12 @@ export function createSessionEventStream(
   const state: EventState = { ...session, ts: new Date().toISOString(), tools };
   return {
     line(line: string, emitEvents = true) {
+      Object.assign(state, {
+        harness: session.harness,
+        model: session.model,
+        effort: session.effort,
+        route: session.route,
+      });
       state.ts = new Date().toISOString();
       for (const event of getAdapter(session.harness).translateEvents(
         line,
@@ -120,6 +129,7 @@ export function createSessionEventStream(
       }
     },
     finish(completed: Session, usage?: Session["usage"]) {
+      state.harness = completed.harness;
       state.ts = new Date().toISOString();
       const lastTurn = completed.turns?.at(-1);
       const resultUsage = lastTurn ? lastTurn.usage : (completed.usage ?? null);
@@ -134,6 +144,8 @@ export function createSessionEventStream(
               type: EVENT_TYPE.error,
               message: completed.error ?? completed.status,
               lastAction: completed.lastAction,
+              failureKind: completed.failureKind,
+              next: completed.next,
             };
       emit(normalized(state, payload));
     },

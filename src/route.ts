@@ -163,7 +163,7 @@ export type JevClient = {
     questions: ReturnType<typeof routeQuestions>;
   }): Promise<unknown>;
 };
-export type RouteKind = "routed" | "pinned" | "fallback";
+export type RouteKind = "routed" | "pinned" | "fallback" | "refusal_fallback";
 export type RouteInputs = {
   hint: string | null;
   quota: QuotaSnapshot | null;
@@ -785,7 +785,10 @@ export async function route(
   const configuredCandidates = expandCandidates(
     config,
     new Set(detection.candidates),
-  ).filter(({ harness }) => config.harnesses[harness]?.enabled);
+  ).filter(
+    ({ harness, id }) =>
+      config.harnesses[harness]?.enabled && !config.ignoredModels.includes(id),
+  );
   const confidentiality = await confidentialContext(
     config,
     cwd,

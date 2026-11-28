@@ -7,6 +7,7 @@ import { stateDir } from "../paths.ts";
 import { confinedAllowedTools } from "./mcp.ts";
 import {
   parseJsonLines,
+  providerRefusal,
   record,
   usageFrom,
   type HarnessOptions,
@@ -219,6 +220,8 @@ export function streamInterruptRequest(): string {
 }
 
 export function parseSpawnOutput(stdout: string): ParsedOutput {
+  const refusal = providerRefusal(stdout, "claude");
+  if (refusal) throw refusal;
   const output = record(
     parseJsonLines(stdout).findLast(isResultEvent) ?? JSON.parse(stdout),
   );

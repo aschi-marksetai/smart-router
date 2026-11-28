@@ -102,6 +102,7 @@ export type StatsReport = {
     routed: number;
     pinned: number;
     fallback: number;
+    refusalFallback: number;
     unrecorded: number;
     tiltChanged: number;
     lowConfidence: number;
@@ -456,6 +457,10 @@ export function statsReport(input: {
       routed: count(entries, ({ route }) => route?.kind === "routed"),
       pinned: count(entries, ({ route }) => route?.kind === "pinned"),
       fallback: count(entries, ({ route }) => route?.kind === "fallback"),
+      refusalFallback: count(
+        entries,
+        ({ route }) => route?.kind === "refusal_fallback",
+      ),
       unrecorded: count(entries, ({ route }) => route === null),
       tiltChanged: count(entries, ({ route }) => route?.tiltChanged === true),
       lowConfidence: count(
@@ -626,7 +631,7 @@ export function formatStats(report: StatsReport): string {
         `  ${pool}: ${shown(stats.sessionSharePercent)} of sessions, ${shown(stats.costSharePercent)} of cost (${costText(stats)}); weekly used ${shown(stats.weeklyUsedPercent)}, pace gap ${shown(stats.paceGap, " pts")}`,
     ),
     "Pick sources",
-    `  routed ${sources.routed}, pinned ${sources.pinned}, fallback ${sources.fallback}, unrecorded ${sources.unrecorded}`,
+    `  routed ${sources.routed}, pinned ${sources.pinned}, fallback ${sources.fallback}, refusal fallback ${sources.refusalFallback}, unrecorded ${sources.unrecorded}`,
     `  tilt changed ${sources.tiltChanged}, low confidence ${sources.lowConfidence}, limits relaxed ${sources.limitsRelaxed}, judgment policy relaxed ${sources.policyRelaxed}`,
     `  pin warnings issued ${sources.pinWarningsIssued}, ran anyway ${sources.pinWarningsRanAnyway}`,
     "Models",

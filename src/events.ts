@@ -38,7 +38,12 @@ type Payloads = {
   };
   usage: Usage & { cacheHitRatio?: number };
   result: { text: string; usage: Usage | null };
-  error: { message: string; lastAction?: string };
+  error: {
+    message: string;
+    lastAction?: string;
+    failureKind?: "provider_refusal";
+    next?: string;
+  };
 };
 type EventPayload = {
   [Type in keyof Payloads]: { type: Type } & Payloads[Type];

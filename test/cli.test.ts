@@ -146,6 +146,7 @@ async function cli(
   // Match process.exit: the first exit code is final.
   // prettier-ignore
   const deps: CliDeps = {
+    which: () => "/fake/harness",
     stdout: (text) => { stdout += text; }, stderr: (text) => { stderr += text; }, exit: (code) => { exitCode ??= code; },
     runForeground: async (argv, _cwd, env) => {
       runnerArguments.push(argv); runnerEnvironments.push(env ?? {}); return runnerOutput;
@@ -1809,7 +1810,7 @@ if (${JSON.stringify(harness)} === "codex") {
   },
 );
 
-test("detached claude spawns run under the supervisor", async () => {
+test("detached spawns run under the first-turn worker", async () => {
   let detachedArgv: string[] = [];
   // prettier-ignore
   const { json } = await cli(["spawn", "count", "--model", "claude:opus", "--detach", "--no-guardrails"], {
@@ -1819,13 +1820,13 @@ test("detached claude spawns run under the supervisor", async () => {
     },
   });
   expect(detachedArgv.slice(2, 6)).toEqual([
-    "__supervise",
+    "__spawn-turn",
     "--",
     json.handle,
     expect.stringContaining("count\n\nWork that must outlive"),
   ]);
-  expect(detachedArgv).toContain("--input-format");
-  expect((await loadSession(json.handle)).supervisorPid).toBe(DETACHED_PID);
+  expect(JSON.parse(detachedArgv.at(-1)!)).toMatchObject({ detach: true });
+  expect((await loadSession(json.handle)).pid).toBe(DETACHED_PID);
 });
 
 const eventTypes = (stdout: string) =>
@@ -3936,4 +3937,152 @@ test("a retry may narrow the saved permission mode but never broaden it", async 
       )
     ).exitCode,
   ).toBe(0);
+});
+
+const CODEX_REFUSAL = JSON.stringify({
+  type: "turn.failed",
+  error: {
+    message:
+      "This content was flagged for possible cybersecurity risk. Provider-specific suffix.",
+  },
+});
+const CLAUDE_REFUSAL = JSON.stringify({
+  type: "result",
+  subtype: "success",
+  stop_reason: "refusal",
+  result: "declined",
+  session_id: "claude-session",
+});
+
+// prettier-ignore
+test.each(["codex", "claude"] as const)("a refused %s first turn falls back once through routing with the unchanged prompt", async (harness) => {
+  config.rules.directModel = "deny";
+  config.rules.concurrency = { maxRunning: 1, maxPerCaller: 1, maxDepth: 2 };
+  await saveConfig(config);
+  const calls: { harness: string; prompt: string }[] = [];
+  const result = await cli(["spawn", "task; stop when done", "--model", `${harness}:auto`], {
+    runForeground: async (argv, _cwd, _env, session) => {
+      calls.push({ harness: session!.harness, prompt: session!.harness === "claude" ? argv[argv.indexOf("__supervise") + 3] : argv.at(-1)! });
+      if (calls.length === 1) return harness === "codex" ? CODEX_REFUSAL : CLAUDE_REFUSAL;
+      return session!.harness === "codex" ? CODEX_OUTPUT : CLAUDE_OUTPUT;
+    },
+  });
+  const other = harness === "codex" ? "claude" : "codex";
+  expectJson(result, { harness: other, route: { kind: "refusal_fallback", fellBack: true } });
+  expect(calls.map(({ harness }) => harness)).toEqual([harness, other]);
+  expect(calls[1].prompt).toBe(calls[0].prompt);
+  const session = await loadSession(result.json.handle);
+  expect(session.turns).toHaveLength(2);
+  expect(session.turns?.[0].failureKind).toBe("provider_refusal");
+  expect(session.failureKind).toBeUndefined();
+  const stats = await cli(["stats", "--json"]);
+  expect(stats.json.pickSources.refusalFallback).toBe(1);
+});
+
+// prettier-ignore
+test("the other family's refusal ends the session without another fallback", async () => {
+  let calls = 0;
+  const result = await cli(["spawn", "task", "--model", "codex:auto"], {
+    runForeground: async (_argv, _cwd, _env, session) => {
+      calls += 1;
+      return session!.harness === "codex" ? CODEX_REFUSAL : CLAUDE_REFUSAL;
+    },
+  });
+  expectJson(result, { failureKind: "provider_refusal" }, 1);
+  expect(calls).toBe(2);
+  expect(await loadSession(result.json.handle)).toMatchObject({ status: "failed", failureKind: "provider_refusal", route: { kind: "refusal_fallback" } });
+});
+
+// prettier-ignore
+test.each(["confidential", "ignored", "disabled"])("refusal fallback respects %s exclusions", async (restriction) => {
+  if (restriction === "confidential") config.rules.confidentialExcludedModels = ["claude:*"];
+  if (restriction === "ignored") config.ignoredModels = ["claude:opus"];
+  if (restriction === "disabled") config.harnesses.claude = { enabled: false };
+  await saveConfig(config);
+  let calls = 0;
+  const result = await cli(["spawn", "task", "--model", "codex:auto", "--confidential"], {
+    runForeground: async () => { calls += 1; return CODEX_REFUSAL; },
+  });
+  expectJson(result, { failureKind: "provider_refusal" }, 1);
+  expect(calls).toBe(1);
+  expect((await loadSession(result.json.handle)).confidential).toBe(true);
+});
+
+// prettier-ignore
+test.each(["send", "steer"])("a refused %s follow-up returns the exact respawn hint in send, status and wait", async (command) => {
+  runnerOutput = CODEX_OUTPUT;
+  const spawned = await cli(["spawn", "task", "--model", "codex:auto", "--confidential"]);
+  const handle = spawned.json.handle;
+  if (command === "steer") {
+    const session = await loadSession(handle);
+    session.status = SESSION_STATUS.running;
+    session.wrapperPid = undefined;
+    const child = Bun.spawn(["sleep", "30"]);
+    foregroundChildren.add({ ...session, pid: child.pid });
+    session.pid = child.pid;
+    await writeFile(session.logPath!, CODEX_OUTPUT.split("\n")[0]);
+    await saveSession(session);
+  }
+  runnerArguments = [];
+  runnerOutput = CODEX_REFUSAL;
+  const next = `smart-router retry ${handle} --model claude:auto`;
+  expectJson(await cli([command, handle, "follow up"]), { handle, failureKind: "provider_refusal", next }, 1);
+  expect(runnerArguments).toHaveLength(1);
+  expectJson(await cli(["status", handle]), { failureKind: "provider_refusal", next });
+  expectJson(await cli(["wait", handle, "--timeout", "0"]), { failureKind: "provider_refusal", next }, 1);
+  runnerOutput = CLAUDE_OUTPUT;
+  const retry = await cli(["retry", handle, "--model", "claude:auto"]);
+  expect(retry.exitCode).toBe(0);
+  expect((await loadSession(retry.json.handle)).confidential).toBe(true);
+});
+
+// prettier-ignore
+test("the detached first-turn worker reroutes a real nonzero Codex refusal", async () => {
+  const codexBinary = join(directory, "refusing-codex");
+  const claudeBinary = join(directory, "accepting-claude");
+  const prompts = join(directory, "prompts.jsonl");
+  await writeFile(codexBinary, `#!/usr/bin/env bun
+import { appendFileSync } from "node:fs";
+appendFileSync(${JSON.stringify(prompts)}, JSON.stringify(process.argv.at(-1)) + "\\n");
+console.log(${JSON.stringify(CODEX_REFUSAL)});
+process.exit(1);
+`);
+  await writeFile(claudeBinary, `#!/usr/bin/env bun
+import { appendFileSync } from "node:fs";
+for await (const line of console) {
+  if (!line) continue;
+  const event = JSON.parse(line);
+  appendFileSync(${JSON.stringify(prompts)}, JSON.stringify(event.message.content) + "\\n");
+  console.log(JSON.stringify({type:"user", isReplay:true, message:event.message}));
+  console.log(${JSON.stringify(CLAUDE_OUTPUT)}.replace('"session_id"', '"type":"result","session_id"'));
+}
+`);
+  await chmod(codexBinary, 0o755);
+  await chmod(claudeBinary, 0o755);
+  config.harnesses.codex = { enabled: true, binary: codexBinary };
+  config.harnesses.claude = { enabled: true, binary: claudeBinary };
+  await saveConfig(config);
+  let worker: string[] = [];
+  const spawned = await cli(["spawn", "task", "--model", "codex:auto", "--detach"], {
+    runDetached: async (argv, _cwd, logPath) => {
+      worker = [argv[2], ...argv.slice(4)];
+      return { pid: DETACHED_PID, errPath: logPath.replace(/\.log$/, ".err") };
+    },
+  });
+  expect(spawned.exitCode).toBe(0);
+  const pending = await loadSession(spawned.json.handle);
+  pending.pid = process.pid;
+  await saveSession(pending);
+  const completed = await cli(worker, {
+    runForeground: async (argv, cwd, env, session, exit, onLine) => {
+      const actual = argv.includes("__supervise") ? [argv[0], join(import.meta.dir, "../src/cli.ts"), ...argv.slice(2)] : argv;
+      return runForeground(actual, cwd, env, session, exit, onLine);
+    },
+  });
+  const session = await loadSession(spawned.json.handle);
+  expect({ exitCode: completed.exitCode, error: session.error, stderr: completed.stderr }).toMatchObject({ exitCode: 0 });
+  expect(session).toMatchObject({ status: "done", harness: "claude", route: { kind: "refusal_fallback" } });
+  const received = (await readFile(prompts, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  expect(received).toHaveLength(2);
+  expect(received[1]).toBe(received[0]);
 });

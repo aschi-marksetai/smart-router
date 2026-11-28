@@ -9,6 +9,7 @@ import { confinedCodexModelCatalog } from "./codex-confined.ts";
 import { confinedCodexMcp, codexMcpOverrides } from "./mcp.ts";
 import {
   parseJsonLines,
+  providerRefusal,
   record,
   usageFrom,
   type HarnessOptions,
@@ -202,6 +203,8 @@ function isInsideGitRepository(cwd: string): boolean {
 }
 
 function parseOutput(output: string, requireSessionId: boolean): ParsedOutput {
+  const refusal = providerRefusal(output, "codex");
+  if (refusal) throw refusal;
   let sessionId = "";
   let result = "";
   let usage = null;

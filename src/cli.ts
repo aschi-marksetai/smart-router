@@ -48,6 +48,7 @@ import {
 import { getAdapter } from "./harness/index.ts";
 import {
   record,
+  ProviderRefusalError,
   turnUsage,
   type HarnessOptions,
   type ParsedOutput,
@@ -111,6 +112,7 @@ import {
   SUPERVISE_COMMAND,
   superviseSession,
   supervisorCommand,
+  workerCommand,
 } from "./supervisor.ts";
 import {
   addUsage,
@@ -123,8 +125,10 @@ import {
   removeSession,
   saveSession,
   saveTerminalSession,
+  recordSessionFailure,
   startSessionTurn,
   finishSessionTurn,
+  finishSessionTurnFromLog,
   sessionLogPath,
   sessionMcpPath,
   sessionSocketPath,
@@ -140,6 +144,7 @@ import {
   type Session,
 } from "./sessions.ts";
 
+const SPAWN_TURN_COMMAND = "__spawn-turn";
 const ERROR_EXIT_CODE = 1;
 const CAPACITY_EXIT_CODE = 3;
 const SUCCESS_EXIT_CODE = 0;
@@ -330,6 +335,7 @@ export type CliDeps = {
   verifyConfinedCodex?: typeof verifyConfinedCodex;
   armWake?: typeof armWake;
   runDetached: typeof runDetached;
+  which?: (binary: string) => string | null;
   fetch: (url: string) => Promise<Response>;
   now: () => number;
   execPath: string;
@@ -500,6 +506,9 @@ async function reserveSpawnSession(
         await startSessionTurn(existingSession, "resumed");
         existingSession.status = SESSION_STATUS.running;
         existingSession.error = undefined;
+        existingSession.failureKind = undefined;
+        existingSession.next = undefined;
+        existingSession.hasFollowUp = true;
         existingSession.pid = undefined;
         existingSession.childExitedAt = undefined;
         existingSession.supervisorPid = undefined;
@@ -561,6 +570,9 @@ function errorFields(error: unknown): Record<string, unknown> {
   const details = record(error);
   return {
     error: error.message,
+    failureKind: details?.failureKind,
+    next: details?.next,
+    handle: details?.handle,
     lastMessage:
       typeof details?.lastMessage === "string" ? details.lastMessage : null,
     lastAction:
@@ -594,6 +606,7 @@ function parseForegroundOutput(
 }
 
 function storeFailureActivity(session: Session, error: unknown): void {
+  recordSessionFailure(session, error);
   const details = record(error);
   if (typeof details?.lastMessage === "string")
     session.lastMessage = details.lastMessage;
@@ -997,6 +1010,7 @@ async function spawnCommand(
   const sessionSettings = {
     ...launchSettings,
     confined: options.confined,
+    confidential: options.confidential,
     disallowedTools: options.disallowedTools,
     mcpConfig: options.mcpConfig,
     strictMcpConfig: options.strictMcpConfig,
@@ -1007,7 +1021,6 @@ async function spawnCommand(
   );
   printRouteNotes(routeResult, deps);
   printPassthroughNotes(selected.harness, options, deps);
-  const adapter = getAdapter(selected.harness);
   const harnessOptions = await harnessOptionsFor(
     selected,
     cwd,
@@ -1022,7 +1035,6 @@ async function spawnCommand(
     },
     deps,
   );
-  const supervised = selected.harness === "claude";
   const logPath = sessionLogPath(handle);
   const reservation = await reserveSpawnSession(
     {
@@ -1071,49 +1083,38 @@ async function spawnCommand(
       .join(","),
   };
   if (options.detach) {
-    const detachedLogPath = session.logPath ?? sessionLogPath(handle);
     try {
-      await prepareConfinedMcp(session, harnessOptions, deps);
-      const command = adapter.buildSpawn(spawnPrompt, {
-        ...harnessOptions,
-        streamInput: supervised,
+      const binary = harnessOptions.binary ?? selected.harness;
+      if (!(deps.which ?? Bun.which)(binary))
+        throw new Error(`Could not start: ${binary}`);
+      // The worker takes the same lock before loading, so registration cannot overwrite its child pid.
+      await withSessionsLock(async () => {
+        const detached = await deps.runDetached(
+          workerCommand(
+            SPAWN_TURN_COMMAND,
+            handle,
+            spawnPrompt,
+            JSON.stringify(options),
+          ),
+          cwd,
+          logPath,
+          environment,
+        );
+        session.pid = detached.pid;
+        session.processStartTime = processStartTime(detached.pid);
+        session.errPath = detached.errPath;
+        await saveSession(session);
       });
-      session.sessionId = command.sessionId;
-      await saveSession(session);
-      const detachedArgv = supervised
-        ? supervisorCommand(handle, spawnPrompt, command.argv)
-        : command.argv;
-      const detached = await deps.runDetached(
-        detachedArgv,
-        cwd,
-        detachedLogPath,
-        { ...environment, ...command.env },
-      );
-      session.pid = detached.pid;
-      session.processStartTime = processStartTime(detached.pid);
-      if (supervised) {
-        session.supervisorPid = detached.pid;
-        session.supervisorProcessStartTime = session.processStartTime;
-      }
-      session.errPath = detached.errPath;
-      await saveSession(session);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
       session.status = SESSION_STATUS.failed;
-      session.error = message;
+      session.error = error instanceof Error ? error.message : String(error);
       await saveTerminalSession(session, "owner-turn");
-      throw new Error(message);
+      throw error;
     }
     if (options.events)
       return logsCommand(handle, { follow: true, events: true }, deps);
     deps.stdout(
-      `${JSON.stringify({
-        handle,
-        ...selected,
-        sandbox,
-        route: routeResult,
-        logPath,
-      })}\n`,
+      `${JSON.stringify({ handle, ...selected, sandbox, route: routeResult, logPath })}\n`,
     );
     await printUpdateNotice(config, routeResult.availableModels, deps);
     deps.stderr("Spawn detached\n");
@@ -1121,42 +1122,18 @@ async function spawnCommand(
     return;
   }
   const stream = eventStream(session, deps);
-  let parsed: ReturnType<typeof adapter.parseSpawnOutput>;
+  let parsed: ParsedOutput;
   try {
-    await prepareConfinedMcp(session, harnessOptions, deps);
-    const command = adapter.buildSpawn(spawnPrompt, {
-      ...harnessOptions,
-      streamInput: supervised,
-    });
-    session.sessionId = command.sessionId;
-    await saveSession(session);
-    parsed = parseForegroundOutput(
-      await runSteerableForeground(
-        supervised
-          ? supervisorCommand(handle, spawnPrompt, command.argv)
-          : command.argv,
-        session,
-        harnessOptions,
-        deps,
-        { ...environment, ...command.env },
-        options.events ? stream.line : undefined,
-      ),
-      adapter.parseSpawnOutput,
+    parsed = await runSpawnTurn(
+      session,
+      spawnPrompt,
+      options,
+      config,
+      deps,
+      environment,
+      options.events ? stream.line : undefined,
     );
-    session.sessionId = parsed.sessionId || command.sessionId;
-    if (!session.sessionId)
-      throw new Error("Harness output did not contain a session id");
-    session.status = SESSION_STATUS.done;
-    session.result = parsed.result;
-    session.lastResult = parsed.result;
-    session.usage = parsed.usage;
-    finishSessionTurn(session, parsed.usage);
-    await saveTerminalSession(session);
   } catch (error) {
-    session.status = SESSION_STATUS.failed;
-    session.error = error instanceof Error ? error.message : String(error);
-    storeFailureActivity(session, error);
-    await saveTerminalSession(session, "owner-turn");
     if (options.events) return stream.finish(session);
     throw error;
   }
@@ -1164,13 +1141,21 @@ async function spawnCommand(
   deps.stdout(
     `${JSON.stringify({
       handle: session.handle,
-      ...selected,
-      sandbox,
-      route: routeResult,
+      harness: session.harness,
+      model: session.model,
+      effort: session.effort,
+      sandbox: session.usesNetworkAccess
+        ? `${session.sandbox}+network`
+        : session.sandbox,
+      route: session.route,
       resumeCommand: session.confined
         ? `smart-router send ${handle} "<msg>"`
-        : adapter
-            .buildResume(session.sessionId, '"<msg>"', harnessOptions)
+        : getAdapter(session.harness)
+            .buildResume(
+              session.sessionId ?? "",
+              '"<msg>"',
+              await harnessOptionsFor(session, cwd, config, options, deps),
+            )
             .argv.join(" "),
       ...resultOutput(parsed.result, resultLimit(options)),
       usage: parsed.usage,
@@ -1179,6 +1164,161 @@ async function spawnCommand(
   await printUpdateNotice(config, routeResult.availableModels, deps);
   deps.stderr("Spawn completed\n");
   deps.exit(SUCCESS_EXIT_CODE);
+}
+
+async function runSpawnTurn(
+  session: Session,
+  prompt: string,
+  options: SpawnOptions,
+  config: Config,
+  deps: CliDeps,
+  environment: NodeJS.ProcessEnv = process.env,
+  onLine?: (line: string) => void,
+): Promise<ParsedOutput> {
+  while (true) {
+    try {
+      const adapter = getAdapter(session.harness);
+      const harnessOptions = await harnessOptionsFor(
+        session,
+        session.cwd,
+        config,
+        options,
+        deps,
+      );
+      await prepareConfinedMcp(session, harnessOptions, deps);
+      const supervised = session.harness === "claude";
+      const command = adapter.buildSpawn(prompt, {
+        ...harnessOptions,
+        streamInput: supervised,
+      });
+      session.sessionId = command.sessionId;
+      await saveSession(session);
+      const parsed = parseForegroundOutput(
+        await runSteerableForeground(
+          supervised
+            ? supervisorCommand(session.handle, prompt, command.argv)
+            : command.argv,
+          session,
+          harnessOptions,
+          deps,
+          { ...environment, ...command.env },
+          onLine,
+        ),
+        adapter.parseSpawnOutput,
+      );
+      session.sessionId = parsed.sessionId || command.sessionId;
+      if (!session.sessionId)
+        throw new Error("Harness output did not contain a session id");
+      session.status = SESSION_STATUS.done;
+      session.result = parsed.result;
+      session.lastResult = parsed.result;
+      session.usage = addUsage(session.usage, parsed.usage);
+      finishSessionTurn(session, parsed.usage);
+      await saveTerminalSession(session);
+      return parsed;
+    } catch (error) {
+      const stored = await loadSession(session.handle);
+      recordSessionFailure(session, error);
+      session.hasFollowUp ||= stored.hasFollowUp;
+      const otherFamily = session.harness === "codex" ? "claude" : "codex";
+      const canFallback =
+        error instanceof ProviderRefusalError &&
+        session.harness !== "pi" &&
+        !session.hasFollowUp &&
+        session.turns?.length === 1 &&
+        session.route?.kind !== "refusal_fallback" &&
+        stored.status === SESSION_STATUS.running;
+      if (canFallback) {
+        try {
+          let confinedCodexAvailable = false;
+          if (options.confined && otherFamily === "codex") {
+            checkedConfinedCodex(config, deps, session.cwd);
+            confinedCodexAvailable = true;
+          }
+          const claudeOnly =
+            !options.confined &&
+            Boolean(
+              options.allowedTools !== undefined ||
+              options.disallowedTools?.length ||
+              options.tools !== undefined ||
+              options.permissionMode !== undefined,
+            );
+          const routed = await route(
+            await readSessionPrompt(session.handle),
+            {
+              ...options,
+              cwd: session.cwd,
+              dryRun: false,
+              harnessOnly: otherFamily,
+              claudeOnly,
+              confinedCodexAvailable,
+            },
+            deps.routeDeps(config),
+          );
+          if (!("pick" in routed))
+            throw new Error("Cannot spawn from a dry-run route");
+          const selected = parsePick(routed.pick);
+          const launch = await buildLaunch(
+            prompt,
+            selected,
+            options,
+            config,
+            routed,
+          );
+          // Rebuild the harness settings, but send exactly the prompt the refused attempt received.
+          await harnessOptionsFor(
+            { ...session, ...selected, ...launch.sessionSettings },
+            session.cwd,
+            config,
+            options,
+            deps,
+          );
+          await withSessionsLock(async () => {
+            const latest = await loadSession(session.handle);
+            if (latest.status !== SESSION_STATUS.running || latest.hasFollowUp)
+              throw new Error(
+                "session stopped or received a follow-up during fallback routing",
+              );
+            await finishSessionTurnFromLog(session);
+            await startSessionTurn(session, "routed");
+            session.failureKind = undefined;
+            session.next = undefined;
+            Object.assign(session, selected, launch.sessionSettings);
+            session.route = {
+              ...routed,
+              kind: "refusal_fallback",
+              fellBack: true,
+              reason: `provider refusal on ${stored.harness}:${stored.model}; ${routed.reason}`,
+            };
+            session.pid = undefined;
+            session.processStartTime = undefined;
+            session.supervisorPid = undefined;
+            session.supervisorProcessStartTime = undefined;
+            session.sessionId = undefined;
+            await saveSession(session);
+          });
+          if (session.route) printRouteNotes(session.route, deps);
+          continue;
+        } catch (fallbackError) {
+          deps.stderr(
+            `Refusal fallback unavailable: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}\n`,
+          );
+        }
+      }
+      session.status = SESSION_STATUS.failed;
+      session.error = error instanceof Error ? error.message : String(error);
+      storeFailureActivity(session, error);
+      await saveTerminalSession(session, "owner-turn");
+      throw Object.assign(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          handle: session.handle,
+          failureKind: session.failureKind,
+          next: session.next,
+        },
+      );
+    }
+  }
 }
 
 async function retryCommand(
@@ -1244,6 +1384,7 @@ function inheritedRestrictions(original: Session, options: SpawnOptions) {
     );
   return {
     confined: original.confined || options.confined,
+    confidential: original.confidential || options.confidential,
     disallowedTools: [
       ...new Set([
         ...(original.disallowedTools ?? []),
@@ -1546,6 +1687,11 @@ async function sendCommand(
     storeFailureActivity(session, error);
     await saveTerminalSession(session, "owner-turn");
     if (options.events) return stream.finish(session);
+    if (session.failureKind)
+      throw Object.assign(
+        error instanceof Error ? error : new Error(String(error)),
+        { handle, failureKind: session.failureKind, next: session.next },
+      );
     throw error;
   }
   if (options.browser && session.harness === "claude") session.browser = true;
@@ -1647,11 +1793,16 @@ async function runSteerableForeground(
       return {
         error: `session ${session.handle} is already being steered; retry shortly`,
       };
-    steering = interruptCodexSession(session, {
-      preserveTurn: session.confined,
-    }).then(
-      (threadId) => codex.buildResume(threadId, message, harnessOptions).argv,
-    );
+    session.hasFollowUp = true;
+    steering = updateSession(session.handle, (stored) => {
+      stored.hasFollowUp = true;
+    })
+      .then(() =>
+        interruptCodexSession(session, { preserveTurn: session.confined }),
+      )
+      .then(
+        (threadId) => codex.buildResume(threadId, message, harnessOptions).argv,
+      );
     try {
       await steering;
     } catch (error) {
@@ -1976,6 +2127,8 @@ async function waitCommand(
             return {
               handle,
               error: `session ${handle} was ${session.status}: ${session.error ?? session.status}`,
+              failureKind: session.failureKind,
+              next: session.next,
               lastMessage: session.lastMessage ?? null,
               lastAction: session.lastAction ?? null,
             };
@@ -2264,6 +2417,38 @@ export function buildProgram(deps: CliDeps = DEFAULT_DEPS): Command {
     .option("--interrupt")
     .action((handle, message, options) =>
       steerCommand(handle, message, options, deps),
+    );
+  program
+    .command(`${SPAWN_TURN_COMMAND} <handle> <prompt> <options>`, {
+      hidden: true,
+    })
+    .action(
+      async (handle: string, prompt: string, serializedOptions: string) => {
+        const session = await withSessionsLock(async () => {
+          const stored = await loadSession(handle);
+          if (stored.status !== SESSION_STATUS.running) return stored;
+          if (stored.pid !== process.pid || stored.wrapperPid)
+            throw new Error("first-turn worker does not own this session");
+          stored.wrapperPid = process.pid;
+          stored.wrapperProcessStartTime = processStartTime(process.pid);
+          await saveSession(stored);
+          return stored;
+        });
+        if (session.status !== SESSION_STATUS.running)
+          return deps.exit(ERROR_EXIT_CODE);
+        try {
+          await runSpawnTurn(
+            session,
+            prompt,
+            JSON.parse(serializedOptions),
+            await loadConfig(),
+            deps,
+          );
+          deps.exit(SUCCESS_EXIT_CODE);
+        } catch {
+          deps.exit(ERROR_EXIT_CODE);
+        }
+      },
     );
   program
     .command(`${SUPERVISE_COMMAND} <handle> <prompt> <argv...>`, {

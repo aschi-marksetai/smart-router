@@ -12,6 +12,7 @@ import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { SUPERVISE_COMMAND } from "./supervisor.ts";
+import { providerRefusal } from "./harness/types.ts";
 
 const IGNORE = "ignore";
 const STDERR_LINE_LIMIT = 20;
@@ -122,6 +123,8 @@ export async function runForeground(
     if (errFile !== undefined) closeSync(errFile);
   }
   if (exitCode !== 0) {
+    const refusal = session && providerRefusal(stdout, session.harness);
+    if (refusal) throw Object.assign(refusal, logActivity(stdout));
     const stdoutTail = lastLines(stdout);
     const stderrTail = lastLines(stderr);
     throw Object.assign(

@@ -16,6 +16,7 @@ import {
   sessionLogPath,
   sessionMcpPath,
   sessionSocketPath,
+  updateSession,
 } from "./sessions.ts";
 
 export const SUPERVISE_COMMAND = "__supervise";
@@ -36,18 +37,18 @@ export function supervisorCommand(
   prompt: string,
   claudeArgv: string[],
 ): string[] {
+  return workerCommand(SUPERVISE_COMMAND, handle, prompt, ...claudeArgv);
+}
+
+export function workerCommand(
+  command: string,
+  ...operands: string[]
+): string[] {
   const isCompiled = Bun.main.startsWith(COMPILED_ENTRY_PREFIX);
   const selfCommand = isCompiled
     ? [process.execPath]
     : [process.execPath, Bun.main];
-  return [
-    ...selfCommand,
-    SUPERVISE_COMMAND,
-    OPERANDS_SEPARATOR,
-    handle,
-    prompt,
-    ...claudeArgv,
-  ];
+  return [...selfCommand, command, OPERANDS_SEPARATOR, ...operands];
 }
 
 function parseSteerRequest(line: string): SteerRequest | undefined {
@@ -106,7 +107,11 @@ export async function superviseSession(
     claude.stdin.write(streamUserMessage(text));
     pendingMessages += 1;
   };
-  const steer = (request: SteerRequest): SteerReply => {
+  const steer = async (request: SteerRequest): Promise<SteerReply> => {
+    if (stdinClosed) return { error: notRunningError(handle) };
+    await updateSession(handle, (stored) => {
+      stored.hasFollowUp = true;
+    });
     if (stdinClosed) return { error: notRunningError(handle) };
     if (request.interrupt) claude.stdin.write(streamInterruptRequest());
     writeUserMessage(request.message);

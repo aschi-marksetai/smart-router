@@ -29,6 +29,7 @@ import {
   record,
   usageFrom,
   turnUsage,
+  ProviderRefusalError,
   type ParsedOutput,
   type Usage,
 } from "./harness/types.ts";
@@ -74,6 +75,7 @@ export type SessionStatus =
 
 export type SessionTurn = {
   kind: "routed" | "pinned" | "resumed";
+  failureKind?: Session["failureKind"];
   startedAt: string;
   endedAt: string | null;
   idleSeconds: number | null;
@@ -104,6 +106,7 @@ export type Session = {
   effort: string;
   browser?: boolean;
   confined?: boolean;
+  confidential?: boolean;
   disallowedTools?: string[];
   allowedTools?: string;
   mcpConfig?: string[];
@@ -134,6 +137,9 @@ export type Session = {
   result?: string;
   lastResult?: string;
   error?: string;
+  failureKind?: "provider_refusal";
+  next?: string;
+  hasFollowUp?: boolean;
   lastMessage?: string;
   lastAction?: string;
   usage?: Usage | null;
@@ -219,6 +225,7 @@ export async function createSession(
     effort: options.effort,
     browser: options.browser,
     confined: options.confined,
+    confidential: options.confidential,
     disallowedTools: options.disallowedTools,
     allowedTools: options.allowedTools,
     mcpConfig: options.mcpConfig,
@@ -247,6 +254,9 @@ export async function createSession(
     result: options.result,
     lastResult: options.lastResult ?? options.result,
     error: options.error,
+    failureKind: options.failureKind,
+    next: options.next,
+    hasFollowUp: options.hasFollowUp,
     lastMessage: options.lastMessage,
     lastAction: options.lastAction,
     usage: options.usage,
@@ -315,6 +325,7 @@ export async function saveSession(
       if (!replaceWakes) session.wakes = stored?.wakes ?? session.wakes;
       // rate annotates a session from another process; keep what it stored.
       session.rating = stored?.rating ?? session.rating;
+      session.hasFollowUp ||= stored?.hasFollowUp;
       await writeSession(session);
     },
     stat,
@@ -350,23 +361,8 @@ async function writeSession(session: Session): Promise<void> {
   const destinationPath = sessionPath(session.handle);
   // Every terminal transition (done, failed, stopped, swept) saves here, so close an open turn once.
   const turn = session.turns?.at(-1);
-  if (session.status !== SESSION_STATUS.running && turn?.endedAt === null) {
-    const output = await readTurnLog(session).catch(() => "");
-    let usage: Usage | null = null;
-    for (const value of parseJsonLines(output)) {
-      const event = record(value);
-      usage =
-        usageFrom(
-          event?.usage ?? record(event?.message)?.usage,
-          typeof event?.total_cost_usd === "number"
-            ? event.total_cost_usd
-            : null,
-        ) ?? usage;
-    }
-    usage = turnUsage(usage, session);
-    session.usage = addUsage(session.usage, usage);
-    finishSessionTurn(session, usage);
-  }
+  if (session.status !== SESSION_STATUS.running && turn?.endedAt === null)
+    await finishSessionTurnFromLog(session);
   if (session.confined && session.status !== SESSION_STATUS.running)
     await rm(sessionMcpPath(session.handle), { force: true });
   const temporaryPath = `${destinationPath}.${randomUUID()}`;
@@ -409,6 +405,24 @@ export function finishSessionTurn(session: Session, usage: Usage | null): void {
   if (!turn || turn.endedAt !== null) return;
   turn.endedAt = new Date().toISOString();
   turn.usage = usage;
+}
+
+export async function finishSessionTurnFromLog(
+  session: Session,
+): Promise<void> {
+  const output = await readTurnLog(session).catch(() => "");
+  let usage: Usage | null = null;
+  for (const value of parseJsonLines(output)) {
+    const event = record(value);
+    usage =
+      usageFrom(
+        event?.usage ?? record(event?.message)?.usage,
+        typeof event?.total_cost_usd === "number" ? event.total_cost_usd : null,
+      ) ?? usage;
+  }
+  usage = turnUsage(usage, session);
+  session.usage = addUsage(session.usage, usage);
+  finishSessionTurn(session, usage);
 }
 
 async function readTurnLog(session: Session): Promise<string> {
@@ -846,6 +860,7 @@ export async function completeSessionFromLog(
       : SESSION_STATUS.failed;
   } catch (error) {
     session.status = SESSION_STATUS.failed;
+    recordSessionFailure(session, error);
     parseError = error;
   }
   if (session.status === SESSION_STATUS.failed) {
@@ -857,6 +872,15 @@ export async function completeSessionFromLog(
   }
   await saveTerminalSession(session);
   return session;
+}
+
+export function recordSessionFailure(session: Session, error: unknown): void {
+  if (!(error instanceof ProviderRefusalError)) return;
+  session.failureKind = error.failureKind;
+  const turn = session.turns?.at(-1);
+  if (turn) turn.failureKind = error.failureKind;
+  const otherFamily = session.harness === "codex" ? "claude" : "codex";
+  session.next = `smart-router retry ${session.handle} --model ${otherFamily}:auto`;
 }
 
 export async function terminateSessionProcess(
